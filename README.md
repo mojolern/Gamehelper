@@ -2,13 +2,13 @@
 
 Path of Exile 2 overlay.
 
-## Download (v1.1.2)
+## Download (v1.1.3)
 
 | What | Link |
 |------|------|
 | Installer (recommended) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe |
-| Full package (ZIP) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-1.1.2-full.zip |
-| All individual files (55) | https://github.com/MordWraith/Gamehelper/releases/tag/v1.1.2 |
+| Full package (ZIP) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-1.1.3-full.zip |
+| All individual files (55) | https://github.com/MordWraith/Gamehelper/releases/tag/v1.1.3 |
 | manifest.json (auto-update) | https://github.com/MordWraith/Gamehelper/releases/latest/download/manifest.json |
 
 **For friends:** Run `GameHelperDownloader.exe` in an **empty folder** â€” it downloads all files automatically.
