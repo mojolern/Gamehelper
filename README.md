@@ -4,13 +4,13 @@ Path of Exile 2 overlay.
 
 ## Download (v1.1.1)
 
-| Was | Link |
-|-----|------|
-| Installer (empfohlen) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe |
-| Komplett-Paket ZIP | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-1.1.1-full.zip |
-| Alle Einzeldateien (55) | https://github.com/MordWraith/Gamehelper/releases/tag/v1.1.1 |
-| manifest.json (Auto-Update) | https://github.com/MordWraith/Gamehelper/releases/latest/download/manifest.json |
+| What | Link |
+|------|------|
+| Installer (recommended) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe |
+| Full package (ZIP) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-1.1.1-full.zip |
+| All individual files (55) | https://github.com/MordWraith/Gamehelper/releases/tag/v1.1.1 |
+| manifest.json (auto-update) | https://github.com/MordWraith/Gamehelper/releases/latest/download/manifest.json |
 
-**Fuer Freunde:** `GameHelperDownloader.exe` in einen **leeren Ordner** ausfuehren - laedt alle Dateien automatisch.
+**For friends:** Run `GameHelperDownloader.exe` in an **empty folder** â€” it downloads all files automatically.
 
-Die Binaries liegen unter **Releases**, nicht im Code-Tab (nur Quellcode/README hier).
+Binaries are under **Releases**, not in the Code tab (source code/README only here).
