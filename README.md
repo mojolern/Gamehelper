@@ -19,23 +19,23 @@ This is **not** a source-only repository: releases are a **binary distribution**
 | What | Link |
 |------|------|
 | **Installer (recommended)** | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe |
-| Full ZIP (manual install) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-1.1.8-full.zip |
-| All release files | https://github.com/MordWraith/Gamehelper/releases/latest |
+| Full ZIP (manual install) | https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelper-*-full.zip |
+| All releases | https://github.com/MordWraith/Gamehelper/releases/latest |
 
 Run `GameHelperDownloader.exe` in an **empty folder**. Requires [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0).
 
-### Why releases contain many individual files
+### Release assets (ZIP-only)
 
-The launcher **auto-update** downloads only changed files listed in `manifest.json` (incremental updates). That requires each DLL/asset as a separate GitHub Release asset.
+Each release contains a small set of files (~11 MB total):
 
 | Release asset | Purpose |
 |---------------|---------|
 | `GameHelperDownloader.exe` | One-file fresh install |
-| `GameHelper-*-full.zip` | Manual full install / backup |
-| `manifest.json` + `manifest.sig` | Update check and integrity |
-| Individual `.dll` / config files | Incremental auto-update |
+| `GameHelper-*-full.zip` | Full install / auto-update package |
+| `manifest.json` + `manifest.sig` | Signed update metadata and integrity |
+| `changelog-history.json` | In-app changelog history |
 
-You do **not** need to download single files manually — use the Downloader or the ZIP.
+The launcher and downloader fetch **one ZIP** per update instead of dozens of individual DLLs.
 
 ## Credits
 
