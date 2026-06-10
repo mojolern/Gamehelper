@@ -26,7 +26,8 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | Atlas | Nekkoy | GameHelper2 plugin ecosystem |
 | Radar | Gordin | GameHelper2 |
 | RitualHelper | caio | Based on AutoRitualPricer ([Queuete/GameHelper](https://github.com/MordWraith/Gamehelper) lineage) |
-| RuneforgeHelper | Nekkoy | Runeshape rewards overlay; GameHelper2 plugin ecosystem |
+| RuneforgeHelper | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) | Runeshape rewards overlay; based on RunecraftHelper |
+| SekhemaHelper | Nekkoy | Sekhema Trial option helper; [yokkenUA/SekhemaHelper](https://github.com/MordWraith/Gamehelper) |
 | AutoPot | MordWraith | Written for this fork |
 | AutoHotKeyTrigger | GameHelper2 upstream | Bundled with GameHelper2 (KronosDesign / community) |
 | HealthBars | GameHelper2 upstream | Bundled with GameHelper2 |
