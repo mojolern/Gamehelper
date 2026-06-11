@@ -94,7 +94,7 @@ Target: `net10.0-windows`, `win-x64`.
 - `Launcher` — updater entry point
 - `Downloader` — public installer
 - `GameOffsets` — offsets
-- Plugins: `Atlas`, `AutoPot`, `AutoHotKeyTrigger`, `HealthBars`, `PreloadAlert`, `Radar`, `RitualHelper`, `RuneforgeHelper`, `SekhemaHelper`
+- Plugins: `Atlas`, `AuraTracker`, `AutoPot`, `AutoHotKeyTrigger`, `HealthBars`, `MapKillCounter`, `PreloadAlert`, `Radar`, `RitualHelper`, `RuneforgeHelper`, `SekhemaHelper`
 
 ## Run
 
