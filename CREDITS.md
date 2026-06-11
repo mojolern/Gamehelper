@@ -34,6 +34,8 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | PreloadAlert | GameHelper2 upstream | PoE preload alerts; concept from [TehCheat/PreloadAlert](https://github.com/MordWraith/Gamehelper) (ExileAPI) |
 | AuraTracker | Skrip | Nearby enemy list with HP/ES, buffs, DPS; [derekShaheen/AuraTracker](https://github.com/MordWraith/Gamehelper) |
 | MapKillCounter | MordWraith | Per-map monster kill counts by rarity and elapsed time |
+| AmanamuVoidAlert | [1k4ru5g3](https://github.com/MordWraith/Gamehelper) | Abyss Lightless Well / Amanamu void cloud tracker; ported from POEFixer plugin |
+| PlayerBuffBar | MordWraith | Player buff watchlist, charges, and rage near the health bar |
 
 ## Third-party libraries
 
