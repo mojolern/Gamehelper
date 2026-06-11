@@ -32,6 +32,8 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | AutoHotKeyTrigger | GameHelper2 upstream | Bundled with GameHelper2 (KronosDesign / community) |
 | HealthBars | GameHelper2 upstream | Bundled with GameHelper2 |
 | PreloadAlert | GameHelper2 upstream | PoE preload alerts; concept from [TehCheat/PreloadAlert](https://github.com/MordWraith/Gamehelper) (ExileAPI) |
+| AuraTracker | Skrip | Nearby enemy list with HP/ES, buffs, DPS; [derekShaheen/AuraTracker](https://github.com/MordWraith/Gamehelper) |
+| MapKillCounter | MordWraith | Per-map monster kill counts by rarity and elapsed time |
 
 ## Third-party libraries
 
