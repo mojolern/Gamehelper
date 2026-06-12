@@ -22,7 +22,7 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | GameHelper2 base | [Gordin](https://github.com/MordWraith/Gamehelper) and community | Overlay architecture, offsets, plugin host |
 | GameHelper (original) | GameHelper (OwnedCore) | Early PoE helper lineage |
 | Community maintainers | KronosDesign, arsenic2k, abevol, mm3141, others | GameHelper2 contributions |
-| This fork | Lafko / MordWraith | PoE2 updates, launcher, signed auto-update, plugins, publish pipeline |
+| This fork | Gordin / MordWraith | PoE2 updates, launcher, signed auto-update, plugins, publish pipeline |
 
 ## Bundled plugins
 
