@@ -97,7 +97,7 @@ namespace GameHelper.Settings
             }
 #endif
 
-            const string forkCredit = "Fork by Lafko / Gordin";
+            const string forkCredit = "Fork by MordWraith · basis Lafko / Gordin";
             var forkWidth = ImGui.CalcTextSize(forkCredit).X;
             ImGui.SameLine();
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + Math.Max(0f, ImGui.GetContentRegionAvail().X - forkWidth));

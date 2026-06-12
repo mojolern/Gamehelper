@@ -16,7 +16,9 @@ namespace GameHelper.Plugin
 
         private const string UnknownAuthor = "upstream (unknown)";
 
-        private const string ForkMaintainer = "Lafko / MordWraith";
+        private const string ForkMaintainer = "MordWraith";
+
+        private const string ForkBasis = "Lafko / Gordin";
 
 
 
@@ -56,7 +58,7 @@ namespace GameHelper.Plugin
 
 
 
-        internal static string ForkByLine => $"Fork maintained by {ForkMaintainer}";
+        internal static string ForkByLine => $"Fork maintained by {ForkMaintainer} (basis: {ForkBasis})";
 
 
 
