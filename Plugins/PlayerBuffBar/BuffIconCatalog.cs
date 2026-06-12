@@ -53,6 +53,9 @@ namespace PlayerBuffBar
             ["puppet_master"] = "Puppet_Master",
             ["charged_staff"] = "Charged_Staff",
             ["charged_staff_stack"] = "Charged_Staff",
+            ["power_charge"] = "Power_charge",
+            ["frenzy_charge"] = "Frenzy_charge",
+            ["endurance_charge"] = "Endurance_charge",
             ["archon_undeath"] = "Archon_of_Undeath",
             ["archon_of_undeath"] = "Archon_of_Undeath",
             ["undeath"] = "Archon_of_Undeath",
@@ -85,6 +88,16 @@ namespace PlayerBuffBar
             ["haste"] = "SkillIcons/auraspeed.webp",
             ["charged_staff"] = "skillicons/4k/monkchargedstaff.webp",
             ["charged_staff_stack"] = "skillicons/4k/monkchargedstaff.webp",
+            ["power_charge"] = "BuffIcons/chargeint.webp",
+            ["frenzy_charge"] = "BuffIcons/chargedex.webp",
+            ["endurance_charge"] = "BuffIcons/chargestr.webp",
+        };
+
+        internal static readonly string[] ResourceIconIds =
+        {
+            "power_charge",
+            "frenzy_charge",
+            "endurance_charge",
         };
 
         internal static string IconsDirectory(string pluginDirectory) => Path.Combine(pluginDirectory, "icons");

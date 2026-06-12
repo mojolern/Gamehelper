@@ -13,7 +13,7 @@ namespace PlayerBuffBar
 
     public sealed class PlayerBuffBarSettings : IPSettings
     {
-        public int SettingsVersion = 3;
+        public int SettingsVersion = 4;
 
         public bool ShowOverlay = true;
 

@@ -27,6 +27,7 @@ namespace PlayerBuffBar
         private string watchlistBuffer = string.Empty;
         private string dumpStatusLine = string.Empty;
         private bool iconsQueuedOnEnable;
+        private bool watchlistEditorDirty;
 
         public override void OnEnable(bool isGameOpened)
         {
@@ -43,11 +44,16 @@ namespace PlayerBuffBar
                 }
             }
 
-            this.MigrateSettingsIfNeeded();
+            var migrated = this.MigrateSettingsIfNeeded();
+            this.watchlistEditorDirty = false;
             this.iconLoader.Initialize(this.DllDirectory);
             this.iconsQueuedOnEnable = false;
             this.QueueIconDownloads(force: false);
             this.SyncWatchlistBufferFromSettings();
+            if (migrated)
+            {
+                this.SaveSettings();
+            }
         }
 
         public override void OnDisable()
@@ -57,7 +63,12 @@ namespace PlayerBuffBar
 
         public override void SaveSettings()
         {
-            this.ApplyWatchlistBuffer();
+            if (this.watchlistEditorDirty)
+            {
+                this.ApplyWatchlistBuffer();
+                this.watchlistEditorDirty = false;
+            }
+
             var dir = Path.GetDirectoryName(this.SettingsPath);
             if (!string.IsNullOrEmpty(dir))
             {
@@ -106,8 +117,8 @@ namespace PlayerBuffBar
             ImGui.DragFloat2(L("Resource offset X / Y", "Ressourcen-Offset X / Y"), ref this.Settings.ResourceScreenOffset, 1f, -400f, 400f, "%.0f");
             ImGui.DragFloat2(L("Resource fixed position", "Ressourcen-Festposition"), ref this.Settings.ResourceFixedPosition, 1f, 0f, 4000f, "%.0f");
             ImGui.TextDisabled(L(
-                "Charges/rage use numbers only (no poe2db icons). Do not add them to the watchlist.",
-                "Charges/Rage nur als Zahl (keine poe2db-Icons). Nicht in die Watchlist eintragen."));
+                "P/F/E charge icons load from poe2db. Rage stays numeric. Do not add charges/rage to the watchlist.",
+                "P/F/E-Charge-Icons von poe2db. Rage bleibt numerisch. Charges/Rage nicht in die Watchlist eintragen."));
 
             ImGui.Separator();
             ImGui.TextUnformatted(L("Buff watchlist bar", "Buff-Watchlist-Leiste"));
@@ -138,21 +149,35 @@ namespace PlayerBuffBar
             ImGui.ColorEdit4(L("Rage text color", "Rage-Textfarbe"), ref this.Settings.RageTextColor);
 
             ImGui.Separator();
-            ImGui.TextWrapped(L(
-                "Watchlist: one buff id substring per line. Not for charges/rage (P/F/E/R). Examples: puppet_master, archon_undeath.",
-                "Watchlist: ein Buff-ID-Teilstring pro Zeile. Keine Charges/Rage (P/F/E/R). Beispiele: puppet_master, archon_undeath."));
+            if (!this.watchlistEditorDirty)
+            {
+                this.SyncWatchlistBufferFromSettings();
+            }
 
-            if (ImGui.InputTextMultiline(
+            ImGui.TextWrapped(L(
+                "Watchlist: one buff id substring per line. Not for charges/rage. Examples: puppet_master, archon_undeath.",
+                "Watchlist: ein Buff-ID-Teilstring pro Zeile. Keine Charges/Rage. Beispiele: puppet_master, archon_undeath."));
+
+            ImGui.InputTextMultiline(
                 "###PlayerBuffBarWatchlist",
                 ref this.watchlistBuffer,
                 4096,
-                new Vector2(-1f, 120f)))
+                new Vector2(-1f, 120f));
+            if (ImGui.IsItemDeactivatedAfterEdit())
             {
+                this.ApplyWatchlistBuffer();
+                this.watchlistEditorDirty = false;
+                this.QueueIconDownloads(force: true);
+            }
+            else if (ImGui.IsItemEdited())
+            {
+                this.watchlistEditorDirty = true;
             }
 
             if (ImGui.Button(L("Apply watchlist", "Watchlist uebernehmen")))
             {
                 this.ApplyWatchlistBuffer();
+                this.watchlistEditorDirty = false;
                 this.QueueIconDownloads(force: true);
             }
 
@@ -160,6 +185,7 @@ namespace PlayerBuffBar
             if (ImGui.Button(L("Reset defaults", "Standard wiederherstellen")))
             {
                 this.Settings = new PlayerBuffBarSettings();
+                this.watchlistEditorDirty = false;
                 this.SyncWatchlistBufferFromSettings();
                 this.QueueIconDownloads(force: false);
             }
@@ -271,10 +297,12 @@ namespace PlayerBuffBar
         private void QueueIconDownloads(bool force)
         {
             this.iconLoader.RequestDownloads(this.Settings.Watchlist, force);
+            this.iconLoader.RequestResourceIcons(force);
         }
 
-        private void MigrateSettingsIfNeeded()
+        private bool MigrateSettingsIfNeeded()
         {
+            var migrated = false;
             if (this.Settings.SettingsVersion < 2)
             {
                 this.Settings.BuffIconSize = this.Settings.IconSize;
@@ -298,6 +326,7 @@ namespace PlayerBuffBar
                     .ToList();
 
                 this.Settings.SettingsVersion = 2;
+                migrated = true;
             }
 
             if (this.Settings.SettingsVersion < 3)
@@ -305,7 +334,19 @@ namespace PlayerBuffBar
                 this.Settings.ResourceShowPositionDummy = false;
                 this.Settings.BuffShowPositionDummy = false;
                 this.Settings.SettingsVersion = 3;
+                migrated = true;
             }
+
+            if (this.Settings.SettingsVersion < 4)
+            {
+                this.Settings.Watchlist = this.Settings.Watchlist
+                    .Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id))
+                    .ToList();
+                this.Settings.SettingsVersion = 4;
+                migrated = true;
+            }
+
+            return migrated;
         }
 
         private Vector2? ResolveHealthBarAnchor(Render render, WorldData world)
@@ -568,30 +609,43 @@ namespace PlayerBuffBar
             var rectMax = pos + new Vector2(size, size);
             var alpha = entry.IsActive ? 1f : this.Settings.InactiveIconAlpha;
             var borderColor = this.GetResourceBorderColor(entry.WatchId, alpha);
+            var tint = ImGuiHelper.Color(new Vector4(1f, 1f, 1f, alpha));
 
             draw.AddRectFilled(rectMin, rectMax, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.55f * alpha)), 4f);
             draw.AddRect(rectMin, rectMax, ImGuiHelper.Color(borderColor), 4f, ImDrawFlags.None, entry.IsActive ? 2f : 1f);
 
-            var shortLabel = entry.WatchId switch
+            if (this.iconLoader.TryGetTexture(entry.WatchId, out var ptr, out _, out _))
             {
-                "power_charge" => "P",
-                "frenzy_charge" => "F",
-                "endurance_charge" => "E",
-                "rage" => "R",
-                _ => "?",
-            };
+                draw.AddImage(ptr, rectMin, rectMax, Vector2.Zero, Vector2.One, tint);
+            }
+            else
+            {
+                var shortLabel = entry.WatchId switch
+                {
+                    "power_charge" => "P",
+                    "frenzy_charge" => "F",
+                    "endurance_charge" => "E",
+                    "rage" => "R",
+                    _ => "?",
+                };
 
-            var shortSize = ImGui.CalcTextSize(shortLabel);
-            draw.AddText(
-                rectMin + new Vector2(2f, 1f),
-                ImGuiHelper.Color(new Vector4(1f, 1f, 1f, 0.55f * alpha)),
-                shortLabel);
+                var textSize = ImGui.CalcTextSize(shortLabel);
+                draw.AddText(
+                    rectMin + new Vector2((size - textSize.X) * 0.5f, (size - textSize.Y) * 0.5f),
+                    tint,
+                    shortLabel);
+            }
 
             var countLabel = Math.Max(0, entry.ChargeCount).ToString();
             var countSize = ImGui.CalcTextSize(countLabel);
             var textColor = entry.WatchId == "rage" ? this.Settings.RageTextColor : this.Settings.ChargeTextColor;
+            var badgeHeight = MathF.Max(countSize.Y + 2f, 12f);
+            var badgeMin = new Vector2(rectMin.X, rectMax.Y - badgeHeight);
+            draw.AddRectFilled(badgeMin, rectMax, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.88f * alpha)), 2f);
             draw.AddText(
-                rectMin + new Vector2((size - countSize.X) * 0.5f, (size - countSize.Y) * 0.5f + 2f),
+                new Vector2(
+                    rectMin.X + (size - countSize.X) * 0.5f,
+                    badgeMin.Y + (badgeHeight - countSize.Y) * 0.5f),
                 ImGuiHelper.Color(new Vector4(textColor.X, textColor.Y, textColor.Z, alpha)),
                 countLabel);
         }
@@ -963,6 +1017,13 @@ namespace PlayerBuffBar
 
         private void ApplyWatchlistBuffer()
         {
+            if (!this.watchlistEditorDirty &&
+                string.IsNullOrWhiteSpace(this.watchlistBuffer) &&
+                this.Settings.Watchlist.Count > 0)
+            {
+                return;
+            }
+
             this.Settings.Watchlist = this.watchlistBuffer
                 .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(s => s.Trim())

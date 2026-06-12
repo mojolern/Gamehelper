@@ -67,6 +67,14 @@ namespace PlayerBuffBar
             }
         }
 
+        public void RequestResourceIcons(bool force = false)
+        {
+            foreach (var id in BuffIconCatalog.ResourceIconIds)
+            {
+                this.QueueDownload(id, force);
+            }
+        }
+
         public bool TryGetTexture(string watchId, out IntPtr ptr, out int w, out int h)
         {
             foreach (var extension in new[] { ".webp", ".png" })
