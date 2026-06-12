@@ -1,5 +1,4 @@
-# Quellcode + CREDITS.md + README.md nach GitHub pushen (separat von Release-Binaries).
-# Releases enthalten nur vorkompilierte Dateien; der Code-Tab wird ueber dieses Script befuellt.
+# Quellcode nach GitHub pushen (separat von Release-Binaries).
 param(
     [string]$Repository = "MordWraith/Gamehelper",
     [string]$Branch = "main",
@@ -32,22 +31,12 @@ function Resolve-GitExecutable {
     throw @"
 Git ist nicht installiert oder nicht im PATH.
 
-Install (empfohlen):
+Install:
   winget install --id Git.Git -e --source winget
 
-Danach PowerShell neu oeffnen und erneut ausfuehren:
+Danach PowerShell NEU oeffnen und erneut ausfuehren:
   powershell -ExecutionPolicy Bypass -File scripts\push-github-source.ps1
-
-Oder: https://git-scm.com/download/win
 "@
-}
-
-function Invoke-Git {
-    param([string[]]$GitArguments)
-    & $script:GitExe @GitArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "git $($GitArguments -join ' ') fehlgeschlagen (exit $LASTEXITCODE)"
-    }
 }
 
 function Get-GitCommitIdentity {
@@ -62,6 +51,24 @@ function Get-GitCommitIdentity {
     }
 
     return @{ Name = $user.login; Email = $email }
+}
+
+function Invoke-Git {
+    param(
+        [string[]]$GitArguments,
+        [hashtable]$Identity = $null
+    )
+
+    if ($Identity) {
+        & $script:GitExe -c "user.name=$($Identity.Name)" -c "user.email=$($Identity.Email)" @GitArguments
+    }
+    else {
+        & $script:GitExe @GitArguments
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($GitArguments -join ' ') fehlgeschlagen (exit $LASTEXITCODE)"
+    }
 }
 
 $configPath = Join-Path $Root "github.config.json"
@@ -80,7 +87,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $script:GitExe = Resolve-GitExecutable -OverridePath $GitExe
-Write-Host "Git: $GitExe" -ForegroundColor DarkGray
+$identity = Get-GitCommitIdentity
+Write-Host "Git: $script:GitExe" -ForegroundColor DarkGray
+Write-Host "Author: $($identity.Name) <$($identity.Email)>" -ForegroundColor DarkGray
 
 Push-Location $Root
 try {
@@ -100,23 +109,30 @@ try {
 
     Invoke-Git @("add", "-A")
     $status = & $GitExe status --porcelain
-    if (-not $status) {
-        Write-Host "Keine Aenderungen zum Pushen." -ForegroundColor Yellow
-        return
+    if ($status) {
+        Invoke-Git -Identity $identity @(
+            "commit", "-m", "Publish open-source tree ($((Get-Date).ToString('yyyy-MM-dd')))"
+        )
+    }
+    else {
+        Write-Host "Keine neuen Aenderungen zum Committen." -ForegroundColor DarkGray
     }
 
-    $identity = Get-GitCommitIdentity
-    Invoke-Git @(
-        "-c", "user.name=$($identity.Name)",
-        "-c", "user.email=$($identity.Email)",
-        "commit", "-m", "Publish open-source tree ($((Get-Date).ToString('yyyy-MM-dd')))"
-    )
+    Invoke-Git @("fetch", "origin", $Branch)
+    $localHead = (& $GitExe rev-parse HEAD).Trim()
+    $remoteHead = (& $GitExe rev-parse "origin/$Branch" 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $remoteHead -and $remoteHead.Trim() -ne $localHead) {
+        Write-Host "Remote $Branch hat andere Commits - merge ..." -ForegroundColor Yellow
+        Invoke-Git -Identity $identity @(
+            "merge", "origin/$Branch", "--allow-unrelated-histories",
+            "-m", "Merge remote $Branch into local source tree"
+        )
+    }
+
     Invoke-Git @("push", "-u", "origin", $Branch)
     Write-Host ""
     Write-Host "Quellcode gepusht: https://github.com/$Repository" -ForegroundColor Green
-    Write-Host "Pruefen:       https://github.com/$Repository/tree/$Branch/GameHelper" -ForegroundColor DarkGray
-    Write-Host "Credits:       https://github.com/$Repository/blob/$Branch/CREDITS.md" -ForegroundColor DarkGray
-    Write-Host "Binaries:      https://github.com/$Repository/releases" -ForegroundColor DarkGray
+    Write-Host "Pruefen: https://github.com/$Repository/tree/$Branch/GameHelper" -ForegroundColor DarkGray
 }
 finally {
     Pop-Location
