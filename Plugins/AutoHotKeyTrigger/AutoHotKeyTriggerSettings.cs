@@ -41,6 +41,7 @@ namespace AutoHotKeyTrigger
             this.DebugMode = false;
             this.ShouldRunInHideout = false;
             this.DumpStatusEffectOnMe = VK.F10;
+            this.UseLegacyKeyInput = true;
         }
 
         /// <summary>
@@ -88,5 +89,11 @@ namespace AutoHotKeyTrigger
         ///     status effect or not.
         /// </summary>
         public VK DumpStatusEffectOnMe;
+
+        /// <summary>
+        ///     When enabled, AHK uses pre-1.3 key send (no block while skill keys are held).
+        ///     When disabled, uses the core full key tap (stricter, blocks while other keys held).
+        /// </summary>
+        public bool UseLegacyKeyInput;
     }
 }

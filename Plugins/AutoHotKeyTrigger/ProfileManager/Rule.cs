@@ -29,6 +29,7 @@ namespace AutoHotKeyTrigger.ProfileManager
         private bool expand;
         private ConditionType newConditionType = ConditionType.AILMENT;
         private readonly Stopwatch cooldownStopwatch = Stopwatch.StartNew();
+        private bool armed = true;
 
         [JsonProperty("Conditions", NullValueHandling = NullValueHandling.Ignore)]
         private readonly List<DynamicCondition> conditions = new();
@@ -51,6 +52,12 @@ namespace AutoHotKeyTrigger.ProfileManager
         public VK Key;
 
         /// <summary>
+        ///     When enabled, the rule fires at most once until all conditions become false again.
+        /// </summary>
+        [JsonProperty]
+        public bool FireOnceUntilConditionClears;
+
+        /// <summary>
         ///     Initializes a new instance of the <see cref="Rule" /> class.
         /// </summary>
         /// <param name="name"></param>
@@ -70,6 +77,7 @@ namespace AutoHotKeyTrigger.ProfileManager
             this.Enabled = false;
             this.Name = $"{other.Name}1";
             this.Key = other.Key;
+            this.FireOnceUntilConditionClears = other.FireOnceUntilConditionClears;
             this.conditions = new();
             foreach (var condition in other.conditions)
             {
@@ -118,6 +126,20 @@ namespace AutoHotKeyTrigger.ProfileManager
                 this.Key = tmpKey;
             }
 
+            ImGui.Checkbox(L(
+                "Fire once until condition clears",
+                "Einmal feuern bis Bedingung wieder false"), ref this.FireOnceUntilConditionClears);
+            ImGuiHelper.ToolTip(L(
+                "Useful for ESC/pause: fires once when the condition becomes true, then waits until it is false again (e.g. ES recovers) before re-arming.",
+                "Sinnvoll fuer ESC/Pause: feuert einmal wenn die Bedingung true wird, dann erst wieder wenn sie false ist (z. B. ES erholt)."));
+
+            if (this.Key == VK.ESCAPE && !this.FireOnceUntilConditionClears && this.delayBetweenRuns < 1f)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.55f, 0.2f, 1f), L(
+                    "ESC with a short cooldown may spam the pause menu. Enable fire-once or raise cooldown.",
+                    "ESC mit kurzem Cooldown kann das Pause-Menue spammen. Einmal-feueren aktivieren oder Cooldown erhoehen."));
+            }
+
             this.DrawCooldownWidget();
             this.DrawAddNewCondition();
             this.DrawExistingConditions();
@@ -127,15 +149,45 @@ namespace AutoHotKeyTrigger.ProfileManager
         ///     Checks the rule conditions and presses its key if conditions are satisfied
         /// </summary>
         /// <param name="logger"></param>
-        public void Execute(Action<string> logger)
+        /// <param name="useLegacyKeyInput">Use pre-1.3 AHK key send when true.</param>
+        public void Execute(Action<string> logger, bool useLegacyKeyInput)
         {
-            if (this.Enabled && this.Evaluate())
+            if (!this.Enabled)
             {
-                if (AhkKeySender.SendKey(this.Key, $"AHK/{this.Name}"))
-                {
-                    logger($"{this.Key} is pressed.");
-                    this.cooldownStopwatch.Restart();
-                }
+                return;
+            }
+
+            if (!this.AreConditionsMet())
+            {
+                this.armed = true;
+                return;
+            }
+
+            if (this.FireOnceUntilConditionClears && !this.armed)
+            {
+                return;
+            }
+
+            if (!this.IsCooldownReady())
+            {
+                return;
+            }
+
+            var source = $"AHK/{this.Name}";
+            var sent = useLegacyKeyInput
+                ? AhkKeySender.SendKey(this.Key, source)
+                : MiscHelper.KeyUp(this.Key, source);
+
+            if (!sent)
+            {
+                return;
+            }
+
+            logger($"{this.Key} is pressed.");
+            this.cooldownStopwatch.Restart();
+            if (this.FireOnceUntilConditionClears)
+            {
+                this.armed = false;
             }
         }
 
@@ -202,22 +254,11 @@ namespace AutoHotKeyTrigger.ProfileManager
             (this.conditions[i], this.conditions[j]) = (this.conditions[j], this.conditions[i]);
         }
 
-        /// <summary>
-        ///     Checks the specified conditions, shortcircuiting on the first unsatisfied one
-        /// </summary>
-        /// <returns>true if all the rules conditions are true otherwise false.</returns>
-        private bool Evaluate()
-        {
-            if (this.cooldownStopwatch.Elapsed.TotalSeconds > this.delayBetweenRuns)
-            {
-                if (this.conditions.TrueForAll(x => x.Evaluate()))
-                {
-                    return true;
-                }
-            }
+        private bool AreConditionsMet() =>
+            this.conditions.Count > 0 && this.conditions.TrueForAll(x => x.Evaluate());
 
-            return false;
-        }
+        private bool IsCooldownReady() =>
+            this.cooldownStopwatch.Elapsed.TotalSeconds > this.delayBetweenRuns;
 
         private void DrawCooldownWidget()
         {

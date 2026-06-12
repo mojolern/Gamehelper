@@ -64,6 +64,10 @@ namespace AutoHotKeyTrigger
                 ImGui.Checkbox(L("Debug Mode", "Debug-Modus"), ref this.Settings.DebugMode);
                 ImGui.SameLine();
                 ImGui.Checkbox(L("Trigger rules or execute Autoquit in Hideout", "Regeln/Auto-Quit im Hideout ausfuehren"), ref this.Settings.ShouldRunInHideout);
+                ImGui.Checkbox(L("Legacy key input (pre-1.3)", "Legacy-Tasteneingabe (vor 1.3)"), ref this.Settings.UseLegacyKeyInput);
+                ImGuiHelper.ToolTip(L(
+                    "On: keys send like GameHelper 1.2.x (no block while you hold skill keys). Off: newer full key tap; waits while Q/W/E/R/1-5 etc. are held.",
+                    "An: Tasten wie GameHelper 1.2.x (kein Block bei gedrueckten Skill-Tasten). Aus: neuer voller Tastendruck; wartet bei Q/W/E/R/1-5 usw."));
                 ImGuiHelper.ToolTip(L(
                     "The debug mode may prove to be a helpful tool in troubleshooting Auto HotKey Trigger profile rules that are not preforming as expected. It is highly suggested to create and test all new profiles/rules with the debug mode turned on.",
                     "Debug-Modus hilft beim Testen neuer Profile/Regeln. Neue Regeln immer zuerst mit Debug-Modus testen."));
@@ -253,7 +257,7 @@ namespace AutoHotKeyTrigger
 
             foreach (var rule in this.Settings.Profiles[this.Settings.CurrentProfile].Rules)
             {
-                rule.Execute(this.DebugLog);
+                rule.Execute(this.DebugLog, this.Settings.UseLegacyKeyInput);
             }
         }
 
@@ -310,6 +314,14 @@ namespace AutoHotKeyTrigger
         private bool ShouldExecutePlugin()
         {
             var cgs = Core.States.GameCurrentState;
+            if (cgs == GameStateTypes.EscapeState)
+            {
+                this.debugMessage = L(
+                    "Game paused (ESC menu open) — rules resume after RESUME GAME.",
+                    "Spiel pausiert (ESC-Menue) — Regeln laufen nach FORTSETZEN wieder.");
+                return false;
+            }
+
             if (cgs != GameStateTypes.InGameState)
             {
                 this.debugMessage = $"Current game state isn't InGameState, it's {cgs}.";
