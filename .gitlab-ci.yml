@@ -16,7 +16,7 @@ publish:
   script:
     - dotnet restore GameOverlay.sln
     - dotnet build GameOverlay.sln -c Release
-    - pwsh -File scripts/publish.ps1 -Version "${CI_COMMIT_TAG#v}" -DeployToken "$GITLAB_DEPLOY_TOKEN" -SkipDownloader
+    - pwsh -File scripts/publish.ps1 -Version "${CI_COMMIT_TAG#v}" -SkipDownloader
   artifacts:
     paths:
       - publish/

@@ -54,3 +54,4 @@ Plugins/**/Textdokument*.txt
 *.token
 .env
 update-signing.key
+update-signing.pub

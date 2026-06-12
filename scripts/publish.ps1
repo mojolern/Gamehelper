@@ -125,6 +125,8 @@ $excludePatterns = @(
     "imgui.ini",
     "price_cache.json",
     "prices.json",
+    "github.config.json",
+    "github.config.example.json",
     "*.pdb",
     "configs/",
     "Plugins/*/config/"
@@ -223,6 +225,11 @@ if ($LegacyManifest) {
     }
 }
 else {
+    $manifestFiles = @(
+        $publishFiles | ForEach-Object {
+            [ordered]@{ path = $_.path; hash = $_.hash }
+        }
+    )
     $manifest = [ordered]@{
         version = $Version
         published = $publishedAt
@@ -233,6 +240,7 @@ else {
             hash = $zipHash
             size = $zipSize
         }
+        files = $manifestFiles
     }
     if ((Compare-ProjectVersion $Version $MigrationTargetVersion) -ge 0) {
         $manifest["migration"] = [ordered]@{

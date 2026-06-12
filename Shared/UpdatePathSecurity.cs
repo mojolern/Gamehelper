@@ -29,7 +29,7 @@ namespace Shared.UpdateSecurity
                 return false;
             }
 
-            var rootFull = Path.GetFullPath(rootDir);
+            var rootFull = NormalizeRoot(rootDir);
             var combined = Path.GetFullPath(Path.Combine(rootFull, normalized.Replace('/', Path.DirectorySeparatorChar)));
             if (!combined.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
             {
@@ -47,9 +47,20 @@ namespace Shared.UpdateSecurity
                 return false;
             }
 
-            var rootFull = Path.GetFullPath(rootDir);
+            var rootFull = NormalizeRoot(rootDir);
             var candidateFull = Path.GetFullPath(candidatePath);
             return candidateFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeRoot(string rootDir)
+        {
+            var rootFull = Path.GetFullPath(rootDir);
+            if (!rootFull.EndsWith(Path.DirectorySeparatorChar))
+            {
+                rootFull += Path.DirectorySeparatorChar;
+            }
+
+            return rootFull;
         }
     }
 }

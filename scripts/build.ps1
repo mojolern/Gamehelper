@@ -471,10 +471,7 @@ try {
         Copy-Item $historySrc (Join-Path $PublishDir "changelog-history.json") -Force
     }
 
-    $githubConfig = Join-Path $Root "github.config.json"
-    if (Test-Path $githubConfig) {
-        Copy-Item $githubConfig (Join-Path $PublishDir "github.config.json") -Force
-    }
+    # github.config.json nicht nach publish\ kopieren (Release nutzt eingebettetes Default-Repo).
 
     Write-BuildInfoFiles -PublishDir $PublishDir -Version $buildVersion -Source "local-build"
 

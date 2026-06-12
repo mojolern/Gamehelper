@@ -16,6 +16,11 @@ namespace Shared.UpdateSecurity
             if (UpdateZipPackage.TryRead(manifest, out var package))
             {
                 SavePackageHash(rootDir, package.Hash);
+                if (TryReadFileEntries(manifest, out var zipFileEntries))
+                {
+                    Save(rootDir, zipFileEntries);
+                }
+
                 return;
             }
 
@@ -100,5 +105,22 @@ namespace Shared.UpdateSecurity
 
         public static string GetCatalogPath(string rootDir) =>
             Path.Combine(rootDir, CatalogFileName);
+
+        private static bool TryReadFileEntries(JObject manifest, out IEnumerable<KeyValuePair<string, string>> entries)
+        {
+            entries = Array.Empty<KeyValuePair<string, string>>();
+            var files = manifest["files"] as JArray;
+            if (files == null || files.Count == 0)
+            {
+                return false;
+            }
+
+            entries = files
+                .Select(entry => new KeyValuePair<string, string>(
+                    entry?["path"]?.ToString() ?? string.Empty,
+                    entry?["hash"]?.ToString() ?? string.Empty))
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value));
+            return entries.Any();
+        }
     }
 }

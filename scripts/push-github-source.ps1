@@ -55,6 +55,38 @@ function Get-GitCommitIdentity {
     return @{ Name = $user.login; Email = $email }
 }
 
+function Remove-TrackedPublishArtifacts {
+    $blocked = @(
+        "github.config.json",
+        "update-signing.key",
+        "update-signing.pub",
+        "GameHelperDownloader.rar"
+    )
+    foreach ($path in $blocked) {
+        $full = Join-Path $Root $path
+        if (Test-Path $full) {
+            & $script:GitExe rm --cached -f --ignore-unmatch -- $path 2>$null | Out-Null
+        }
+    }
+
+    Get-ChildItem -Path $Root -Recurse -Filter "*.rar" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $rel = $_.FullName.Substring($Root.Length + 1).Replace('\', '/')
+        & $script:GitExe rm --cached -f --ignore-unmatch -- $rel 2>$null | Out-Null
+    }
+}
+
+function Add-SourceTreeChanges {
+    Invoke-Git @("add", "-u")
+    $untracked = & $GitExe ls-files --others --exclude-standard
+    foreach ($line in $untracked) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        if ($line -match '(?i)(^|/)github\.config\.json$') { continue }
+        if ($line -match '(?i)\.rar$') { continue }
+        if ($line -match '(?i)(^|/)update-signing\.(key|pub)$') { continue }
+        Invoke-Git @("add", "--", $line)
+    }
+}
+
 function Invoke-Git {
     param(
         [string[]]$GitArguments,
@@ -109,7 +141,8 @@ try {
         Invoke-Git @("remote", "set-url", "origin", $remoteUrl)
     }
 
-    Invoke-Git @("add", "-A")
+    Remove-TrackedPublishArtifacts
+    Add-SourceTreeChanges
     $status = & $GitExe status --porcelain
     if ($status) {
         if ([string]::IsNullOrWhiteSpace($CommitMessage)) {

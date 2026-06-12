@@ -226,6 +226,7 @@ namespace GameHelper.Plugin
         {
             var installRoot = AppContext.BaseDirectory;
             var relativePath = Path.GetRelativePath(installRoot, dllPath).Replace('\\', '/');
+            // No catalog entry: allow (legacy installs / dev). Entries come from signed ZIP manifests.
             if (!UpdateFileHashesCatalog.TryGetExpectedHash(installRoot, relativePath, out var expectedHash))
             {
                 return true;
