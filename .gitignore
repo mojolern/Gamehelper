@@ -1,0 +1,43 @@
+# Build
+bin/
+obj/
+publish/
+publish-downloader/
+Test/
+test-runtime-backup/
+runtime-backup/
+.vs/
+*.user
+*.suo
+
+# Runtime / lokale Daten
+imgui.ini
+tempFileLocations.dat
+update.config.json
+configs/
+Plugins/*/config/
+Plugins/*/price_cache.json
+Plugins/*/prices.json
+Plugins/Atlas/bin/
+Plugins/Atlas/obj/
+Plugins/RitualHelper/bin/
+Plugins/RitualHelper/obj/
+Plugins/RuneforgeHelper/bin/
+Plugins/RuneforgeHelper/obj/
+Plugins/AuraTracker/bin/
+Plugins/AuraTracker/obj/
+Plugins/MapKillCounter/bin/
+Plugins/MapKillCounter/obj/
+Plugins/RunecraftHelper/
+
+# Alte Deployment-Binaerdateien im Root
+/*.exe
+/*.dll
+/*.pdb
+/*.deps.json
+/*.runtimeconfig.json
+
+# Secrets
+*.token
+.env
+update-signing.key

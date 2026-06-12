@@ -1,0 +1,14 @@
+# Kopiere nach release-notes.txt und passe vor rebuild-and-publish an.
+# Eine Zeile = ein Punkt im Update-Fenster. Nach dem Publish wird die Datei geleert.
+#
+# Zweisprachig (empfohlen):
+#   Englisch || Deutsch
+#
+# Mit Kategorie (optional, nur zur eigenen Orientierung):
+#   [Fix]   = Fehlerbehebung
+#   [New]   = Neues Feature
+#   [Plugin] = Aenderung an einem bestimmten Plugin (zusaetzlich erkennt Publish geaenderte DLLs automatisch)
+
+[Fix] AutoHotKeyTrigger: rules no longer run without an active profile selected || [Fix] AutoHotKeyTrigger: Regeln laufen nicht mehr ohne gewaehltes Profil
+[New] Activity log window shows key presses sent to the game || [Neu] Aktivitaets-Log zeigt an GameHelper-Tasteneingaben
+[Plugin] Autopot: ES disconnect option for CI builds || [Plugin] Autopot: ES-Disconnect-Option fuer CI-Builds
