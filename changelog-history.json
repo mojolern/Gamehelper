@@ -2,14 +2,9 @@
     "releases":  [
                      {
                          "version":  "1.3.1",
-                         "published":  "2026-06-12T14:53:02.6348260Z",
+                         "published":  "2026-06-12T17:53:15.5738462Z",
                          "changelog":  [
-                                           "[Plugin] SimpleBars: Reynbow health-bar fork added to the build (gradient bars, circle-dot mode, per-bar scaling) — disable HealthBars if you use it || [Plugin] SimpleBars: Reynbow-Lebensbalken-Fork im Build (Gradient, Kreis-Punkt, Skalierung pro Balken) — HealthBars deaktivieren wenn aktiv",
-                                           "[Fix] AutoHotKeyTrigger: cooldown no longer spams keys; retries until the press is sent; waits while you hold other skill keys (e.g. R) || [Fix] AutoHotKeyTrigger: Cooldown spammt nicht mehr; wiederholt bis Taste gesendet; wartet bei gedrückten Skill-Tasten (z. B. R)",
-                                           "[Fix] AutoHotKeyTrigger: rules without conditions no longer fire; settings show why rules are blocked (hideout, focus, chat, …) || [Fix] AutoHotKeyTrigger: Regeln ohne Bedingungen feuern nicht mehr; Einstellungen zeigen Blocker (Hideout, Fokus, Chat, …)",
-                                           "[Fix] Key input: full key tap, only when game is focused — more reliable for AHK and Autopot || [Fix] Tasteneingabe: voller Tastendruck, nur bei Spielfokus — zuverlässiger für AHK und Autopot",
-                                           "[Plugin] PlayerBuffBar: optional „Count badge background“ (numbers without black bar on icons) || [Plugin] PlayerBuffBar: optional „Zahlen-Hintergrund“ aus (Zahlen ohne schwarzen Balken auf Icons)",
-                                           "[Fix] Radar: minimap/large-map icon offset on hilly maps — TerrainHeight offset aligned with current game (0x1B0) || [Fix] Radar: Icon-Verschiebung auf Maps mit Höhe — TerrainHeight-Offset an aktuelles Spiel angepasst (0x1B0)"
+                                           "Version 1.3.1 release || Version 1.3.1 Release"
                                        ]
                      },
                      {
