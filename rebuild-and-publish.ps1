@@ -5,6 +5,7 @@
 # Optional (ohne Abfrage):
 #   -Version 1.0.2
 #   -SkipUpload
+#   -SkipSourcePush
 #   -FullUpload
 #   -Configuration Debug
 
@@ -12,6 +13,7 @@ param(
     [string]$Version,
     [string[]]$Changelog,
     [switch]$SkipUpload,
+    [switch]$SkipSourcePush,
     [switch]$FullUpload,
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release"
@@ -23,6 +25,8 @@ $Root = $PSScriptRoot
 
 $BuildScript = Join-Path $Root "scripts\build.ps1"
 $PublishScript = Join-Path $Root "scripts\publish.ps1"
+$SourcePushScript = Join-Path $Root "scripts\push-github-source.ps1"
+$VerifyScript = Join-Path $Root "scripts\verify-github-publish.ps1"
 
 if (-not (Test-Path $BuildScript)) {
     Write-Error "build.ps1 nicht gefunden. Bitte im Gamehelper-Projektordner starten."
@@ -81,6 +85,23 @@ else {
     }
 
     & $PublishScript @publishArgs
+
+    if (-not $SkipSourcePush) {
+        if (-not (Test-Path $SourcePushScript)) {
+            Write-Error "push-github-source.ps1 nicht gefunden."
+        }
+
+        Write-Host ""
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host " Quellcode -> GitHub main" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        & $SourcePushScript -Version $Version
+
+        if (Test-Path $VerifyScript) {
+            Write-Host ""
+            & $VerifyScript -ExpectedVersion $Version
+        }
+    }
 }
 
 $publishDir = Join-Path $Root "publish"
@@ -96,8 +117,11 @@ Write-Host " Ordner:  $publishDir" -ForegroundColor Green
 Write-Host " Starten: $publishDir\GameHelper.exe" -ForegroundColor Green
 Write-Host " Version: $publishDir\VERSION.txt" -ForegroundColor Green
 if (-not $SkipUpload) {
-    Write-Host " GitHub:      https://github.com/MordWraith/Gamehelper/releases" -ForegroundColor Green
+    Write-Host " Releases:    https://github.com/MordWraith/Gamehelper/releases" -ForegroundColor Green
     Write-Host " Downloader:  https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe" -ForegroundColor Green
+    if (-not $SkipSourcePush) {
+        Write-Host " Source:      https://github.com/MordWraith/Gamehelper/tree/main" -ForegroundColor Green
+    }
 }
 Write-Host ""
 Write-Host " Fuer deinen Freund:" -ForegroundColor Yellow

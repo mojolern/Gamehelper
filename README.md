@@ -57,11 +57,11 @@ Open [`GameOverlay.sln`](GameOverlay.sln) for IDE development — not a single `
 ### Maintainer: publish
 
 ```powershell
-# Source → GitHub main
-powershell -ExecutionPolicy Bypass -File scripts\push-github-source.ps1
-
-# Binaries → GitHub Releases
+# Binaries (Releases) + Quellcode (main) in einem Schritt:
 powershell -ExecutionPolicy Bypass -File rebuild-and-publish.ps1
+
+# Nur Quellcode (ohne Release):
+powershell -ExecutionPolicy Bypass -File scripts\push-github-source.ps1
 ```
 
 ## Project layout

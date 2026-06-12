@@ -2,7 +2,9 @@
 param(
     [string]$Repository = "MordWraith/Gamehelper",
     [string]$Branch = "main",
-    [string]$GitExe = ""
+    [string]$GitExe = "",
+    [string]$Version = "",
+    [string]$CommitMessage = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,9 +112,16 @@ try {
     Invoke-Git @("add", "-A")
     $status = & $GitExe status --porcelain
     if ($status) {
-        Invoke-Git -Identity $identity @(
-            "commit", "-m", "Publish open-source tree ($((Get-Date).ToString('yyyy-MM-dd')))"
-        )
+        if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
+            if (-not [string]::IsNullOrWhiteSpace($Version)) {
+                $CommitMessage = "Release v$Version source ($((Get-Date).ToString('yyyy-MM-dd')))"
+            }
+            else {
+                $CommitMessage = "Publish open-source tree ($((Get-Date).ToString('yyyy-MM-dd')))"
+            }
+        }
+
+        Invoke-Git -Identity $identity @("commit", "-m", $CommitMessage)
     }
     else {
         Write-Host "Keine neuen Aenderungen zum Committen." -ForegroundColor DarkGray
