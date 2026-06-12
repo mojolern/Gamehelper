@@ -5,6 +5,7 @@
 namespace AutoHotKeyTrigger
 {
     using System.Collections.Generic;
+    using System.ComponentModel;
     using GameHelper.Plugin;
     using AutoHotKeyTrigger.ProfileManager;
     using ClickableTransparentOverlay.Win32;
@@ -94,6 +95,7 @@ namespace AutoHotKeyTrigger
         ///     When enabled, AHK uses pre-1.3 key send (no block while skill keys are held).
         ///     When disabled, uses the core full key tap (stricter, blocks while other keys held).
         /// </summary>
-        public bool UseLegacyKeyInput;
+        [DefaultValue(true)]
+        public bool UseLegacyKeyInput = true;
     }
 }

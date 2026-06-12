@@ -27,6 +27,9 @@ namespace AutoHotKeyTrigger
     /// </summary>
     public sealed class AutoHotKeyTriggerCore : PCore<AutoHotKeyTriggerSettings>
     {
+        /// <summary>Built-in profile shell; user edits persist in settings.txt.</summary>
+        public const string LeagueStartDefaultProfileName = "LeagueStartDefaultProfile";
+
         private readonly string warningMsg = "The current condition you have put for AutoQuit is yielding true.\n" +
             "This mean you will automatically logout as soon as you leave town/hideout.\n" +
             "Please update your AutoQuit condition and/or disable it and/or fix your exile state.";
@@ -64,10 +67,9 @@ namespace AutoHotKeyTrigger
                 ImGui.Checkbox(L("Debug Mode", "Debug-Modus"), ref this.Settings.DebugMode);
                 ImGui.SameLine();
                 ImGui.Checkbox(L("Trigger rules or execute Autoquit in Hideout", "Regeln/Auto-Quit im Hideout ausfuehren"), ref this.Settings.ShouldRunInHideout);
-                ImGui.Checkbox(L("Legacy key input (pre-1.3)", "Legacy-Tasteneingabe (vor 1.3)"), ref this.Settings.UseLegacyKeyInput);
-                ImGuiHelper.ToolTip(L(
-                    "On: keys send like GameHelper 1.2.x (no block while you hold skill keys). Off: newer full key tap; waits while Q/W/E/R/1-5 etc. are held.",
-                    "An: Tasten wie GameHelper 1.2.x (kein Block bei gedrueckten Skill-Tasten). Aus: neuer voller Tastendruck; wartet bei Q/W/E/R/1-5 usw."));
+                ImGui.TextDisabled(L(
+                    "Key input: GameHelper 1.2.x style (WM_KEYUP) via AhkKeySender — same path as v1.2.4.",
+                    "Tasteneingabe: GameHelper 1.2.x (WM_KEYUP) ueber AhkKeySender — wie v1.2.4."));
                 ImGuiHelper.ToolTip(L(
                     "The debug mode may prove to be a helpful tool in troubleshooting Auto HotKey Trigger profile rules that are not preforming as expected. It is highly suggested to create and test all new profiles/rules with the debug mode turned on.",
                     "Debug-Modus hilft beim Testen neuer Profile/Regeln. Neue Regeln immer zuerst mit Debug-Modus testen."));
@@ -84,9 +86,9 @@ namespace AutoHotKeyTrigger
                         "Kein aktives Profil gewaehlt — Regeln laufen erst, wenn oben ein Profil ausgewaehlt ist."));
                 }
 
-                if (ImGui.Button(L("Add/Reset and Activate League Start Default Profile", "Standard-Liga-Start-Profil hinzufuegen/zuruecksetzen")))
+                if (ImGui.Button(L("Reset factory flask rules (League Start profile)", "Werk Flask-Regeln zuruecksetzen (Liga-Start-Profil)")))
                 {
-                    this.CreateDefaultProfile();
+                    this.ResetLeagueStartDefaultProfileRules();
                 }
             }
 
@@ -119,7 +121,11 @@ namespace AutoHotKeyTrigger
                     if (isOpened)
                     {
                         ImGui.SameLine();
-                        if (ImGui.SmallButton(L("Delete Profile", "Profil loeschen")))
+                        if (key == LeagueStartDefaultProfileName)
+                        {
+                            ImGui.TextDisabled(L("(built-in)", "(fest eingebaut)"));
+                        }
+                        else if (ImGui.SmallButton(L("Delete Profile", "Profil loeschen")))
                         {
                             this.Settings.Profiles.Remove(key);
                             if (this.Settings.CurrentProfile == key)
@@ -292,11 +298,14 @@ namespace AutoHotKeyTrigger
                 this.Settings = JsonConvert.DeserializeObject<AutoHotKeyTriggerSettings>(
                     content,
                     AutoHotKeyTriggerJson.Settings) ?? new AutoHotKeyTriggerSettings();
+                this.MigrateSettingsAfterLoad(content);
             }
             else
             {
                 this.CreateDefaultProfile();
             }
+
+            this.EnsureDefaultProfile();
 
             this.onAreaChange = CoroutineHandler.Start(this.EnableAutoQuitWarningUiOnAreaChange());
         }
@@ -390,16 +399,57 @@ namespace AutoHotKeyTrigger
         /// </summary>
         private void CreateDefaultProfile()
         {
-            Profile profile = new();
+            this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
+            this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
+            this.Settings.Profiles.TryAdd("ProfileMidGame", new());
+            this.Settings.Profiles.TryAdd("ProfileEndGame", new());
+        }
+
+        private void EnsureDefaultProfile()
+        {
+            if (!this.Settings.Profiles.ContainsKey(LeagueStartDefaultProfileName))
+            {
+                this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
+            }
+
+            if (string.IsNullOrEmpty(this.Settings.CurrentProfile) ||
+                !this.Settings.Profiles.ContainsKey(this.Settings.CurrentProfile))
+            {
+                this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
+            }
+        }
+
+        private void ResetLeagueStartDefaultProfileRules()
+        {
+            this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
+            this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
+        }
+
+        private static Profile BuildLeagueStartDefaultProfile()
+        {
+            var profile = new Profile();
             foreach (var rule in Rule.CreateDefaultRules())
             {
                 profile.Rules.Add(rule);
             }
 
-            this.Settings.Profiles["LeagueStartDefaultProfile"] = profile;
-            this.Settings.CurrentProfile = "LeagueStartDefaultProfile";
-            this.Settings.Profiles["ProfileMidGame"] = new();
-            this.Settings.Profiles["ProfileEndGame"] = new();
+            return profile;
+        }
+
+        private void MigrateSettingsAfterLoad(string settingsJson)
+        {
+            if (!settingsJson.Contains("UseLegacyKeyInput", StringComparison.Ordinal))
+            {
+                this.Settings.UseLegacyKeyInput = true;
+            }
+
+            foreach (var profile in this.Settings.Profiles.Values)
+            {
+                foreach (var rule in profile.Rules)
+                {
+                    rule.ApplyEscSpamDefaults();
+                }
+            }
         }
 
         private void AutoQuitWarningUi()
@@ -431,6 +481,7 @@ namespace AutoHotKeyTrigger
             while (true)
             {
                 yield return new Wait(RemoteEvents.AreaChanged);
+                EscPressGuard.Reset();
                 this.stopShowingAutoQuitWarning = false;
             }
         }

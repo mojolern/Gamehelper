@@ -9,9 +9,17 @@ namespace MapKillCounter
         Horizontal,
     }
 
+    public enum MapOverlayMode
+    {
+        Full,
+        TimerOnly,
+    }
+
     public sealed class MapKillCounterSettings : IPSettings
 {
     public bool ShowOverlay = true;
+
+    public MapOverlayMode OverlayMode = MapOverlayMode.Full;
 
     public bool ShowSessionOverlay;
 

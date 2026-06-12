@@ -4,7 +4,9 @@
 
 namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
 {
+    using System;
     using System.Collections.Generic;
+    using System.Linq;
     using GameOffsets.Objects.Components;
     using AutoHotKeyTrigger.ProfileManager.DynamicConditions.Interface;
 
@@ -48,6 +50,18 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         public bool Has(string id)
         {
             return this.source.ContainsKey(id);
+        }
+
+        /// <inheritdoc />
+        public bool HasPrefix(string prefix)
+        {
+            if (string.IsNullOrWhiteSpace(prefix))
+            {
+                return false;
+            }
+
+            return this.source.Keys.Any(key =>
+                key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

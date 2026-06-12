@@ -9,6 +9,7 @@ namespace AutoHotKeyTrigger
         {
             TypeNameHandling = TypeNameHandling.None,
             MetadataPropertyHandling = MetadataPropertyHandling.Ignore,
+            DefaultValueHandling = DefaultValueHandling.Populate,
             Converters = { new ComponentJsonConverter() },
         };
     }

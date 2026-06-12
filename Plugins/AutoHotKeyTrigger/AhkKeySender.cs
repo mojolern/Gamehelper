@@ -7,18 +7,19 @@ namespace AutoHotKeyTrigger
     using System;
     using System.Diagnostics;
     using System.Runtime.InteropServices;
-    using Process = System.Diagnostics.Process;
+    using System.Threading;
     using System.Threading.Tasks;
     using ClickableTransparentOverlay.Win32;
     using GameHelper;
     using GameHelper.Utils;
+    using Process = System.Diagnostics.Process;
 
     /// <summary>
-    ///     AHK-only key sender matching GameHelper v1.2.5 behaviour (WM_KEYUP, no skill-key blocking).
-    ///     Keeps Autopot and other plugins on the current core input path.
+    ///     AHK key sender: WM_KEYUP for skills/flasks (1.2.x). ESC uses keydown only (pause menu stays open).
     /// </summary>
     internal static class AhkKeySender
     {
+        private const int WmKeydown = 0x100;
         private const int WmKeyup = 0x101;
 
         private static readonly Random Rand = new();
@@ -39,11 +40,12 @@ namespace AutoHotKeyTrigger
                 return false;
             }
 
-            if (DelayBetweenKeys.ElapsedMilliseconds >= Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
+            if (DelayBetweenKeys.ElapsedMilliseconds < Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
             {
-                DelayBetweenKeys.Restart();
+                return false;
             }
-            else
+
+            if (key == VK.ESCAPE && !EscPressGuard.CanSend())
             {
                 return false;
             }
@@ -69,9 +71,29 @@ namespace AutoHotKeyTrigger
                 return false;
             }
 
-            sendingMessage = Task.Run(() => SendMessage(hwnd, WmKeyup, (int)key, 0));
-            ActivityLog.Write("Input", $"{label}: key {key} sent to game (legacy)");
+            DelayBetweenKeys.Restart();
+            var escMenuOpen = key == VK.ESCAPE;
+            if (escMenuOpen)
+            {
+                EscPressGuard.MarkSent();
+            }
+
+            sendingMessage = Task.Run(() => SendToWindow(hwnd, key, escMenuOpen));
+            ActivityLog.Write(
+                "Input",
+                $"{label}: key {key} sent to game (legacy{(escMenuOpen ? ", ESC keydown" : "")})");
             return true;
+        }
+
+        private static void SendToWindow(IntPtr hwnd, VK key, bool escMenuOpen)
+        {
+            if (escMenuOpen)
+            {
+                SendMessage(hwnd, WmKeydown, (int)key, 0);
+                return;
+            }
+
+            SendMessage(hwnd, WmKeyup, (int)key, 0);
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]

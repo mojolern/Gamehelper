@@ -93,6 +93,18 @@ namespace MapKillCounter
     public override void DrawSettings()
     {
         ImGui.Checkbox(L("Show overlay window", "Overlay-Fenster anzeigen"), ref this.Settings.ShowOverlay);
+        var overlayModeIndex = (int)this.Settings.OverlayMode;
+        if (ImGui.Combo(
+                L("Map overlay mode", "Map-Overlay-Modus"),
+                ref overlayModeIndex,
+                $"{L("Full (kills + time)", "Voll (Kills + Zeit)")}\0{L("Timer only (minimal)", "Nur Timer (minimal)")}\0"))
+        {
+            this.Settings.OverlayMode = (MapOverlayMode)overlayModeIndex;
+        }
+
+        ImGuiHelper.ToolTip(L(
+            "Timer only: small clock in the corner, resets on each new map. Drag anywhere on the text to move.",
+            "Nur Timer: kleine Uhr in der Ecke, setzt bei jeder neuen Map zurueck. Zum Verschieben irgendwo auf den Text ziehen."));
         ImGui.Checkbox(L("Show session overlay window", "Session-Overlay-Fenster anzeigen"), ref this.Settings.ShowSessionOverlay);
         ImGuiHelper.ToolTip(L(
             "Separate window with kills and play time for the whole GameHelper session. Timer never pauses in town, on ESC, or in background.",
@@ -371,6 +383,12 @@ namespace MapKillCounter
 
     private void DrawMapOverlay(bool isTownOrHideout, bool isGamePaused)
     {
+        if (this.Settings.OverlayMode == MapOverlayMode.TimerOnly)
+        {
+            this.DrawTimerOnlyOverlay(isTownOrHideout, isGamePaused);
+            return;
+        }
+
         var areaLabel = string.IsNullOrWhiteSpace(this.currentAreaName)
             ? L("Unknown area", "Unbekannte Area")
             : this.currentAreaName;
@@ -402,6 +420,63 @@ namespace MapKillCounter
             L("Whole session", "Ganze Session"),
             null,
             showPaused: false);
+    }
+
+    private void DrawTimerOnlyOverlay(bool isTownOrHideout, bool isGamePaused)
+    {
+        if (!IsGameOrOverlayForeground() && this.Settings.HideOverlayWhenGameInBackground)
+        {
+            return;
+        }
+
+        if (inGamePanelsBlockOverlay())
+        {
+            return;
+        }
+
+        var isPaused = this.IsTimerPaused(isTownOrHideout, isGamePaused);
+        var timeText = this.FormatElapsed(this.mapTimer.Elapsed);
+        if (isPaused)
+        {
+            timeText += " *";
+        }
+
+        if (this.Settings.OverlayPosition == new Vector2(40f, 120f))
+        {
+            var display = ImGui.GetIO().DisplaySize;
+            ImGui.SetNextWindowPos(new Vector2(display.X - 72f, 12f), ImGuiCond.FirstUseEver);
+        }
+        else
+        {
+            ImGui.SetNextWindowPos(this.Settings.OverlayPosition, ImGuiCond.FirstUseEver);
+        }
+
+        ImGui.SetNextWindowBgAlpha(this.Settings.BackgroundColor.W);
+        ImGui.PushStyleColor(ImGuiCol.WindowBg, this.Settings.BackgroundColor);
+        ImGui.PushStyleColor(ImGuiCol.Text, this.Settings.TextColor);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(6f, 3f));
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+
+        var flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar |
+                    ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize |
+                    ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNav;
+
+        if (!ImGui.Begin("###MapKillCounterTimerOnly", flags))
+        {
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(2);
+            ImGui.End();
+            return;
+        }
+
+        var fontScale = Math.Clamp(this.Settings.OverlayFontScale, 0.7f, 1.5f);
+        ImGui.SetWindowFontScale(fontScale);
+        this.Settings.OverlayPosition = ImGui.GetWindowPos();
+        ImGui.TextUnformatted(timeText);
+        ImGui.SetWindowFontScale(1f);
+        ImGui.End();
+        ImGui.PopStyleVar(2);
+        ImGui.PopStyleColor(2);
     }
 
     private void DrawStatsOverlay(

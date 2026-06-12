@@ -22,5 +22,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions.Interface
         ///     Checks whether the buff is present
         /// </summary>
         bool Has(string id);
+
+        bool HasPrefix(string prefix);
     }
 }

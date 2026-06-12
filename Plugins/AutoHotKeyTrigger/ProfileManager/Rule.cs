@@ -4,6 +4,7 @@
 
 namespace AutoHotKeyTrigger.ProfileManager
 {
+    using AutoHotKeyTrigger;
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
@@ -29,7 +30,9 @@ namespace AutoHotKeyTrigger.ProfileManager
         private bool expand;
         private ConditionType newConditionType = ConditionType.AILMENT;
         private readonly Stopwatch cooldownStopwatch = Stopwatch.StartNew();
+        private readonly Stopwatch conditionClearStopwatch = new();
         private bool armed = true;
+        private bool wasConditionsMet;
 
         [JsonProperty("Conditions", NullValueHandling = NullValueHandling.Ignore)]
         private readonly List<DynamicCondition> conditions = new();
@@ -130,8 +133,8 @@ namespace AutoHotKeyTrigger.ProfileManager
                 "Fire once until condition clears",
                 "Einmal feuern bis Bedingung wieder false"), ref this.FireOnceUntilConditionClears);
             ImGuiHelper.ToolTip(L(
-                "Useful for ESC/pause: fires once when the condition becomes true, then waits until it is false again (e.g. ES recovers) before re-arming.",
-                "Sinnvoll fuer ESC/Pause: feuert einmal wenn die Bedingung true wird, dann erst wieder wenn sie false ist (z. B. ES erholt)."));
+                "Useful for ESC/pause: fires once when the condition becomes true. Re-arms only after the condition stays false for a few seconds.",
+                "Sinnvoll fuer ESC/Pause: feuert einmal wenn die Bedingung true wird. Wieder scharf erst nach einigen Sekunden durchgehend false."));
 
             if (this.Key == VK.ESCAPE && !this.FireOnceUntilConditionClears && this.delayBetweenRuns < 1f)
             {
@@ -149,7 +152,7 @@ namespace AutoHotKeyTrigger.ProfileManager
         ///     Checks the rule conditions and presses its key if conditions are satisfied
         /// </summary>
         /// <param name="logger"></param>
-        /// <param name="useLegacyKeyInput">Use pre-1.3 AHK key send when true.</param>
+        /// <param name="useLegacyKeyInput">Ignored — AHK always uses AhkKeySender (1.2.x WM_KEYUP).</param>
         public void Execute(Action<string> logger, bool useLegacyKeyInput)
         {
             if (!this.Enabled)
@@ -157,13 +160,39 @@ namespace AutoHotKeyTrigger.ProfileManager
                 return;
             }
 
-            if (!this.AreConditionsMet())
+            var conditionsMet = this.AreConditionsMet();
+            var enforceFireOnce = this.EnforceFireOnce();
+            if (!conditionsMet)
             {
-                this.armed = true;
+                if (enforceFireOnce)
+                {
+                    if (this.wasConditionsMet)
+                    {
+                        this.conditionClearStopwatch.Restart();
+                    }
+                    else if (!this.conditionClearStopwatch.IsRunning)
+                    {
+                        this.conditionClearStopwatch.Start();
+                    }
+
+                    if (this.conditionClearStopwatch.Elapsed.TotalSeconds >= this.GetFireOnceRearmDelaySeconds())
+                    {
+                        this.armed = true;
+                    }
+                }
+                else
+                {
+                    this.armed = true;
+                }
+
+                this.wasConditionsMet = false;
                 return;
             }
 
-            if (this.FireOnceUntilConditionClears && !this.armed)
+            this.wasConditionsMet = true;
+            this.conditionClearStopwatch.Reset();
+
+            if (enforceFireOnce && !this.armed)
             {
                 return;
             }
@@ -173,22 +202,26 @@ namespace AutoHotKeyTrigger.ProfileManager
                 return;
             }
 
+            if (this.Key == VK.ESCAPE && !EscPressGuard.CanSend())
+            {
+                return;
+            }
+
             var source = $"AHK/{this.Name}";
-            var sent = useLegacyKeyInput
-                ? AhkKeySender.SendKey(this.Key, source)
-                : MiscHelper.KeyUp(this.Key, source);
+            var sent = AhkKeySender.SendKey(this.Key, source);
 
             if (!sent)
             {
                 return;
             }
 
-            logger($"{this.Key} is pressed.");
-            this.cooldownStopwatch.Restart();
-            if (this.FireOnceUntilConditionClears)
+            if (enforceFireOnce)
             {
                 this.armed = false;
             }
+
+            logger($"{this.Key} is pressed.");
+            this.cooldownStopwatch.Restart();
         }
 
         /// <summary>
@@ -259,6 +292,20 @@ namespace AutoHotKeyTrigger.ProfileManager
 
         private bool IsCooldownReady() =>
             this.cooldownStopwatch.Elapsed.TotalSeconds > this.delayBetweenRuns;
+
+        internal void ApplyEscSpamDefaults()
+        {
+            if (this.Key == VK.ESCAPE && !this.FireOnceUntilConditionClears)
+            {
+                this.FireOnceUntilConditionClears = true;
+            }
+        }
+
+        private bool EnforceFireOnce() =>
+            this.FireOnceUntilConditionClears || this.Key == VK.ESCAPE;
+
+        private double GetFireOnceRearmDelaySeconds() =>
+            this.Key == VK.ESCAPE ? 3.0 : 2.0;
 
         private void DrawCooldownWidget()
         {
