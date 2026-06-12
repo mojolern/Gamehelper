@@ -8,6 +8,7 @@ param(
     [switch]$SkipBuild,
     [switch]$SkipDownloader,
     [switch]$FullUpload,
+    [switch]$SkipRepoDocSync,
   # Letztes per-file Release vor ZIP-only (z. B. v1.1.10 Migrations-Patch).
     [switch]$LegacyManifest,
     [string]$MigrationTargetVersion = "1.2.0",
@@ -930,8 +931,10 @@ $updateState | ConvertTo-Json | Set-Content (Join-Path $PublishDir "update.state
 . (Join-Path $PSScriptRoot "set-version.ps1")
 Write-BuildInfoFiles -PublishDir $PublishDir -Version $Version -Source "github-publish"
 
-Write-Host "  Aktualisiere README auf GitHub ..." -ForegroundColor DarkGray
-Update-GithubReadme -Repo $Repository -Root $Root -ReleaseTag $tag
+if (-not $SkipRepoDocSync) {
+    Write-Host "  Aktualisiere README auf GitHub ..." -ForegroundColor DarkGray
+    Update-GithubReadme -Repo $Repository -Root $Root -ReleaseTag $tag
+}
 
 $downloaderUrl = "https://github.com/$Repository/releases/latest/download/$DownloaderRemoteName"
 $zipUrl = "https://github.com/$Repository/releases/latest/download/GameHelper-$Version-full.zip"

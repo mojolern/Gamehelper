@@ -83,6 +83,9 @@ else {
     if ($FullUpload) {
         $publishArgs.FullUpload = $true
     }
+    if (-not $SkipSourcePush) {
+        $publishArgs.SkipRepoDocSync = $true
+    }
 
     & $PublishScript @publishArgs
 

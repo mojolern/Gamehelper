@@ -131,11 +131,33 @@ try {
     $localHead = (& $GitExe rev-parse HEAD).Trim()
     $remoteHead = (& $GitExe rev-parse "origin/$Branch" 2>$null)
     if ($LASTEXITCODE -eq 0 -and $remoteHead -and $remoteHead.Trim() -ne $localHead) {
-        Write-Host "Remote $Branch hat andere Commits - merge ..." -ForegroundColor Yellow
-        Invoke-Git -Identity $identity @(
-            "merge", "origin/$Branch", "--allow-unrelated-histories",
-            "-m", "Merge remote $Branch into local source tree"
-        )
+        Write-Host "Remote $Branch hat andere Commits - merge (lokale Aenderungen bevorzugt) ..." -ForegroundColor Yellow
+        $mergeMsg = if (-not [string]::IsNullOrWhiteSpace($Version)) {
+            "Merge remote $Branch (release v$Version)"
+        }
+        else {
+            "Merge remote $Branch into local source tree"
+        }
+
+        & $script:GitExe -c "user.name=$($identity.Name)" -c "user.email=$($identity.Email)" `
+            merge "origin/$Branch" -X ours -m $mergeMsg
+        if ($LASTEXITCODE -ne 0) {
+            $mergeHead = Join-Path $Root ".git\MERGE_HEAD"
+            if (-not (Test-Path $mergeHead)) {
+                throw "git merge origin/$Branch fehlgeschlagen (exit $LASTEXITCODE)"
+            }
+
+            Write-Host "Merge-Konflikte - README/CREDITS lokal uebernehmen ..." -ForegroundColor Yellow
+            foreach ($doc in @("README.md", "CREDITS.md")) {
+                $docPath = Join-Path $Root $doc
+                if (Test-Path $docPath) {
+                    Invoke-Git @("checkout", "--ours", "--", $doc)
+                    Invoke-Git @("add", $doc)
+                }
+            }
+
+            Invoke-Git -Identity $identity @("commit", "-m", $mergeMsg)
+        }
     }
 
     Invoke-Git @("push", "-u", "origin", $Branch)
