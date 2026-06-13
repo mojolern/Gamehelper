@@ -97,5 +97,11 @@ namespace AutoHotKeyTrigger
         /// </summary>
         [DefaultValue(true)]
         public bool UseLegacyKeyInput = true;
+
+        /// <summary>
+        ///     Bumped when one-time settings migrations run.
+        /// </summary>
+        [DefaultValue(0)]
+        public int SettingsMigrationVersion;
     }
 }

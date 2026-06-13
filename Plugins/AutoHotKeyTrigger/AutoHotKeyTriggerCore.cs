@@ -67,9 +67,6 @@ namespace AutoHotKeyTrigger
                 ImGui.Checkbox(L("Debug Mode", "Debug-Modus"), ref this.Settings.DebugMode);
                 ImGui.SameLine();
                 ImGui.Checkbox(L("Trigger rules or execute Autoquit in Hideout", "Regeln/Auto-Quit im Hideout ausfuehren"), ref this.Settings.ShouldRunInHideout);
-                ImGui.TextDisabled(L(
-                    "Key input: GameHelper 1.2.x style (WM_KEYUP) via AhkKeySender — same path as v1.2.4.",
-                    "Tasteneingabe: GameHelper 1.2.x (WM_KEYUP) ueber AhkKeySender — wie v1.2.4."));
                 ImGuiHelper.ToolTip(L(
                     "The debug mode may prove to be a helpful tool in troubleshooting Auto HotKey Trigger profile rules that are not preforming as expected. It is highly suggested to create and test all new profiles/rules with the debug mode turned on.",
                     "Debug-Modus hilft beim Testen neuer Profile/Regeln. Neue Regeln immer zuerst mit Debug-Modus testen."));
@@ -263,7 +260,7 @@ namespace AutoHotKeyTrigger
 
             foreach (var rule in this.Settings.Profiles[this.Settings.CurrentProfile].Rules)
             {
-                rule.Execute(this.DebugLog, this.Settings.UseLegacyKeyInput);
+                rule.Execute(this.DebugLog);
             }
         }
 
@@ -323,14 +320,6 @@ namespace AutoHotKeyTrigger
         private bool ShouldExecutePlugin()
         {
             var cgs = Core.States.GameCurrentState;
-            if (cgs == GameStateTypes.EscapeState)
-            {
-                this.debugMessage = L(
-                    "Game paused (ESC menu open) — rules resume after RESUME GAME.",
-                    "Spiel pausiert (ESC-Menue) — Regeln laufen nach FORTSETZEN wieder.");
-                return false;
-            }
-
             if (cgs != GameStateTypes.InGameState)
             {
                 this.debugMessage = $"Current game state isn't InGameState, it's {cgs}.";
@@ -443,12 +432,10 @@ namespace AutoHotKeyTrigger
                 this.Settings.UseLegacyKeyInput = true;
             }
 
-            foreach (var profile in this.Settings.Profiles.Values)
+            if (this.Settings.SettingsMigrationVersion < 4)
             {
-                foreach (var rule in profile.Rules)
-                {
-                    rule.ApplyEscSpamDefaults();
-                }
+                this.Settings.SettingsMigrationVersion = 4;
+                this.SaveSettings();
             }
         }
 
@@ -481,7 +468,6 @@ namespace AutoHotKeyTrigger
             while (true)
             {
                 yield return new Wait(RemoteEvents.AreaChanged);
-                EscPressGuard.Reset();
                 this.stopShowingAutoQuitWarning = false;
             }
         }

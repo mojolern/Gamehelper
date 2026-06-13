@@ -7,7 +7,6 @@ namespace AutoHotKeyTrigger
     using System;
     using System.Diagnostics;
     using System.Runtime.InteropServices;
-    using System.Threading;
     using System.Threading.Tasks;
     using ClickableTransparentOverlay.Win32;
     using GameHelper;
@@ -15,11 +14,11 @@ namespace AutoHotKeyTrigger
     using Process = System.Diagnostics.Process;
 
     /// <summary>
-    ///     AHK key sender: WM_KEYUP for skills/flasks (1.2.x). ESC uses keydown only (pause menu stays open).
+    ///     AHK-only key sender — matches GameHelper v1.2.4/v1.3.1 (WM_KEYUP via SendMessage).
+    ///     Kept separate because core MiscHelper.KeyUp now uses SendInput full taps.
     /// </summary>
     internal static class AhkKeySender
     {
-        private const int WmKeydown = 0x100;
         private const int WmKeyup = 0x101;
 
         private static readonly Random Rand = new();
@@ -41,11 +40,6 @@ namespace AutoHotKeyTrigger
             }
 
             if (DelayBetweenKeys.ElapsedMilliseconds < Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
-            {
-                return false;
-            }
-
-            if (key == VK.ESCAPE && !EscPressGuard.CanSend())
             {
                 return false;
             }
@@ -72,28 +66,9 @@ namespace AutoHotKeyTrigger
             }
 
             DelayBetweenKeys.Restart();
-            var escMenuOpen = key == VK.ESCAPE;
-            if (escMenuOpen)
-            {
-                EscPressGuard.MarkSent();
-            }
-
-            sendingMessage = Task.Run(() => SendToWindow(hwnd, key, escMenuOpen));
-            ActivityLog.Write(
-                "Input",
-                $"{label}: key {key} sent to game (legacy{(escMenuOpen ? ", ESC keydown" : "")})");
+            sendingMessage = Task.Run(() => SendMessage(hwnd, WmKeyup, (int)key, 0));
+            ActivityLog.Write("Input", $"{label}: key {key} sent to game");
             return true;
-        }
-
-        private static void SendToWindow(IntPtr hwnd, VK key, bool escMenuOpen)
-        {
-            if (escMenuOpen)
-            {
-                SendMessage(hwnd, WmKeydown, (int)key, 0);
-                return;
-            }
-
-            SendMessage(hwnd, WmKeyup, (int)key, 0);
         }
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
