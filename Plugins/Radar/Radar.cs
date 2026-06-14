@@ -276,6 +276,13 @@ namespace Radar
                         "Icons fuer Runenstein-Begegnungen."));
 
                 this.Settings.DrawIconsSettingToImGui(
+                    L("Ritual Icons", "Ritual-Icons"),
+                    this.Settings.RitualIcons,
+                    L(
+                        "Icon for Ritual rune objects.",
+                        "Icon fuer Ritual-Runenobjekte."));
+
+                this.Settings.DrawIconsSettingToImGui(
                     L("Boss Icons", "Boss-Icons"),
                     this.Settings.BossIcons,
                     L(
@@ -1170,6 +1177,7 @@ namespace Radar
                         {
                             var hasMinimapIcon = entityValue.TryGetComponent<MinimapIcon>(out var runeMmIcon);
 
+                            IconPicker? drawnRuneIcon = null;
                             if (hasMinimapIcon &&
                                 !string.IsNullOrEmpty(runeMmIcon!.IconName) &&
                                 RadarSettings.RunestoneIconNameMap.TryGetValue(runeMmIcon.IconName, out var runeDisplayName) &&
@@ -1177,11 +1185,56 @@ namespace Radar
                                 runeIcon.IconScale > 0)
                             {
                                 DrawIcon(runeIcon);
+                                drawnRuneIcon = runeIcon;
                             }
                             else if (this.Settings.RunestoneIcons.TryGetValue("Runestone Encounter", out runeIcon) &&
                                      runeIcon.IconScale > 0)
                             {
                                 DrawIcon(runeIcon);
+                                drawnRuneIcon = runeIcon;
+                            }
+
+                            if (drawnRuneIcon != null &&
+                                entityValue.TryGetComponent<StateMachine>(out var runeSm))
+                            {
+                                long sockets = 0;
+                                foreach (var state in runeSm.States)
+                                {
+                                    if (state.Name == "sockets")
+                                    {
+                                        sockets = state.Value;
+                                        break;
+                                    }
+                                }
+
+                                if (sockets > 0)
+                                {
+                                    var socketText = sockets.ToString();
+                                    var highSockets = sockets >= 5;
+                                    var fontScale = highSockets ? 3f : 1.8f;
+                                    var fontSize = ImGui.GetFontSize() * fontScale;
+                                    var textColor = highSockets
+                                        ? ImGuiHelper.Color(255, 40, 40, 255)
+                                        : ImGuiHelper.Color(255, 255, 255, 255);
+                                    var textSize = ImGui.CalcTextSize(socketText) * fontScale;
+                                    var textHalf = textSize / 2f;
+                                    var iconHalfWidth = iconSizeMultiplier * drawnRuneIcon.IconScale;
+                                    var textPos = new Vector2(
+                                        screenPos.X + iconHalfWidth + 2f,
+                                        screenPos.Y - textHalf.Y);
+                                    fgDraw.AddRectFilled(textPos, textPos + textSize,
+                                        ImGuiHelper.Color(0, 0, 0, 200));
+                                    fgDraw.AddText(ImGui.GetFont(), fontSize, textPos,
+                                        textColor, socketText);
+                                }
+                            }
+                        }
+                        else if (entityValue.EntityCustomGroup == RadarSettings.RitualGroup)
+                        {
+                            if (this.Settings.RitualIcons.TryGetValue("Ritual", out var ritualIcon) &&
+                                ritualIcon.IconScale > 0)
+                            {
+                                DrawIcon(ritualIcon);
                             }
                         }
                         else
@@ -1400,6 +1453,14 @@ namespace Radar
                                      runeIcon.IconScale > 0)
                             {
                                 TryAdd(eId, ePos, runeIcon);
+                            }
+                        }
+                        else if (ev.EntityCustomGroup == RadarSettings.RitualGroup)
+                        {
+                            if (this.Settings.RitualIcons.TryGetValue("Ritual", out var ritualIcon) &&
+                                ritualIcon.IconScale > 0)
+                            {
+                                TryAdd(eId, ePos, ritualIcon);
                             }
                         }
                         else
