@@ -12,7 +12,7 @@ namespace GameOffsets.Objects.Components
         [FieldOffset(0xB08)] public StdVector ActiveSkillsPtr; // ActiveSkillStructure // take and remove skill gem.
         [FieldOffset(0xB20)] public StdVector CooldownsPtr;
         // [FieldOffset(0xA70)] public StdVector VaalSoulsPtr;
-        [FieldOffset(0xC18)] public StdVector DeployedEntityArray; // DeployedEntityStructure
+        [FieldOffset(0xC28)] public StdVector DeployedEntityArray; // DeployedEntityStructure
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

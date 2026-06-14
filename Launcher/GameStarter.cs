@@ -13,18 +13,6 @@ namespace Launcher
                 var newName = MiscHelper.GenerateRandomString();
                 TemporaryFileManager.Purge();
 
-                if (!LocationValidator.IsGameHelperLocationGood(out var message))
-                {
-                    var confirmed = LauncherDialogs.ShowConfirm(
-                        message + Environment.NewLine + Environment.NewLine +
-                        LauncherLocalization.L("Start anyway?", "Trotzdem starten?"),
-                        LauncherLocalization.L("GameHelper notice", "GameHelper Hinweis"));
-                    if (!confirmed)
-                    {
-                        return false;
-                    }
-                }
-
                 var gameHelperPath = GameHelperTransformer.TransformGameHelperExecutable(installDir, appExePath, newName);
                 Process.Start(new ProcessStartInfo
                 {

@@ -162,6 +162,7 @@ namespace AutoHotKeyTrigger.ProfileManager
                 if (!string.IsNullOrEmpty(sourceString))
                 {
                     this.conditions.Add(new(sourceString));
+                    this.addNewConditionDialogOpen = false;
                 }
             }
         }
@@ -182,6 +183,7 @@ namespace AutoHotKeyTrigger.ProfileManager
                 if (!string.IsNullOrEmpty(sourceString))
                 {
                     this.conditions[index] = new(sourceString);
+                    this.modifyConditionDialogOpen = false;
                 }
             }
         }
@@ -278,7 +280,13 @@ namespace AutoHotKeyTrigger.ProfileManager
                     if (expand && ImGui.SmallButton(L("Edit Via Template", "Per Vorlage bearbeiten")))
                     {
                         this.conditionToModify = i;
+                        this.addNewConditionDialogOpen = false;
                         this.modifyConditionDialogOpen = true;
+                        StatusEffectTemplate.ResetForm();
+                        if (this.conditions[i].TryGetSource(out var source))
+                        {
+                            StatusEffectTemplate.TryLoadFromExpression(source);
+                        }
                     }
 
                     ImGui.BeginGroup();
@@ -328,7 +336,9 @@ namespace AutoHotKeyTrigger.ProfileManager
         {
             if (ImGui.Button(L("Add New Condition", "Neue Bedingung")))
             {
+                this.modifyConditionDialogOpen = false;
                 this.addNewConditionDialogOpen = true;
+                StatusEffectTemplate.ResetForm();
             }
 
             ImGui.SameLine();
@@ -387,7 +397,9 @@ namespace AutoHotKeyTrigger.ProfileManager
                 ImGui.SetNextItemWidth(TemplateUi.FieldWidth());
                 ImGuiHelper.EnumComboBox("##ConditionType", ref this.newConditionType);
                 ImGui.Separator();
+                ImGui.PushID("AddNewConditionTemplate");
                 this.Add(this.newConditionType);
+                ImGui.PopID();
                 ImGui.End();
             }
         }
@@ -414,7 +426,9 @@ namespace AutoHotKeyTrigger.ProfileManager
                 ImGui.Separator();
                 if (this.conditionToModify >= 0 && this.conditionToModify < this.conditions.Count)
                 {
+                    ImGui.PushID("ModifyConditionTemplate");
                     this.ModifyExistingCondition(this.newConditionType, this.conditionToModify);
+                    ImGui.PopID();
                 }
 
                 ImGui.End();

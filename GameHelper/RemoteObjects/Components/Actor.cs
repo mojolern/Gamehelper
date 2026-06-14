@@ -6,6 +6,7 @@ namespace GameHelper.RemoteObjects.Components
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using GameHelper.Utils;
     using GameOffsets.Objects.Components;
     using GameOffsets.Objects.FilesStructures;
@@ -116,6 +117,21 @@ namespace GameHelper.RemoteObjects.Components
                 foreach (var (type, count) in this.DeployedEntities)
                 {
                     ImGui.Text($"{DeployedObjectCounter.CategoryName(type)} ({type}): {count}");
+                }
+
+                ImGui.TreePop();
+            }
+
+            if (ImGui.TreeNode("Minion command skills"))
+            {
+                if (this.MinionCommandSkills.Count == 0)
+                {
+                    ImGui.TextWrapped("Empty — summon minions with command skills while in-game.");
+                }
+
+                foreach (var (name, usable) in this.MinionCommandSkills.OrderBy(static pair => pair.Key))
+                {
+                    ImGui.Text($"{name}: {(usable ? "usable" : "on cooldown")}");
                 }
 
                 ImGui.TreePop();
