@@ -17,64 +17,40 @@ namespace GameHelper.RemoteObjects.Components
     /// </summary>
     public class Actor : ComponentBase
     {
-        // private Dictionary<IntPtr, VaalSoulStructure> ActiveSkillsVaalSouls { get; } = new();
-
         private Dictionary<uint, ActiveSkillCooldown> ActiveSkillCooldowns { get; } = new();
 
-        /// <summary>
-        ///     Initializes a new instance of the <see cref="Actor" /> class.
-        /// </summary>
-        /// <param name="address">address of the <see cref="Actor" /> component.</param>
         public Actor(IntPtr address)
             : base(address) { }
 
-        /// <summary>
-        ///     Gets a value indicating what the player is doing.
-        /// </summary>
         public Animation Animation { get; private set; }
 
-        /// <summary>
-        ///     Gets the details of all known Active Skills.
-        /// </summary>
         public Dictionary<string, ActiveSkillDetails> ActiveSkills { get; } = new();
 
-        /// <summary>
-        ///     Gets a value indicating if the skill can be used or not.
-        /// </summary>
         public HashSet<string> IsSkillUsable { get; } = new();
 
-        /// <summary>
-        ///     Gets the total number of entities of a given DeployedObjectType is deployed by this entity.
-        /// </summary>
-        public int[] DeployedEntities { get; private set; } = new int[256];
+        public Dictionary<string, bool> MinionCommandSkills { get; } = new();
 
-        /// <summary>
-        ///     Converts the <see cref="Actor" /> class data to ImGui.
-        /// </summary>
+        public HashSet<string> UsableMinionCommandSkills { get; } = new();
+
+        public DeployedObjectCounter DeployedEntities { get; } = new();
+
         internal override void ToImGui()
         {
             base.ToImGui();
             ImGui.Text($"AnimationId: 0x{(int)this.Animation:X}, Animation: {this.Animation}");
-            // if (ImGui.TreeNode("Vaal Souls"))
-            // {
-            //     foreach(var (skillNamePtr, skillDetails) in this.ActiveSkillsVaalSouls)
-            //     {
-            //         if (ImGui.TreeNode($"{skillNamePtr.ToInt64():X}"))
-            //         {
-            //             ImGui.Text($"Required Souls: {skillDetails.RequiredSouls}");
-            //             ImGui.Text($"Current Souls: {skillDetails.CurrentSouls}");
-            //             ImGui.TreePop();
-            //         }
-            //     }
-            //
-            //     ImGui.TreePop();
-            // }
 
             if (ImGui.TreeNode("Cooldowns"))
             {
+                var cooldownSkillNames = new Dictionary<uint, string>();
+                foreach (var (skillName, details) in this.ActiveSkills)
+                {
+                    cooldownSkillNames[details.UnknownIdAndEquipmentInfo] = skillName;
+                }
+
                 foreach (var (skillId, skillDetails) in this.ActiveSkillCooldowns)
                 {
-                    if (ImGui.TreeNode($"{skillId:X}"))
+                    var name = cooldownSkillNames.TryGetValue(skillId, out var sn) ? sn : "?";
+                    if (ImGui.TreeNode($"{name} ({skillId:X})"))
                     {
                         ImGui.Text($"Active Skill Id: {skillDetails.ActiveSkillsDatId}");
                         ImGuiHelper.IntPtrToImGui(
@@ -115,15 +91,8 @@ namespace GameHelper.RemoteObjects.Components
                         ImGuiHelper.IntPtrToImGui("Granted Effects Ptr", skilldetails.GrantedEffectsPerLevelDatRow);
                         ImGuiHelper.IntPtrToImGui($"Active Skills Ptr", skilldetails.ActiveSkillsDatPtr);
                         ImGuiHelper.IntPtrToImGui("Granted Effect Stat Sets Per Level Ptr", skilldetails.GrantedEffectStatSetsPerLevelDatRow);
-                        //ImGui.Text($"Can be used with weapons: {skilldetails.CanBeUsedWithWeapon}");
-                        //ImGui.Text($"Can not be used: {skilldetails.CannotBeUsed}");
-                        //ImGui.Text($"Current Vaal Soul (-1 if not vaal skill): {skilldetails.CurrentVaalSouls}");
-                        //ImGui.Text($"Unknown0: {skilldetails.UnknownByte0}");
-                        //ImGui.Text($"Unknown1: {skilldetails.UnknownByte1}");
                         ImGui.Text($"Total Uses: {skilldetails.TotalUses}");
                         ImGui.Text($"Cooldown Time (ms): {skilldetails.TotalCooldownTimeInMs}");
-                        //ImGui.Text($"Souls per use: {skilldetails.SoulsPerUse}");
-                        //ImGui.Text($"Total Vaal Uses: {skilldetails.TotalVaalUses}");
                         ImGui.TreePop();
                     }
                 }
@@ -144,11 +113,65 @@ namespace GameHelper.RemoteObjects.Components
             if (ImGui.TreeNode("Deployed Objects"))
             {
                 ImGui.Text("Please throw mines, totem, minons, traps, etc to populate the data over here.");
-                for (var i = 0; i < this.DeployedEntities.Length; i++)
+                foreach (var (type, count) in this.DeployedEntities)
                 {
-                    if (this.DeployedEntities[i] > 0)
+                    ImGui.Text($"{DeployedObjectCounter.CategoryName(type)} ({type}): {count}");
+                }
+
+                ImGui.TreePop();
+            }
+
+            if (ImGui.TreeNode("Minion Cooldowns"))
+            {
+                ImGui.TextWrapped("Command skills grouped by minion. Each line: skill name, cooldown " +
+                    "key, datId, active uses, and whether it is currently unusable (active == uses).");
+                var cdReader = Core.Process.Handle;
+                var cdAreaState = Core.States.InGameStateObject.CurrentAreaInstance;
+                foreach (var (_, entity) in cdAreaState.AwakeEntities)
+                {
+                    if (!entity.IsValid || !entity.TryGetComponent<Actor>(out var minionActor))
                     {
-                        ImGui.Text($"Object Type: {i}, Total Count: {this.DeployedEntities[i]}");
+                        continue;
+                    }
+
+                    if (minionActor.Address == this.Address || minionActor.ActiveSkillCooldowns.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    if (ImGui.TreeNode($"{entity.Path}##cd{entity.Id}"))
+                    {
+                        var keyToName = new Dictionary<uint, string>();
+                        var minionData = cdReader.ReadMemory<ActorOffset>(minionActor.Address);
+                        var minionSkills = cdReader.ReadStdVector<ActiveSkillStructure>(minionData.ActiveSkillsPtr);
+                        for (var i = 0; i < minionSkills.Length; i++)
+                        {
+                            if (minionSkills[i].ActiveSkillPtr == IntPtr.Zero)
+                            {
+                                continue;
+                            }
+
+                            var sd = cdReader.ReadMemory<ActiveSkillDetails>(minionSkills[i].ActiveSkillPtr);
+                            if (sd.GrantedEffectsPerLevelDatRow == IntPtr.Zero)
+                            {
+                                continue;
+                            }
+
+                            var (skillName, _) = ((string, IntPtr))Core.GgpkObjectCache.AddOrGetExisting(
+                                sd.GrantedEffectsPerLevelDatRow,
+                                key => (cdReader.ReadUnicodeString(cdReader.ReadMemory<IntPtr>(key)), key));
+                            keyToName[sd.UnknownIdAndEquipmentInfo] = skillName;
+                        }
+
+                        foreach (var (cdKey, cd) in minionActor.ActiveSkillCooldowns)
+                        {
+                            var name = keyToName.TryGetValue(cdKey, out var n) ? n : "?";
+                            ImGui.Text(
+                                $"{name}: key=0x{cdKey:X} datId={cd.ActiveSkillsDatId} " +
+                                $"active={cd.TotalActiveCooldowns()} cannotUse={cd.CannotBeUsed()}");
+                        }
+
+                        ImGui.TreePop();
                     }
                 }
 
@@ -156,7 +179,6 @@ namespace GameHelper.RemoteObjects.Components
             }
         }
 
-        /// <inheritdoc />
         protected override void UpdateData(bool hasAddressChanged)
         {
             var reader = Core.Process.Handle;
@@ -166,11 +188,6 @@ namespace GameHelper.RemoteObjects.Components
             this.IsSkillUsable.Clear();
             this.ActiveSkills.Clear();
             this.ActiveSkillCooldowns.Clear();
-            // var skillsvaalsouls = reader.ReadStdVector<VaalSoulStructure>(data.VaalSoulsPtr);
-            // for (var i = 0; i < skillsvaalsouls.Length; i++)
-            // {
-            //     this.ActiveSkillsVaalSouls[skillsvaalsouls[i].ActiveSkillsDatPtr] = skillsvaalsouls[i];
-            // }
 
             var cooldowns = reader.ReadStdVector<ActiveSkillCooldown>(data.CooldownsPtr);
             for (var i = 0; i < cooldowns.Length; i++)
@@ -185,49 +202,105 @@ namespace GameHelper.RemoteObjects.Components
                 if (skillDetails.GrantedEffectsPerLevelDatRow == IntPtr.Zero ||
                     (skillDetails.UnknownIdAndEquipmentInfo >> 0x10) < 0x8000)
                 {
-                    // No usecase for these skills.
-                    // this.ActiveSkills[i.ToString()] = skillDetails;
+                    continue;
                 }
-                else
+
+                (var name, skillDetails.ActiveSkillsDatPtr) = ((string, IntPtr))Core.GgpkObjectCache.
+                    AddOrGetExisting(skillDetails.GrantedEffectsPerLevelDatRow, (key) =>
+                    {
+                        return (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key);
+                    });
+
+                var cannotbeused = false;
+                if (this.ActiveSkillCooldowns.TryGetValue(skillDetails.UnknownIdAndEquipmentInfo, out var cooldownInfo))
                 {
-                    (var name, skillDetails.ActiveSkillsDatPtr) = ((string, IntPtr))Core.GgpkObjectCache.
-                        AddOrGetExisting(skillDetails.GrantedEffectsPerLevelDatRow, (key) =>
-                        {
-                            return (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key);
-                        });
+                    cannotbeused |= cooldownInfo.CannotBeUsed();
+                }
 
-                    // skillDetails.CurrentVaalSouls = -1;
-                    var cannotbeused = false;
-                    if (this.ActiveSkillCooldowns.TryGetValue(skillDetails.UnknownIdAndEquipmentInfo, out var cooldownInfo))
-                    {
-                        cannotbeused |= cooldownInfo.CannotBeUsed();
-                    }
-                    // else if (this.ActiveSkillsVaalSouls.TryGetValue(skillDetails.ActiveSkillsDatPtr, out var vaalSoulInfo))
-                    // {
-                    //     skillDetails.CurrentVaalSouls = vaalSoulInfo.CurrentSouls;
-                    //     cannotbeused |= vaalSoulInfo.CannotBeUsed();
-                    // }
-
-                    this.ActiveSkills[name] = skillDetails;
-                    if (cannotbeused)
-                    {
-                    }
-                    else
-                    {
-                        this.IsSkillUsable.Add(name);
-                    }
+                this.ActiveSkills[name] = skillDetails;
+                if (!cannotbeused)
+                {
+                    this.IsSkillUsable.Add(name);
                 }
             }
 
-            Array.Fill(this.DeployedEntities, 0);
+            this.DeployedEntities.Clear();
             var deployedEntities = reader.ReadStdVector<DeployedEntityStructure>(data.DeployedEntityArray);
             for (var i = 0; i < deployedEntities.Length; i++)
             {
-                if (deployedEntities[i].DeployedObjectType < this.DeployedEntities.Length &&
-                    deployedEntities[i].DeployedObjectType >= 0)
+                this.DeployedEntities.Increment(deployedEntities[i].DeployedObjectType);
+            }
+
+            this.UpdateMinionCommandSkills(deployedEntities);
+        }
+
+        private void UpdateMinionCommandSkills(DeployedEntityStructure[] deployedEntities)
+        {
+            this.MinionCommandSkills.Clear();
+            this.UsableMinionCommandSkills.Clear();
+
+            var area = Core.States.InGameStateObject.CurrentAreaInstance;
+            if (deployedEntities.Length == 0 ||
+                this.OwnerEntityAddress == IntPtr.Zero ||
+                this.OwnerEntityAddress != area.Player.Address)
+            {
+                return;
+            }
+
+            var deployedIds = new HashSet<uint>();
+            for (var i = 0; i < deployedEntities.Length; i++)
+            {
+                deployedIds.Add((uint)deployedEntities[i].EntityId);
+            }
+
+            foreach (var (_, entity) in area.AwakeEntities)
+            {
+                if (!entity.IsValid ||
+                    !deployedIds.Contains(entity.Id) ||
+                    !entity.TryGetComponent<Actor>(out var minionActor))
                 {
-                    this.DeployedEntities[deployedEntities[i].DeployedObjectType]++;
+                    continue;
                 }
+
+                minionActor.CollectCommandSkills(this.MinionCommandSkills);
+            }
+
+            foreach (var (name, usable) in this.MinionCommandSkills)
+            {
+                if (usable)
+                {
+                    this.UsableMinionCommandSkills.Add(name);
+                }
+            }
+        }
+
+        private void CollectCommandSkills(Dictionary<string, bool> aggregate)
+        {
+            var reader = Core.Process.Handle;
+            var data = reader.ReadMemory<ActorOffset>(this.Address);
+            var skills = reader.ReadStdVector<ActiveSkillStructure>(data.ActiveSkillsPtr);
+            for (var i = 0; i < skills.Length; i++)
+            {
+                if (skills[i].ActiveSkillPtr == IntPtr.Zero)
+                {
+                    continue;
+                }
+
+                var skillDetails = reader.ReadMemory<ActiveSkillDetails>(skills[i].ActiveSkillPtr);
+
+                if ((skillDetails.UnknownIdAndEquipmentInfo & 0xFFFF0000u) != 0x40000000u ||
+                    skillDetails.GrantedEffectsPerLevelDatRow == IntPtr.Zero)
+                {
+                    continue;
+                }
+
+                var (name, _) = ((string, IntPtr))Core.GgpkObjectCache.AddOrGetExisting(
+                    skillDetails.GrantedEffectsPerLevelDatRow,
+                    key => (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key));
+                var usable = !(this.ActiveSkillCooldowns.TryGetValue(
+                    skillDetails.UnknownIdAndEquipmentInfo, out var cooldown) && cooldown.CannotBeUsed());
+
+                aggregate[name] = aggregate.TryGetValue(name, out var existing) ? existing || usable : usable;
             }
         }
     }

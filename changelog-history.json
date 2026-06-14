@@ -1,6 +1,13 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.2",
+                         "published":  "2026-06-14T14:05:09.7061954Z",
+                         "changelog":  [
+                                           "[New] AutoHotKey: Gordin v2.4.0 port (minion cooldowns, animations, damageable monsters) || [Neu] AutoHotKey: Gordin v2.4.0 übernommen (Minion-Cooldowns, Animationen, damageable Monster)"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.1",
                          "published":  "2026-06-13T14:54:42.8848906Z",
                          "changelog":  [

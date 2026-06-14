@@ -157,28 +157,20 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
             {
                 var parsingConfig = new ParsingConfig()
                 {
-                    AllowNewToEvaluateAnyType = false,
-                    ResolveTypesBySimpleName = false,
-                    AllowEqualsAndToStringMethodsOnObject = false
+                    AllowNewToEvaluateAnyType = true,
+                    ResolveTypesBySimpleName = true,
+                    AllowEqualsAndToStringMethodsOnObject = true
                 };
 
                 var types = new System.Collections.Generic.List<Type>
                 {
-                    typeof(DynamicConditionState),
-                    typeof(Interface.IDynamicConditionState),
-                    typeof(Interface.IVitalsInfo),
-                    typeof(Interface.IVital),
-                    typeof(Interface.IFlasksInfo),
-                    typeof(Interface.IFlaskInfo),
-                    typeof(Interface.IBuffDictionary),
-                    typeof(Interface.IStatusEffect),
                     typeof(GameHelper.RemoteEnums.Animation),
                     typeof(Interface.MonsterRarity),
                     typeof(Interface.MonsterNearbyZones),
-                    typeof(ClickableTransparentOverlay.Win32.VK),
+                    typeof(ClickableTransparentOverlay.Win32.VK)
                 };
 
-                parsingConfig.CustomTypeProvider = new System.Linq.Dynamic.Core.CustomTypeProviders.DefaultDynamicLinqCustomTypeProvider(parsingConfig, types, false);
+                parsingConfig.CustomTypeProvider = new System.Linq.Dynamic.Core.CustomTypeProviders.DefaultDynamicLinqCustomTypeProvider(parsingConfig, types, true);
 
                 var expression = DynamicExpressionParser.ParseLambda<DynamicConditionState, bool>(
                     parsingConfig,

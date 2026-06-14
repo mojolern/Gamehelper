@@ -99,6 +99,14 @@ namespace AutoHotKeyTrigger
         public bool UseLegacyKeyInput = true;
 
         /// <summary>
+        ///     Gets a value indicating whether to scan nearby Unique/boss monsters once per
+        ///     second for stats/buffs that could mean they are currently invulnerable. This is
+        ///     a discovery tool: it logs candidate markers so the real "cannot be damaged"
+        ///     signal can be identified, then wired into a proper condition.
+        /// </summary>
+        public bool ScanUniqueInvulnMarkers;
+
+        /// <summary>
         ///     Bumped when one-time settings migrations run.
         /// </summary>
         [DefaultValue(0)]

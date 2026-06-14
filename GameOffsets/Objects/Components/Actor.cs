@@ -102,6 +102,11 @@ namespace GameOffsets.Objects.Components
         public int PAD_0x014;
         public int Counter;
 
+        // PoE2 grew this element from 20 to 24 bytes. ReadStdVector rejects the
+        // whole vector when its byte length isn't a multiple of the element size,
+        // so an undersized struct here makes the deployed-entity count read 0.
+        public int PAD_0x18;
+
         public override readonly string ToString()
         {
             return $"{this.DeployedObjectType} - {this.ActiveSkillsDatId} - {this.EntityId}";

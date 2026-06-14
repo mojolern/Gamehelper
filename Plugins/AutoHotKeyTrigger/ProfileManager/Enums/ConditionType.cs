@@ -54,6 +54,12 @@ namespace AutoHotKeyTrigger.ProfileManager.Enums
         IS_SKILL_USEABLE,
 
         /// <summary>
+        ///     Condition based on a minion "command" skill being useable (its cooldown lives on
+        ///     the summoned minion, not the player).
+        /// </summary>
+        MINION_COMMAND_USEABLE,
+
+        /// <summary>
         ///     Condition based on deployed object count.
         /// </summary>
         DEPLOYED_OBJECT_COUNT,
@@ -62,6 +68,12 @@ namespace AutoHotKeyTrigger.ProfileManager.Enums
         ///     Condition based on the nearby monster count.
         /// </summary>
         NEARBY_MONSTER_COUNT,
+
+        /// <summary>
+        ///     Condition based on the nearby monster count within an explicit range,
+        ///     optionally filtered by whether the monsters are currently damageable.
+        /// </summary>
+        NEARBY_MONSTER_COUNT_IN_RANGE,
 
         /// <summary>
         ///     Condition based on the user pressing of mouse/keyboard key.

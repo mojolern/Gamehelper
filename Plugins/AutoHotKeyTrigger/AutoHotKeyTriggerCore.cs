@@ -7,6 +7,7 @@ namespace AutoHotKeyTrigger
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Numerics;
     using ClickableTransparentOverlay.Win32;
     using Coroutine;
@@ -15,6 +16,7 @@ namespace AutoHotKeyTrigger
     using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
+    using GameHelper.RemoteEnums.Entity;
     using GameHelper.RemoteObjects.Components;
     using GameHelper.Utils;
     using ImGuiNET;
@@ -40,6 +42,8 @@ namespace AutoHotKeyTrigger
         private readonly List<string> keyPressInfo = new();
         private bool keyPressInfoAdded = false;
         private bool isDebugWindowHovered = false;
+        private DateTime lastInvulnScan = DateTime.MinValue;
+        private readonly Dictionary<uint, string> lastInvulnReport = new();
         private ActiveCoroutine? onAreaChange;
         private string debugMessage = string.Empty;
         private string newProfileName = string.Empty;
@@ -75,6 +79,17 @@ namespace AutoHotKeyTrigger
                 ImGuiHelper.ToolTip(L(
                     "This hotkey will dump the current active player's buff(s), debuff(s) into a text file in the GameHelper -> Plugins -> AutoHotKeyTrigger folder.",
                     "Speichert aktuelle Buffs/Debuffs des Spielers in eine Textdatei im AutoHotKeyTrigger-Plugin-Ordner."));
+                ImGui.Checkbox(L("Scan nearby Unique monsters for invuln markers (1/sec)",
+                        "Nahe Unique-Monster auf Invuln-Marker scannen (1/Sek)"),
+                    ref this.Settings.ScanUniqueInvulnMarkers);
+                ImGuiHelper.ToolTip(L(
+                    "Discovery tool. Once per second, logs any nearby Unique/boss monster whose Stats or Buffs " +
+                    "contain an entry that could mean it's currently invulnerable (names containing cannot_be_damaged, " +
+                    "invulnerable, cannot_die, immune, untargetable, etc.). It only logs when a monster's marker set CHANGES, " +
+                    "so the damageable<->invulnerable transition is easy to spot. Output goes to the AHK Debug Window " +
+                    "(enable Debug Mode to see it live) and is appended to unique_invuln_markers.txt in the plugin folder.",
+                    "Discovery-Tool: scannt einmal pro Sekunde nahe Unique/Boss-Monster nach Stats/Buffs mit Invuln-Hinweisen. " +
+                    "Loggt nur bei Aenderungen. Ausgabe im AHK-Debug-Fenster und in unique_invuln_markers.txt im Plugin-Ordner."));
                 ImGuiHelper.IEnumerableComboBox(L("Profile", "Profil"), this.Settings.Profiles.Keys, ref this.Settings.CurrentProfile);
                 if (string.IsNullOrEmpty(this.Settings.CurrentProfile) && this.Settings.Profiles.Count > 0)
                 {
@@ -163,6 +178,11 @@ namespace AutoHotKeyTrigger
         /// <inheritdoc />
         public override void DrawUI()
         {
+            if (this.Settings.ScanUniqueInvulnMarkers)
+            {
+                this.ScanUniqueInvulnMarkers();
+            }
+
             if (this.Settings.DebugMode)
             {
                 ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
@@ -261,6 +281,110 @@ namespace AutoHotKeyTrigger
             foreach (var rule in this.Settings.Profiles[this.Settings.CurrentProfile].Rules)
             {
                 rule.Execute(this.DebugLog);
+            }
+        }
+
+        /// <summary>
+        ///     Discovery helper: once per second, scans nearby Unique/boss monsters and logs any
+        ///     Stats/Buffs entry that could indicate the monster is currently invulnerable.
+        /// </summary>
+        private void ScanUniqueInvulnMarkers()
+        {
+            var now = DateTime.Now;
+            if ((now - this.lastInvulnScan).TotalSeconds < 1)
+            {
+                return;
+            }
+
+            this.lastInvulnScan = now;
+            if (Core.States.GameCurrentState != GameStateTypes.InGameState)
+            {
+                return;
+            }
+
+            var area = Core.States.InGameStateObject.CurrentAreaInstance;
+            var seen = new HashSet<uint>();
+            foreach (var entity in area.AwakeEntities.Values)
+            {
+                if (entity.EntityType != EntityTypes.Monster)
+                {
+                    continue;
+                }
+
+                if (!entity.TryGetComponent<ObjectMagicProperties>(out var omp) ||
+                    omp.Rarity != Rarity.Unique)
+                {
+                    continue;
+                }
+
+                seen.Add(entity.Id);
+                var markers = new List<string>();
+                if (entity.TryGetComponent<Stats>(out var stats))
+                {
+                    CollectInvulnStats(stats.StatsChangedByBuffAndActions, "stat", markers);
+                    CollectInvulnStats(stats.StatsChangedByItems, "item-stat", markers);
+                }
+
+                if (entity.TryGetComponent<Buffs>(out var buffs))
+                {
+                    foreach (var name in buffs.StatusEffects.Keys)
+                    {
+                        var lower = name.ToLowerInvariant();
+                        if (lower.Contains("invuln") || lower.Contains("immun") ||
+                            lower.Contains("cannot") || lower.Contains("untarget") ||
+                            lower.Contains("phase") || lower.Contains("damage_taken"))
+                        {
+                            markers.Add($"buff:{name}");
+                        }
+                    }
+                }
+
+                var report = markers.Count == 0 ? "no-invuln-markers" : string.Join(", ", markers);
+                if (this.lastInvulnReport.TryGetValue(entity.Id, out var prev) && prev == report)
+                {
+                    continue;
+                }
+
+                this.lastInvulnReport[entity.Id] = report;
+                var line = $"UNIQUE [{entity.Id}] {entity.Path} | state={entity.EntityState} | {report}";
+                this.DebugLog(line);
+                try
+                {
+                    File.AppendAllText(
+                        Path.Join(this.DllDirectory, "unique_invuln_markers.txt"),
+                        $"{now:HH:mm:ss} {line}{Environment.NewLine}");
+                }
+                catch (IOException)
+                {
+                }
+            }
+
+            foreach (var goneId in this.lastInvulnReport.Keys.Where(k => !seen.Contains(k)).ToList())
+            {
+                this.lastInvulnReport.Remove(goneId);
+            }
+        }
+
+        private static void CollectInvulnStats(Dictionary<GameStats, int> stats, string prefix, List<string> markers)
+        {
+            if (stats == null)
+            {
+                return;
+            }
+
+            foreach (var kv in stats)
+            {
+                if (kv.Value == 0)
+                {
+                    continue;
+                }
+
+                var name = kv.Key.ToString();
+                if (name.Contains("cannot_be_damaged") || name.Contains("invulnerable") ||
+                    name.Contains("cannot_die") || name.Contains("immun"))
+                {
+                    markers.Add($"{prefix}:{name}={kv.Value}");
+                }
             }
         }
 

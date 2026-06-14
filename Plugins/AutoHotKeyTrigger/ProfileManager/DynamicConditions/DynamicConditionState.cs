@@ -44,6 +44,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
                 {
                     this.PlayerAnimation = (int)actorComponent.Animation;
                     this.PlayerSkillIsUseable = actorComponent.IsSkillUsable;
+                    this.MinionCommandSkillIsUsable = actorComponent.UsableMinionCommandSkills;
                     this.DeployedObjectsCount = actorComponent.DeployedEntities;
                     this.ActiveSkills = actorComponent.ActiveSkills;
                 }
@@ -86,15 +87,11 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         public HashSet<string> PlayerSkillIsUseable { get; } = new();
 
-        /// <summary>
-        ///   The player skill details are in this structure.
-        /// </summary>
+        public HashSet<string> MinionCommandSkillIsUsable { get; } = new();
+
         public Dictionary<string, ActiveSkillDetails> ActiveSkills { get; } = new();
 
-        /// <summary>
-        ///     The objects deployed by the player with Object type as key and Object Counter as value.
-        /// </summary>
-        public int[] DeployedObjectsCount { get; } = new int[256];
+        public DeployedObjectCounter DeployedObjectsCount { get; } = new();
 
         /// <summary>
         ///     The ailment list

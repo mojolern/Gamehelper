@@ -1,0 +1,11 @@
+Kanal: STABIL
+
+Quellcode:  D:\ZusatzProgramme\Gamehelper
+Lokaler Build: publish\  (rebuild-and-publish.bat / rebuild-test.bat)
+GitHub:       MordWraith/Gamehelper
+
+Experimental-Quellcode liegt getrennt unter:
+  D:\ZusatzProgramme\Gamehelper-Experimental-Src  (Deploy: publish\ dort)
+
+Neue Features zuerst nur dort. Uebertrag nach Stabil:
+  scripts\transfer-experimental-to-stable.ps1
