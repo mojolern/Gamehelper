@@ -34,6 +34,44 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
 Run `publish\GameHelper.exe`. No downloader or auto-update required.
 
+## Windows Defender and antivirus (false positives)
+
+Unsigned game overlays that **download**, **extract**, and **load DLLs** are commonly flagged by Windows Defender and other AV. That is **expected** for tools like GameHelper — it does not necessarily mean malware.
+
+### Common detection names
+
+| Name | Typical trigger |
+|------|-----------------|
+| `Trojan:Win32/Wacatac.C!ml` | `GameHelper.App.dll` — overlay DLL load + memory reads |
+| `Trojan:Win32/PowhidSubExec.B` | Auto-update installer — background script copies from `%TEMP%\GameHelperUpdate\` into your install folder |
+
+Other vendors may use different names for the same behavior.
+
+### Why GameHelper may not start
+
+1. Defender **blocked** `GameHelper.exe`, `GameHelper.App.dll`, `cmd.exe`, or a `GameHelperUpdate` entry.
+2. Open **Windows Security → Protection history**, find the block, then **Allow** / **Restore**, or add a **folder exclusion** for your GameHelper install path.
+3. Do **not** mix files from different versions (e.g. old `GameHelper.App.dll` with a new launcher).
+4. **Clean install:** download the [full ZIP](https://github.com/MordWraith/Gamehelper/releases/latest), extract to a **new empty folder**, run `GameHelper.exe`.
+
+You do **not** need to read source code to fix a block — use Protection history or a manual ZIP install.
+
+### What auto-update does (why AV complains)
+
+When you approve an update, the launcher:
+
+1. Downloads a signed ZIP to `%TEMP%\GameHelperUpdate\<version>\`
+2. Starts a small **background installer** (`cmd` + batch + `robocopy`) that waits for the launcher to exit, copies files into your install folder, and restarts GameHelper
+
+That matches generic “dropper” heuristics. The same files are on GitHub Releases with SHA256 checks in the signed `manifest.json`.
+
+### Release integrity
+
+- `manifest.json` is **signed**; the launcher rejects tampered manifests.
+- Each file must match the **SHA256** hash in the manifest.
+
+You still trust whoever holds the signing key — the same model as any pre-built overlay.
+
 ## Reporting issues
 
 Security or trust concerns: [GitHub Issues](https://github.com/MordWraith/Gamehelper/issues) (no DMs required).

@@ -14,6 +14,7 @@ GameHelper is a Windows x64 .NET overlay for **Path of Exile 2** with a plugin a
 
 - **Do not want auto-update?** Use the [full ZIP](https://github.com/MordWraith/Gamehelper/releases/latest) or [build from source](#build-from-source).
 - **Trust / security:** [SECURITY.md](SECURITY.md) — signed manifests, what gets updated, what stays local.
+- **Windows Defender blocked GameHelper?** See [SECURITY.md → false positives](SECURITY.md#windows-defender-and-antivirus-false-positives) — common with auto-update and unsigned DLLs; usually not a real trojan.
 - **Attribution:** [CREDITS.md](CREDITS.md) and in-app **Plugins → Author** column.
 
 ## Download (players)
@@ -110,6 +111,8 @@ Plugins\<Name>\config\
 **Update pulled wrong version** — Install into an **empty** folder; check `VERSION.txt`.
 
 **Overlay does not attach** — Match admin elevation with the game.
+
+**Windows Defender / helper won't start** — Open Protection history, allow blocked `GameHelper` / `GameHelperUpdate` entries, or install from the [full ZIP](https://github.com/MordWraith/Gamehelper/releases/latest) into a new folder. Details: [SECURITY.md](SECURITY.md#windows-defender-and-antivirus-false-positives).
 
 ## Links
 

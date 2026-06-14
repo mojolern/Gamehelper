@@ -12,3 +12,6 @@
 [Fix] AutoHotKeyTrigger: rules no longer run without an active profile selected || [Fix] AutoHotKeyTrigger: Regeln laufen nicht mehr ohne gewaehltes Profil
 [New] Activity log window shows key presses sent to the game || [Neu] Aktivitaets-Log zeigt an GameHelper-Tasteneingaben
 [Plugin] Autopot: ES disconnect option for CI builds || [Plugin] Autopot: ES-Disconnect-Option fuer CI-Builds
+
+# Optional — wenn Defender/AV wieder Thema ist (einmal pro Release reicht oft):
+# [Info] If Windows Defender blocks the updater, see SECURITY.md (false positive) — allow in Protection history or use the full ZIP || [Info] Blockiert Defender den Updater: SECURITY.md (Fehlalarm) — in Schutzverlauf erlauben oder Full-ZIP nutzen
