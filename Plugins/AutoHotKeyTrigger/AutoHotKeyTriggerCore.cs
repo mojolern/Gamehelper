@@ -1,4 +1,4 @@
-// <copyright file="AutoHotKeyTriggerCore.cs" company="PlaceholderCompany">
+﻿// <copyright file="AutoHotKeyTriggerCore.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -13,7 +13,6 @@ namespace AutoHotKeyTrigger
     using Coroutine;
     using GameHelper;
     using GameHelper.CoroutineEvents;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteEnums.Entity;
@@ -29,9 +28,6 @@ namespace AutoHotKeyTrigger
     /// </summary>
     public sealed class AutoHotKeyTriggerCore : PCore<AutoHotKeyTriggerSettings>
     {
-        /// <summary>Built-in profile shell; user edits persist in settings.txt.</summary>
-        public const string LeagueStartDefaultProfileName = "LeagueStartDefaultProfile";
-
         private readonly string warningMsg = "The current condition you have put for AutoQuit is yielding true.\n" +
             "This mean you will automatically logout as soon as you leave town/hideout.\n" +
             "Please update your AutoQuit condition and/or disable it and/or fix your exile state.";
@@ -58,57 +54,49 @@ namespace AutoHotKeyTrigger
         public override void DrawSettings()
         {
             ImGui.PushTextWrapPos(ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(this.impTextColor, L(
-                "Do not trust Settings.txt files for Auto Hokey Trigger from sources you have not personally verified. They may contain malicious content that can compromise your computer. Using profiles with incorrectly configured rules may also lead to you being kicked from the server, or your account being banned as a result of preforming to many actions repeatedly.",
-                "Vertraue Settings.txt-Dateien fuer Auto Hotkey Trigger nur aus verifizierten Quellen. Sie koennen schaedlichen Inhalt enthalten. Falsch konfigurierte Profile koennen zu Server-Kicks oder Banns fuehren."));
+            ImGui.TextColored(this.impTextColor, "Do not trust Settings.txt files for Auto Hokey Trigger from sources you have not personally verified. " + 
+                              "They may contain malicious content that can compromise your computer. " +
+                              "Using profiles with incorrectly configured rules may also lead to you being kicked from the server, " +
+                              "or your account being banned as a result of preforming to many actions repeatedly.") ;
             ImGui.NewLine();
-            ImGui.TextColored(this.impTextColor, L(
-                "Again, all profiles/rules created to use a specified flask(s) should have at a minimum the FLASK_EFFECT and an appropriate number of FLASK_CHARGES defined as part of the use condition of a given profile rule. Failing to to include these two conditions as part of a rule will likely result in Auto Hotkey Trigger spamming the flask(s), resulting in a possible kick or ban from the game servers because of sending to many actions to the server. You have been warrned, use common sense when creating profiles/rulse with this tool.",
-                "Flask-Regeln brauchen mindestens FLASK_EFFECT und FLASK_CHARGES. Ohne diese Bedingungen kann das Plugin Flasks spammen und zu Kick/Bann fuehren."));
+            ImGui.TextColored(this.impTextColor, "Again, all profiles/rules created to use a specified flask(s) should have at a minimum " +
+                              "the FLASK_EFFECT and an appropriate number of FLASK_CHARGES defined as part of the use condition of a given profile rule. " +
+                              "Failing to to include these two conditions as part of a rule will likely result in Auto Hotkey Trigger spamming the flask(s), " + 
+                              "resulting in a possible kick or ban from the game servers because of sending to many actions to the server. " +
+                              "You have been warrned, use common sense when creating profiles/rulse with this tool.");
             ImGui.PopTextWrapPos();
-            if (ImGui.CollapsingHeader(L("Common Config", "Allgemeine Einstellungen")))
+            if (ImGui.CollapsingHeader("Common Config"))
             {
-                ImGui.Checkbox(L("Debug Mode", "Debug-Modus"), ref this.Settings.DebugMode);
+                ImGui.Checkbox("Debug Mode", ref this.Settings.DebugMode);
                 ImGui.SameLine();
-                ImGui.Checkbox(L("Trigger rules or execute Autoquit in Hideout", "Regeln/Auto-Quit im Hideout ausfuehren"), ref this.Settings.ShouldRunInHideout);
-                ImGuiHelper.ToolTip(L(
-                    "The debug mode may prove to be a helpful tool in troubleshooting Auto HotKey Trigger profile rules that are not preforming as expected. It is highly suggested to create and test all new profiles/rules with the debug mode turned on.",
-                    "Debug-Modus hilft beim Testen neuer Profile/Regeln. Neue Regeln immer zuerst mit Debug-Modus testen."));
-                ImGuiHelper.NonContinuousEnumComboBox(L("Dump Player Status Effects", "Spieler-Status-Effekte speichern"),
+                ImGui.Checkbox("Trigger rules or execute Autoquit in Hideout", ref this.Settings.ShouldRunInHideout);
+                ImGuiHelper.ToolTip("The debug mode may prove to be a helpful tool in troubleshooting Auto HotKey Trigger profile rules that are not preforming as expected. " +
+                                    "It can also be used to verify if AutoHotKeyTrigger is spamming the profile rule action or not based on the included conditions of a given profile rule. " +
+                                    "It is highly suggested to create and test all new profiles/rules with the debug mode turned on to insure that all rules are preforming as expected.");
+                ImGuiHelper.NonContinuousEnumComboBox("Dump Player Status Effects",
                     ref this.Settings.DumpStatusEffectOnMe);
-                ImGuiHelper.ToolTip(L(
-                    "This hotkey will dump the current active player's buff(s), debuff(s) into a text file in the GameHelper -> Plugins -> AutoHotKeyTrigger folder.",
-                    "Speichert aktuelle Buffs/Debuffs des Spielers in eine Textdatei im AutoHotKeyTrigger-Plugin-Ordner."));
-                ImGui.Checkbox(L("Scan nearby Unique monsters for invuln markers (1/sec)",
-                        "Nahe Unique-Monster auf Invuln-Marker scannen (1/Sek)"),
+                ImGuiHelper.ToolTip($"This hotkey will dump the current active player's buff(s), debuff(s) into a text file in the GameHelper -> Plugins -> " +
+                                    $"AutoHotKeyTrigger folder. Use this hotkey if the AutoHotKeyTrigger plugin fails to detect for example: " +
+                                    $"bleeds, corrupting blood, poison, freeze, ignites or other de(buffs) currently active on the character.");
+                ImGui.Checkbox("Scan nearby Unique monsters for invuln markers (1/sec)",
                     ref this.Settings.ScanUniqueInvulnMarkers);
-                ImGuiHelper.ToolTip(L(
-                    "Discovery tool. Once per second, logs any nearby Unique/boss monster whose Stats or Buffs " +
-                    "contain an entry that could mean it's currently invulnerable (names containing cannot_be_damaged, " +
-                    "invulnerable, cannot_die, immune, untargetable, etc.). It only logs when a monster's marker set CHANGES, " +
-                    "so the damageable<->invulnerable transition is easy to spot. Output goes to the AHK Debug Window " +
-                    "(enable Debug Mode to see it live) and is appended to unique_invuln_markers.txt in the plugin folder.",
-                    "Discovery-Tool: scannt einmal pro Sekunde nahe Unique/Boss-Monster nach Stats/Buffs mit Invuln-Hinweisen. " +
-                    "Loggt nur bei Aenderungen. Ausgabe im AHK-Debug-Fenster und in unique_invuln_markers.txt im Plugin-Ordner."));
-                ImGuiHelper.IEnumerableComboBox(L("Profile", "Profil"), this.Settings.Profiles.Keys, ref this.Settings.CurrentProfile);
-                if (string.IsNullOrEmpty(this.Settings.CurrentProfile) && this.Settings.Profiles.Count > 0)
+                ImGuiHelper.ToolTip("Discovery tool. Once per second, logs any nearby Unique/boss monster whose Stats or Buffs " +
+                                    "contain an entry that could mean it's currently invulnerable (names containing cannot_be_damaged, " +
+                                    "invulnerable, cannot_die, immune, untargetable, etc.). It only logs when a monster's marker set CHANGES, " +
+                                    "so the damageable<->invulnerable transition is easy to spot. Output goes to the AHK Debug Window " +
+                                    "(enable Debug Mode to see it live) and is appended to unique_invuln_markers.txt in the plugin folder.");
+                ImGuiHelper.IEnumerableComboBox("Profile", this.Settings.Profiles.Keys, ref this.Settings.CurrentProfile);
+                if (ImGui.Button("Add/Reset and Activate League Start Default Profile"))
                 {
-                    ImGui.TextColored(this.impTextColor, L(
-                        "No active profile selected — rules will not run until you pick one above.",
-                        "Kein aktives Profil gewaehlt — Regeln laufen erst, wenn oben ein Profil ausgewaehlt ist."));
-                }
-
-                if (ImGui.Button(L("Reset factory flask rules (League Start profile)", "Werk Flask-Regeln zuruecksetzen (Liga-Start-Profil)")))
-                {
-                    this.ResetLeagueStartDefaultProfileRules();
+                    this.CreateDefaultProfile();
                 }
             }
 
-            if (ImGui.CollapsingHeader(L("Add New Profile", "Neues Profil")))
+            if (ImGui.CollapsingHeader("Add New Profile"))
             {
-                ImGui.InputText(L("Name", "Name"), ref this.newProfileName, 100);
+                ImGui.InputText("Name", ref this.newProfileName, 100);
                 ImGui.SameLine();
-                if (ImGui.Button(L("Add", "Hinzufuegen")))
+                if (ImGui.Button("Add"))
                 {
                     if (!string.IsNullOrEmpty(this.newProfileName))
                     {
@@ -122,22 +110,16 @@ namespace AutoHotKeyTrigger
             // does not really hurt performance and only called
             // when the settings window is open
             DynamicCondition.UpdateState();
-            if (ImGui.CollapsingHeader(L("Existing Profiles", "Vorhandene Profile")))
+            if (ImGui.CollapsingHeader("Existing Profiles"))
             {
                 foreach (var (key, profile) in this.Settings.Profiles)
                 {
                     var isOpened = ImGui.TreeNode($"{key} (?)");
-                    ImGuiHelper.ToolTip(L(
-                        "Rules (tabs) can be moved via drag and drop. They can be cloned by right click.",
-                        "Regeln (Tabs) per Drag & Drop verschieben. Rechtsklick zum Klonen."));
+                    ImGuiHelper.ToolTip("Rules (tabs) can be moved via drag and drop. They can be cloned by right click.");
                     if (isOpened)
                     {
                         ImGui.SameLine();
-                        if (key == LeagueStartDefaultProfileName)
-                        {
-                            ImGui.TextDisabled(L("(built-in)", "(fest eingebaut)"));
-                        }
-                        else if (ImGui.SmallButton(L("Delete Profile", "Profil loeschen")))
+                        if (ImGui.SmallButton("Delete Profile"))
                         {
                             this.Settings.Profiles.Remove(key);
                             if (this.Settings.CurrentProfile == key)
@@ -147,7 +129,7 @@ namespace AutoHotKeyTrigger
                         }
 
                         ImGui.SameLine();
-                        if (ImGui.SmallButton(L("Clone Profile", "Profil klonen")))
+                        if (ImGui.SmallButton("Clone Profile"))
                         {
                             this.clonesToAdd.Add(($"{key}1", new(profile)));
 
@@ -161,14 +143,14 @@ namespace AutoHotKeyTrigger
                 this.clonesToAdd.RemoveAll(k => this.Settings.Profiles.TryAdd(k.name, k.value) || true); // remove even if add fails.
             }
 
-            if (ImGui.CollapsingHeader(L("Auto Quit", "Auto-Quit")))
+            if (ImGui.CollapsingHeader("Auto Quit"))
             {
                 ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X / 6);
-                ImGui.Checkbox(L("Enable AutoQuit", "Auto-Quit aktivieren"), ref this.Settings.EnableAutoQuit);
+                ImGui.Checkbox("Enable AutoQuit", ref this.Settings.EnableAutoQuit);
                 this.Settings.AutoQuitCondition.Display(true);
                 ImGui.Separator();
-                ImGui.Checkbox(L("Enable AutoQuit Manual Hotkey", "Manuellen Auto-Quit-Hotkey aktivieren"), ref this.Settings.EnableAutoQuitKey);
-                ImGui.Text(L("Hotkey to manually quit game connection: ", "Hotkey zum manuellen Trennen der Spielverbindung: "));
+                ImGui.Checkbox("Enable AutoQuit Manual Hotkey", ref this.Settings.EnableAutoQuitKey);
+                ImGui.Text("Hotkey to manually quit game connection: ");
                 ImGui.SameLine();
                 ImGuiHelper.NonContinuousEnumComboBox("##Manual Quit HotKey", ref this.Settings.AutoQuitKey);
                 ImGui.PopItemWidth();
@@ -232,7 +214,7 @@ namespace AutoHotKeyTrigger
                 (this.Settings.EnableAutoQuitKey &&
                 Utils.IsKeyPressedAndNotTimeout(this.Settings.AutoQuitKey, 200)))
             {
-                MiscHelper.KillTCPConnectionForProcess(Core.Process.Pid, "AHK/AutoQuit");
+                MiscHelper.KillTCPConnectionForProcess(Core.Process.Pid);
             }
 
             if (Utils.IsKeyPressedAndNotTimeout(this.Settings.DumpStatusEffectOnMe, 200))
@@ -286,7 +268,10 @@ namespace AutoHotKeyTrigger
 
         /// <summary>
         ///     Discovery helper: once per second, scans nearby Unique/boss monsters and logs any
-        ///     Stats/Buffs entry that could indicate the monster is currently invulnerable.
+        ///     Stats/Buffs entry that could indicate the monster is currently invulnerable. Logs
+        ///     only when a given monster's marker set changes, so the damageable/invulnerable
+        ///     transition is easy to spot. Use the output to identify the real "cannot be damaged"
+        ///     signal, then wire it into a proper DynamicCondition.
         /// </summary>
         private void ScanUniqueInvulnMarkers()
         {
@@ -356,9 +341,11 @@ namespace AutoHotKeyTrigger
                 }
                 catch (IOException)
                 {
+                    // best-effort logging; ignore transient file-access issues.
                 }
             }
 
+            // Forget monsters that are no longer awake so a re-encounter logs fresh.
             foreach (var goneId in this.lastInvulnReport.Keys.Where(k => !seen.Contains(k)).ToList())
             {
                 this.lastInvulnReport.Remove(goneId);
@@ -418,15 +405,15 @@ namespace AutoHotKeyTrigger
                 var content = File.ReadAllText(this.SettingPathname);
                 this.Settings = JsonConvert.DeserializeObject<AutoHotKeyTriggerSettings>(
                     content,
-                    AutoHotKeyTriggerJson.Settings) ?? new AutoHotKeyTriggerSettings();
-                this.MigrateSettingsAfterLoad(content);
+                    new JsonSerializerSettings
+                    {
+                        TypeNameHandling = TypeNameHandling.Auto
+                    }) ?? new AutoHotKeyTriggerSettings();
             }
             else
             {
                 this.CreateDefaultProfile();
             }
-
-            this.EnsureDefaultProfile();
 
             this.onAreaChange = CoroutineHandler.Start(this.EnableAutoQuitWarningUiOnAreaChange());
         }
@@ -437,7 +424,10 @@ namespace AutoHotKeyTrigger
             Directory.CreateDirectory(Path.GetDirectoryName(this.SettingPathname) ?? string.Empty);
             var settingsData = JsonConvert.SerializeObject(this.Settings,
                 Formatting.Indented,
-                AutoHotKeyTriggerJson.Settings);
+                new JsonSerializerSettings
+                {
+                    TypeNameHandling = TypeNameHandling.Auto
+                });
             File.WriteAllText(this.SettingPathname, settingsData);
         }
 
@@ -512,55 +502,16 @@ namespace AutoHotKeyTrigger
         /// </summary>
         private void CreateDefaultProfile()
         {
-            this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
-            this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
-            this.Settings.Profiles.TryAdd("ProfileMidGame", new());
-            this.Settings.Profiles.TryAdd("ProfileEndGame", new());
-        }
-
-        private void EnsureDefaultProfile()
-        {
-            if (!this.Settings.Profiles.ContainsKey(LeagueStartDefaultProfileName))
-            {
-                this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
-            }
-
-            if (string.IsNullOrEmpty(this.Settings.CurrentProfile) ||
-                !this.Settings.Profiles.ContainsKey(this.Settings.CurrentProfile))
-            {
-                this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
-            }
-        }
-
-        private void ResetLeagueStartDefaultProfileRules()
-        {
-            this.Settings.Profiles[LeagueStartDefaultProfileName] = BuildLeagueStartDefaultProfile();
-            this.Settings.CurrentProfile = LeagueStartDefaultProfileName;
-        }
-
-        private static Profile BuildLeagueStartDefaultProfile()
-        {
-            var profile = new Profile();
+            Profile profile = new();
             foreach (var rule in Rule.CreateDefaultRules())
             {
                 profile.Rules.Add(rule);
             }
 
-            return profile;
-        }
-
-        private void MigrateSettingsAfterLoad(string settingsJson)
-        {
-            if (!settingsJson.Contains("UseLegacyKeyInput", StringComparison.Ordinal))
-            {
-                this.Settings.UseLegacyKeyInput = true;
-            }
-
-            if (this.Settings.SettingsMigrationVersion < 4)
-            {
-                this.Settings.SettingsMigrationVersion = 4;
-                this.SaveSettings();
-            }
+            this.Settings.Profiles["LeagueStartDefaultProfile"] = profile;
+            this.Settings.CurrentProfile = "LeagueStartDefaultProfile";
+            this.Settings.Profiles["ProfileMidGame"] = new();
+            this.Settings.Profiles["ProfileEndGame"] = new();
         }
 
         private void AutoQuitWarningUi()
@@ -595,7 +546,5 @@ namespace AutoHotKeyTrigger
                 this.stopShowingAutoQuitWarning = false;
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
     }
 }

@@ -5,7 +5,6 @@
 namespace AutoHotKeyTrigger
 {
     using System.Collections.Generic;
-    using System.ComponentModel;
     using GameHelper.Plugin;
     using AutoHotKeyTrigger.ProfileManager;
     using ClickableTransparentOverlay.Win32;
@@ -42,7 +41,7 @@ namespace AutoHotKeyTrigger
             this.DebugMode = false;
             this.ShouldRunInHideout = false;
             this.DumpStatusEffectOnMe = VK.F10;
-            this.UseLegacyKeyInput = true;
+            this.ScanUniqueInvulnMarkers = false;
         }
 
         /// <summary>
@@ -92,24 +91,11 @@ namespace AutoHotKeyTrigger
         public VK DumpStatusEffectOnMe;
 
         /// <summary>
-        ///     When enabled, AHK uses pre-1.3 key send (no block while skill keys are held).
-        ///     When disabled, uses the core full key tap (stricter, blocks while other keys held).
-        /// </summary>
-        [DefaultValue(true)]
-        public bool UseLegacyKeyInput = true;
-
-        /// <summary>
         ///     Gets a value indicating whether to scan nearby Unique/boss monsters once per
         ///     second for stats/buffs that could mean they are currently invulnerable. This is
         ///     a discovery tool: it logs candidate markers so the real "cannot be damaged"
         ///     signal can be identified, then wired into a proper condition.
         /// </summary>
         public bool ScanUniqueInvulnMarkers;
-
-        /// <summary>
-        ///     Bumped when one-time settings migrations run.
-        /// </summary>
-        [DefaultValue(0)]
-        public int SettingsMigrationVersion;
     }
 }

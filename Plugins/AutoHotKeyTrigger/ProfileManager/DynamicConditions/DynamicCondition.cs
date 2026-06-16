@@ -5,7 +5,6 @@
 namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
 {
     using System;
-    using System.Linq;
     using System.Linq.Dynamic.Core;
     using System.Numerics;
     using AutoHotKeyTrigger.ProfileManager.Component;
@@ -97,17 +96,6 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         {
             this.ToImGui(expand);
             this.component?.Display(expand);
-        }
-
-        /// <summary>
-        ///     Gets the current condition expression source.
-        /// </summary>
-        /// <param name="source">expression source when available</param>
-        /// <returns>true when <paramref name="source"/> was set</returns>
-        public bool TryGetSource(out string source)
-        {
-            source = this.conditionSource;
-            return !string.IsNullOrEmpty(source);
         }
 
         /// <inheritdoc/>

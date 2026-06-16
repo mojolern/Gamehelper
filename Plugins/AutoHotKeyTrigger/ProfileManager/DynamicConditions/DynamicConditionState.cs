@@ -87,10 +87,19 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         public HashSet<string> PlayerSkillIsUseable { get; } = new();
 
+        /// <summary>
+        ///     The names of minion "command" skills usable on at least one summoned minion.
+        /// </summary>
         public HashSet<string> MinionCommandSkillIsUsable { get; } = new();
 
+        /// <summary>
+        ///   The player skill details are in this structure.
+        /// </summary>
         public Dictionary<string, ActiveSkillDetails> ActiveSkills { get; } = new();
 
+        /// <summary>
+        ///     The objects deployed by the player, indexed by object-type id (absent ids read as 0).
+        /// </summary>
         public DeployedObjectCounter DeployedObjectsCount { get; } = new();
 
         /// <summary>
@@ -130,6 +139,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         ///     (in an invulnerability phase) in the outer circle.
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
+        /// <returns></returns>
         public int UndamageableMonsterCount(MonsterRarity rarity) =>
             this.nearbyMonsterInfo.Value.GetUndamageableMonsterCount(rarity, MonsterNearbyZones.OuterCircle);
 
@@ -139,6 +149,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
         /// <param name="zone">circle in which the monster exists</param>
+        /// <returns></returns>
         public int UndamageableMonsterCount(MonsterRarity rarity, MonsterNearbyZones zone) =>
             this.nearbyMonsterInfo.Value.GetUndamageableMonsterCount(rarity, zone);
 
@@ -147,6 +158,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         ///     (i.e. NOT in an invulnerability phase) in the outer circle.
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
+        /// <returns></returns>
         public int DamageableMonsterCount(MonsterRarity rarity) =>
             this.MonsterCount(rarity) - this.UndamageableMonsterCount(rarity);
 
@@ -156,6 +168,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
         /// <param name="zone">circle in which the monster exists</param>
+        /// <returns></returns>
         public int DamageableMonsterCount(MonsterRarity rarity, MonsterNearbyZones zone) =>
             this.MonsterCount(rarity, zone) - this.UndamageableMonsterCount(rarity, zone);
 
@@ -166,6 +179,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
         /// <param name="maxDistance">Maximum distance from the player</param>
+        /// <returns></returns>
         public int MonsterCountInRange(MonsterRarity rarity, int maxDistance) =>
             this.nearbyMonsterInfo.Value.GetMonsterCountInRange(rarity, maxDistance);
 
@@ -175,6 +189,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
         /// <param name="maxDistance">Maximum distance from the player</param>
+        /// <returns></returns>
         public int UndamageableMonsterCountInRange(MonsterRarity rarity, int maxDistance) =>
             this.nearbyMonsterInfo.Value.GetUndamageableMonsterCountInRange(rarity, maxDistance);
 
@@ -184,6 +199,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for monster search</param>
         /// <param name="maxDistance">Maximum distance from the player</param>
+        /// <returns></returns>
         public int DamageableMonsterCountInRange(MonsterRarity rarity, int maxDistance) =>
             this.MonsterCountInRange(rarity, maxDistance) - this.UndamageableMonsterCountInRange(rarity, maxDistance);
 
@@ -191,6 +207,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         ///     Counts nearby corpses (dead monsters) of the given rarity in the outer circle.
         /// </summary>
         /// <param name="rarity">The rarity selector for corpse search</param>
+        /// <returns></returns>
         public int CorpseCount(MonsterRarity rarity) =>
             this.nearbyMonsterInfo.Value.GetCorpseCount(rarity, MonsterNearbyZones.OuterCircle);
 
@@ -199,6 +216,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for corpse search</param>
         /// <param name="zone">circle in which the corpse exists</param>
+        /// <returns></returns>
         public int CorpseCount(MonsterRarity rarity, MonsterNearbyZones zone) =>
             this.nearbyMonsterInfo.Value.GetCorpseCount(rarity, zone);
 
@@ -207,6 +225,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// </summary>
         /// <param name="rarity">The rarity selector for corpse search</param>
         /// <param name="maxDistance">Maximum distance from the player</param>
+        /// <returns></returns>
         public int CorpseCountInRange(MonsterRarity rarity, int maxDistance) =>
             this.nearbyMonsterInfo.Value.GetCorpseCountInRange(rarity, maxDistance);
 

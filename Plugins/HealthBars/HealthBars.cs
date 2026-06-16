@@ -1,4 +1,4 @@
-// <copyright file="HealthBars.cs" company="PlaceholderCompany">
+﻿// <copyright file="HealthBars.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -11,7 +11,6 @@ namespace HealthBars
     using Coroutine;
     using GameHelper;
     using GameHelper.CoroutineEvents;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteEnums.Entity;
@@ -50,25 +49,25 @@ namespace HealthBars
         /// <inheritdoc />
         public override void DrawSettings()
         {
-            ImGui.Text(L("Turn off in game health bars for best result.", "Spiel-Lebensbalken ausschalten fuer bestes Ergebnis."));
-            ImGui.Text(L("Enable/Disable plugin to reload textures.", "Plugin an/aus zum Neuladen der Texturen."));
-            ImGui.Text($"{L("Total Textures loaded", "Geladene Texturen")}: {this.textures.TotalTexturesLoaded}");
-            if (ImGui.CollapsingHeader(L("Common Configuration", "Allgemeine Einstellungen")))
+            ImGui.Text("Turn off in game health bars for best result.");
+            ImGui.Text("Enable/Disable plugin to reload textures.");
+            ImGui.Text($"Total Textures loaded: {this.textures.TotalTexturesLoaded}");
+            if (ImGui.CollapsingHeader("Common Configuration"))
             {
                 if (ImGui.BeginTable("common_config_table", 2))
                 {
                     ImGui.TableNextColumn();
-                    ImGui.Checkbox(L("Draw healthbars in town", "Lebensbalken in Stadt zeichnen"), ref this.Settings.DrawInTown);
+                    ImGui.Checkbox("Draw healthbars in town", ref this.Settings.DrawInTown);
                     ImGui.TableNextColumn();
-                    ImGui.Checkbox(L("Draw healthbars in hideout", "Lebensbalken in Hideout zeichnen"), ref this.Settings.DrawInHideout);
+                    ImGui.Checkbox("Draw healthbars in hideout", ref this.Settings.DrawInHideout);
                     ImGui.TableNextColumn();
-                    ImGui.Checkbox(L("Draw healthbars when game is in background", "Lebensbalken bei Spiel im Hintergrund"), ref this.Settings.DrawWhenGameInBackground);
+                    ImGui.Checkbox("Draw healthbars when game is in background", ref this.Settings.DrawWhenGameInBackground);
                     ImGui.TableNextColumn();
-                    ImGui.Checkbox(L("Interpolate position", "Position interpolieren"), ref this.Settings.InterpolatePosition);
-                    ImGuiHelper.ToolTip(L("Enable this if your healthbar is stuttering.", "Aktivieren bei ruckelnden Lebensbalken."));
+                    ImGui.Checkbox("Interpolate position", ref this.Settings.InterpolatePosition);
+                    ImGuiHelper.ToolTip("Enable this if your healthbar is stuttering.");
                     if (this.Settings.InterpolatePosition)
                     {
-                        if (ImGui.DragInt(L("Interpolation Rate", "Interpolationsrate"), ref this.Settings.InterpolationRate, 1f, 1, 1000))
+                        if (ImGui.DragInt("Interpolation Rate", ref this.Settings.InterpolationRate, 1f, 1, 1000))
                         {
                             if (this.Settings.InterpolationRate <= 0)
                             {
@@ -82,15 +81,15 @@ namespace HealthBars
                     }
 
                     ImGui.TableNextColumn();
-                    ImGui.Text(L("white       magic      rare         unique", "weiss     magisch    selten       einzigartig"));
-                    ImGui.DragInt4(L("Cull Strike (%health)", "Cull Strike (%Leben)"), ref this.Settings.CullingStrikeRangePerRarity[0], 1, 0, 100);
+                    ImGui.Text("white       magic      rare         unique");
+                    ImGui.DragInt4("Cull Strike (%health)", ref this.Settings.CullingStrikeRangePerRarity[0], 1, 0, 100);
                     ImGui.TableNextColumn();
-                    ImGui.Checkbox(L("Show mana rather than ES on self player", "Mana statt ES beim eigenen Spieler"), ref this.Settings.ShowManaRatherThanESOnSelf);
+                    ImGui.Checkbox("Show mana rather than ES on self player", ref this.Settings.ShowManaRatherThanESOnSelf);
                     ImGui.EndTable();
                 }
             }
 
-            if (ImGui.CollapsingHeader(L("Monster Configuration", "Monster-Einstellungen")))
+            if (ImGui.CollapsingHeader("Monster Configuration"))
             {
                 if (ImGui.BeginTabBar("monster_config"))
                 {
@@ -107,16 +106,16 @@ namespace HealthBars
                 }
             }
 
-            if (ImGui.CollapsingHeader(L("POI Configuration", "POI-Einstellungen")))
+            if (ImGui.CollapsingHeader("POI Configuration"))
             {
                 ImGui.SetNextItemWidth(ImGui.GetFontSize() * 10);
-                if (ImGui.InputInt(L("Group Number", "Gruppennummer") + "##poimonsterconfig", ref this.poiMonsterConfigToAdd) && this.poiMonsterConfigToAdd < 0)
+                if(ImGui.InputInt("Group Number##poimonsterconfig", ref this.poiMonsterConfigToAdd) && this.poiMonsterConfigToAdd < 0)
                 {
                     this.poiMonsterConfigToAdd = 0;
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button(L("Add", "Hinzufuegen")))
+                if (ImGui.Button("Add"))
                 {
                     this.Settings.POIMonster.TryAdd(this.poiMonsterConfigToAdd, new());
                 }
@@ -125,7 +124,7 @@ namespace HealthBars
                 {
                     foreach (var conf in this.Settings.POIMonster)
                     {
-                        var text = conf.Key < 0 ? L("Default", "Standard") : $"{L("Group", "Gruppe")} {conf.Key}";
+                        var text = conf.Key < 0 ? "Default" : $"Group {conf.Key}";
                         var shouldNotDelete = true;
                         if (ImGui.BeginTabItem(text, ref shouldNotDelete, ImGuiTabItemFlags.NoAssumedClosure))
                         {
@@ -145,7 +144,7 @@ namespace HealthBars
                 }
             }
 
-            if (ImGui.CollapsingHeader(L("Player Configuration", "Spieler-Einstellungen")))
+            if (ImGui.CollapsingHeader("Player Configuration"))
             {
                 if (ImGui.BeginTabBar("player_config"))
                 {
@@ -400,11 +399,9 @@ namespace HealthBars
             ImGui.SetNextWindowPos(new Vector2(Core.Overlay.Size.Width / 3f, Core.Overlay.Size.Height / 3f));
             if (ImGui.BeginPopup("POIConfigHealthbarDeleteConfirmation"))
             {
-                ImGui.Text(L(
-                    $"Do you want to delete group {this.poiMonsterConfigToDelete} POI Monster healthbar config?",
-                    $"Gruppe {this.poiMonsterConfigToDelete} POI-Monster-Lebensbalken-Konfiguration loeschen?"));
+                ImGui.Text($"Do you want to delete group {this.poiMonsterConfigToDelete} POI Monster healthbar config?");
                 ImGui.Separator();
-                if (ImGui.Button(L("Yes", "Ja"),
+                if (ImGui.Button("Yes",
                     new Vector2(ImGui.GetContentRegionAvail().X / 2f, ImGui.GetTextLineHeight() * 2)))
                 {
                     _ = this.Settings.POIMonster.Remove(poiMonsterConfigToDelete);
@@ -412,7 +409,7 @@ namespace HealthBars
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button(L("No", "Nein"), new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight() * 2)))
+                if (ImGui.Button("No", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight() * 2)))
                 {
                     ImGui.CloseCurrentPopup();
                 }
@@ -420,8 +417,6 @@ namespace HealthBars
                 ImGui.EndPopup();
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
 
         private IEnumerator<Wait> OnAreaChange()
         {

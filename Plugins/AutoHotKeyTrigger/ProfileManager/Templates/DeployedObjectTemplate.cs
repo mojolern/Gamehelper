@@ -9,21 +9,39 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
     using ImGuiNET;
     using System.Collections.Generic;
 
+    /// <summary>
+    ///     ImGui widget that helps user modify the condition code in <see cref="DynamicCondition"/>.
+    /// </summary>
     public static class DeployedObjectTemplate
     {
         private static int objectType;
+
         private static string selectedOperator;
         private static readonly List<string> SupportedOperatorTypes;
+
         private static int count;
 
         static DeployedObjectTemplate()
         {
             count = 0;
             objectType = 0;
+
             selectedOperator = ">";
-            SupportedOperatorTypes = new() { ">", ">=", "<", "<=" };
+            SupportedOperatorTypes = new()
+            {
+                ">",
+                ">=",
+                "<",
+                "<="
+            };
         }
 
+        /// <summary>
+        ///     Display the ImGui widget for adding the condition in <see cref="DynamicCondition"/>.
+        /// </summary>
+        /// <returns>
+        ///     condition in string format if user press Add button otherwise empty string.
+        /// </returns>
         public static string Add()
         {
             ImGui.Text("Player has deployed the object of type");

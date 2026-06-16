@@ -1,4 +1,4 @@
-// <copyright file="HealthBarsSettings.cs" company="PlaceholderCompany">
+﻿// <copyright file="HealthBarsSettings.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -15,12 +15,12 @@ namespace HealthBars
         /// <summary>
         ///     Draw Healthbars when in town.
         /// </summary>
-        public bool DrawInTown = false;
+        public bool DrawInTown = true;
 
         /// <summary>
         ///     Draw Healthbars when in hideout.
         /// </summary>
-        public bool DrawInHideout = false;
+        public bool DrawInHideout = true;
 
         /// <summary>
         ///     Draw Healthbars when game is not foreground.

@@ -1,4 +1,4 @@
-// <copyright file="IconPicker.cs" company="PlaceholderCompany">
+﻿// <copyright file="IconPicker.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -8,7 +8,6 @@ namespace Radar
     using System.IO;
     using System.Numerics;
     using GameHelper;
-    using GameHelper.Localization;
     using ImGuiNET;
     using Newtonsoft.Json;
 
@@ -93,6 +92,19 @@ namespace Radar
         public float IconScale => this.iconScale;
 
         /// <summary>
+        /// Gets or sets a value indicating whether this icon should be drawn on the map.
+        /// Toggled independently of <see cref="IconScale"/> so the size is preserved while hidden.
+        /// </summary>
+        public bool Show = true;
+
+        /// <summary>
+        /// Gets a value indicating whether this icon should actually be drawn:
+        /// enabled via <see cref="Show"/> and has a positive scale.
+        /// </summary>
+        [JsonIgnore]
+        public bool Draw => this.Show && this.iconScale > 0f;
+
+        /// <summary>
         /// Gets or sets a value indicating whether to compute and draw a path to this entity type.
         /// </summary>
         public bool ShowPath = false;
@@ -136,7 +148,7 @@ namespace Radar
             ImGui.InputFloat($"##iconscale", ref this.iconScale, 1f, 1f);
             ImGui.PopItemWidth();
             ImGui.SameLine();
-            ImGui.Checkbox(L("Path", "Pfad"), ref this.ShowPath);
+            ImGui.Checkbox("Path", ref this.ShowPath);
             if (this.ShowPath)
             {
                 ImGui.SameLine();
@@ -162,7 +174,7 @@ namespace Radar
             {
                 ImGui.SetNextWindowPos(this.popUpPos, ImGuiCond.Appearing);
                 ImGui.SetNextWindowSize(new Vector2(400), ImGuiCond.Appearing);
-                var title = L("Icon Picker (Double click to select an item)", "Icon-Auswahl (Doppelklick zum Auswaehlen)");
+                var title = $"Icon Picker (Double click to select an item)";
                 if (ImGui.Begin(title, ref this.showPopUp, PopUpFlags))
                 {
                     if (ImGui.IsWindowHovered() && ImGui.GetIO().MouseDoubleClicked[0])
@@ -219,7 +231,5 @@ namespace Radar
             this.UV0 = new Vector2(selected.X++ * size.X, selected.Y++ * size.Y);
             this.UV1 = new Vector2(selected.X * size.X, selected.Y * size.Y);
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
     }
 }

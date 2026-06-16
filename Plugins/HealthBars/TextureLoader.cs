@@ -1,4 +1,4 @@
-// <copyright file="HealthBars.cs" company="PlaceholderCompany">
+﻿// <copyright file="HealthBars.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -8,7 +8,6 @@ namespace HealthBars
     using System;
     using System.Collections.Generic;
     using System.IO;
-    using System.Linq;
     using GameHelper;
 
     /// <summary>
@@ -34,7 +33,7 @@ namespace HealthBars
         /// <param name="texturesPath">path to texture folder.</param>
         public void cleanup(string texturesPath)
         {
-            foreach (var filename in this.loadedTextures.Keys.ToList())
+            foreach (var filename in this.loadedTextures.Keys)
             {
                 var pathname = Path.Join(texturesPath, filename);
                 if (Core.Overlay.RemoveImage(pathname))
@@ -50,17 +49,14 @@ namespace HealthBars
         /// <param name="texturesPath">Path to texture folder.</param>
         public void Load(string texturesPath)
         {
-            this.loadedTextures.Clear();
-            if (!Directory.Exists(texturesPath))
+            if (Directory.Exists(texturesPath))
             {
-                return;
-            }
-
-            foreach (var pathname in Directory.EnumerateFiles(texturesPath))
-            {
-                var filename = Path.GetFileName(pathname);
-                Core.Overlay.AddOrGetImagePointer(pathname, false, out var handle, out var w, out var h);
-                this.loadedTextures[filename] = (handle, (int)w, (int)h);
+                foreach (var pathname in Directory.EnumerateFiles(texturesPath))
+                {
+                    var filename = Path.GetFileName(pathname);
+                    Core.Overlay.AddOrGetImagePointer(pathname, false, out var handle, out var w, out var h);
+                    this.loadedTextures.Add(filename, (handle, (int)w, (int)h));
+                }
             }
         }
 

@@ -11,6 +11,13 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
     using System;
     using System.Collections.Generic;
 
+    /// <summary>
+    ///     ImGui widget that helps user create a nearby-monster-count condition that uses an explicit
+    ///     range (in the same units as the inner/outer circle, capped at the ~150 network bubble)
+    ///     instead of the inner/outer circle, optionally filtered by whether the monsters are
+    ///     currently damageable. Produces the <c>*MonsterCountInRange</c> functions in
+    ///     <see cref="DynamicConditionState"/>.
+    /// </summary>
     public static class NearbyMonsterInRangeTemplate
     {
         private const int MinRange = 1;
@@ -38,6 +45,12 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
         private static int range = 70;
         private static MonsterRarity selectedRarity = MonsterRarity.Normal;
 
+        /// <summary>
+        ///     Display the ImGui widget for adding the condition in <see cref="DynamicCondition"/>.
+        /// </summary>
+        /// <returns>
+        ///     condition in string format if user press Add button otherwise empty string.
+        /// </returns>
         public static string Add()
         {
             ImGui.Text("Player has");
@@ -60,10 +73,10 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
             {
                 foreach (var rarity in Enum.GetValues<MonsterRarity>())
                 {
-                    var isSelected = selectedRarity.HasFlag(rarity);
-                    if (ImGui.Checkbox($"{rarity}", ref isSelected))
+                    var IsSelected = selectedRarity.HasFlag(rarity);
+                    if (ImGui.Checkbox($"{rarity}", ref IsSelected))
                     {
-                        if (isSelected)
+                        if (IsSelected)
                         {
                             selectedRarity |= rarity;
                         }

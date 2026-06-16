@@ -1,7 +1,6 @@
-namespace HealthBars
+﻿namespace HealthBars
 {
     using System.Numerics;
-    using GameHelper.Localization;
     using GameHelper.Utils;
     using ImGuiNET;
     using Newtonsoft.Json;
@@ -136,50 +135,46 @@ namespace HealthBars
         /// </summary>
         public void Draw()
         {
-            ImGui.Text(L(
-                "NOTE: For going above/below the limit, or for manual editing, press CTRL + Left Mouse Button click.",
-                "HINWEIS: Fuer Werte ausserhalb des Limits oder manuelle Eingabe: STRG + Linksklick."));
+            ImGui.Text("NOTE: For going above/below the limit, or for manual editing, press CTRL + Left Mouse Button click.");
             if (ImGui.BeginTable("config_table", 2))
             {
                 ImGui.TableNextColumn();
-                ImGui.Checkbox(L("Enable Healthbar", "Lebensbalken aktivieren"), ref this.Enable);
+                ImGui.Checkbox("Enable Healthbar", ref this.Enable);
                 ImGui.TableNextColumn();
-                ImGui.Checkbox(L("Visualize Culling Strike Range", "Cull-Strike-Bereich anzeigen"), ref this.ShowCullStrike);
+                ImGui.Checkbox("Visualize Culling Strike Range", ref this.ShowCullStrike);
                 ImGui.TableNextColumn();
-                ImGui.Checkbox(L("Show health+ES (absolute) as text", "Leben+ES (absolut) als Text"), ref this.ShowText);
+                ImGui.Checkbox("Show health+ES (absolute) as text", ref this.ShowText);
                 ImGui.TableNextColumn();
-                ImGui.ColorEdit4(L("Text Color", "Textfarbe"), ref this.TextColor);
+                ImGui.ColorEdit4("Text Color", ref this.TextColor);
                 ImGui.TableNextColumn();
-                if (ImGuiHelper.Vector2SliderInt(L("Scale (x, y)", "Skalierung (x, y)"), ImGui.GetColumnWidth(), ref this.Scale, 160, 500, 16, 128, ImGuiSliderFlags.Logarithmic))
+                if (ImGuiHelper.Vector2SliderInt("Scale (x, y)", ImGui.GetColumnWidth(), ref this.Scale, 160, 500, 16, 128, ImGuiSliderFlags.Logarithmic))
                 {
                     this.UpdateGrauationsLocationData();
                 }
 
-                ImGuiHelper.ToolTip(L(
-                    "By default texture is of height 16. If increasing the Y axis ruins the texture, modify the texture height via your fav texture editor. This doesn't apply to x axis.",
-                    "Standard-Texturhoehe ist 16. Bei Y-Verzerrung Textur im Editor anpassen. Gilt nicht fuer die X-Achse."));
+                ImGuiHelper.ToolTip("By default texture is of height 16, " +
+                    "If increasing the Y axis ruins the texture, " +
+                    "feel free to modify the texture height via your fav texture editor. " +
+                    "This doesn't apply to x axis.");
                 ImGui.TableNextColumn();
-                ImGuiHelper.Vector2SliderInt(L("Shift (x, y)", "Versatz (x, y)"), ImGui.GetColumnWidth(), ref this.Shift, -4000, 4000, -2500, 2500, ImGuiSliderFlags.Logarithmic);
+                ImGuiHelper.Vector2SliderInt("Shift (x, y)", ImGui.GetColumnWidth(), ref this.Shift, -4000, 4000, -2500, 2500, ImGuiSliderFlags.Logarithmic);
                 ImGui.TableNextColumn();
-                ImGui.ColorEdit4(L("Healthbar", "Lebensbalken"), ref this.HealthbarColor);
+                ImGui.ColorEdit4("Healthbar", ref this.HealthbarColor);
                 ImGui.TableNextColumn();
-                ImGui.ColorEdit4(L("Background", "Hintergrund"), ref this.BackgroundColor);
+                ImGui.ColorEdit4("Background", ref this.BackgroundColor);
                 ImGui.TableNextColumn();
-                if (ImGui.DragInt(L("Gradation Marks", "Graduationsmarken"), ref this.Graduations, 0.05f, 0, 9))
+                if (ImGui.DragInt("Gradation Marks", ref this.Graduations, 0.05f, 0, 9))
                 {
                     this.UpdateGrauationsLocationData();
                 }
 
-                ImGuiHelper.ToolTip(L(
-                    "Graduation thickness depends on Font size. Graduation marks are expensive to draw, on non rare/unique monsters keep it to 0.",
-                    "Dicke haengt von der Schriftgroesse ab. Teuer zum Zeichnen - bei normalen Monstern auf 0 lassen."));
+                ImGuiHelper.ToolTip("Graduation thickness depends on Font size. Also, " +
+                    "Gradation marks are expensive to draw, on non rare/unique monsters keep it to 0.");
                 ImGui.TableNextColumn();
-                ImGui.ColorEdit4(L("ES Bar", "ES-Balken"), ref this.ESColor);
+                ImGui.ColorEdit4("ES Bar", ref this.ESColor);
                 ImGui.EndTable();
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
 
         private void UpdateGrauationsLocationData()
         {

@@ -1,4 +1,4 @@
-// <copyright file="Profile.cs" company="PlaceholderCompany">
+﻿// <copyright file="Profile.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -8,7 +8,6 @@ namespace AutoHotKeyTrigger.ProfileManager
     using System.Collections.Generic;
     using System.Numerics;
     using GameHelper;
-    using GameHelper.Localization;
     using GameHelper.Utils;
     using ImGuiNET;
     using Newtonsoft.Json;
@@ -146,14 +145,14 @@ namespace AutoHotKeyTrigger.ProfileManager
                     {
                         if (ImGui.BeginPopupContextWindow())
                         {
-                            if (ImGui.Button(L("Clone", "Klonen")))
+                            if (ImGui.Button("Clone"))
                             {
                                 this.Rules.Add(new(this.Rules[this.contextWindowOn]));
                                 this.contextWindowOn = -1;
                             }
 
                             ImGui.SameLine();
-                            if (ImGui.Button(L("Cancel", "Abbrechen")))
+                            if (ImGui.Button("Cancel"))
                             {
                                 this.contextWindowOn = -1;
                             }
@@ -179,11 +178,9 @@ namespace AutoHotKeyTrigger.ProfileManager
             ImGui.SetNextWindowPos(new Vector2(Core.Overlay.Size.Width / 3f, Core.Overlay.Size.Height / 3f));
             if (ImGui.BeginPopup("RuleDeleteConfirmation"))
             {
-                ImGui.Text(L(
-                    $"Do you want to delete rule with name: {this.Rules[this.ruleIndexToDelete].Name}?",
-                    $"Regel '{this.Rules[this.ruleIndexToDelete].Name}' loeschen?"));
+                ImGui.Text($"Do you want to delete rule with name: {this.Rules[this.ruleIndexToDelete].Name}?");
                 ImGui.Separator();
-                if (ImGui.Button(L("Yes", "Ja"),
+                if (ImGui.Button("Yes",
                     new Vector2(ImGui.GetContentRegionAvail().X / 2f, ImGui.GetTextLineHeight() * 2)))
                 {
                     var ruleToDelete = this.Rules[this.ruleIndexToDelete];
@@ -194,7 +191,7 @@ namespace AutoHotKeyTrigger.ProfileManager
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button(L("No", "Nein"), new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight() * 2)))
+                if (ImGui.Button("No", new Vector2(ImGui.GetContentRegionAvail().X, ImGui.GetTextLineHeight() * 2)))
                 {
                     this.ruleIndexToDelete = -1;
                     ImGui.CloseCurrentPopup();
@@ -203,8 +200,6 @@ namespace AutoHotKeyTrigger.ProfileManager
                 ImGui.EndPopup();
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
 
         private void SwapRules(int index1, int index2)
         {

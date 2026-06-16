@@ -1,4 +1,4 @@
-// <copyright file="VitalTemplate.cs" company="PlaceholderCompany">
+﻿// <copyright file="VitalTemplate.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -23,7 +23,7 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
             "<="
         };
 
-        private static VitalType vitalType = VitalType.HP_PERCENT;
+        private static VitalType vitalType  = VitalType.HP_PERCENT;
         private static string selectedOperator = "<=";
         private static int threshold = 90;
 
@@ -35,41 +35,25 @@ namespace AutoHotKeyTrigger.ProfileManager.Templates
         /// </returns>
         public static string Add()
         {
-            ImGui.Text("Player vital");
-            ImGui.SetNextItemWidth(TemplateUi.FieldWidth());
-            ImGuiHelper.EnumComboBox("##VitalSelector", ref vitalType);
-
-            ImGui.Spacing();
-            ImGui.Text("Operator");
-            ImGui.SetNextItemWidth(TemplateUi.FieldWidth(0.4f));
+            ImGui.Text("Player");
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(ImGui.GetFontSize() * 8);
+            ImGuiHelper.EnumComboBox("is##VitalSelector", ref vitalType);
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(ImGui.GetFontSize() * 3);
             ImGuiHelper.IEnumerableComboBox("##VitalOperator", SupportedOperatorTypes, ref selectedOperator);
-
-            ImGui.Text("Value");
-            ImGui.SetNextItemWidth(TemplateUi.FieldWidth());
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(ImGui.GetFontSize() * 5);
             ImGui.InputInt("##VitalThreshold", ref threshold);
-
-            ImGui.Spacing();
-            if (TemplateUi.AddButton("##Vital"))
+            ImGui.SameLine();
+            if (ImGui.Button("Add##Vital"))
             {
-                return $"{ToExpressionPath(vitalType)} {selectedOperator} {threshold}";
+                return $"PlayerVitals.{vitalType.ToString().Replace("_", ".")} {selectedOperator} {threshold}";
             }
-
-            return string.Empty;
-        }
-
-        private static string ToExpressionPath(VitalType vitalType) =>
-            vitalType switch
+            else
             {
-                VitalType.MANA_CURRENT => "PlayerVitals.Mana.Current",
-                VitalType.MANA_PERCENT => "PlayerVitals.Mana.Percent",
-                VitalType.MANA_RESERVED => "PlayerVitals.Mana.Reserved",
-                VitalType.HP_CURRENT => "PlayerVitals.HP.Current",
-                VitalType.HP_PERCENT => "PlayerVitals.HP.Percent",
-                VitalType.HP_RESERVED => "PlayerVitals.HP.Reserved",
-                VitalType.ES_CURRENT => "PlayerVitals.ES.Current",
-                VitalType.ES_PERCENT => "PlayerVitals.ES.Percent",
-                VitalType.ES_RESERVED => "PlayerVitals.ES.Reserved",
-                _ => $"PlayerVitals.{vitalType}",
-            };
+                return string.Empty;
+            }
+        }
     }
 }

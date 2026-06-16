@@ -1,16 +1,14 @@
-// <copyright file="Rule.cs" company="PlaceholderCompany">
+﻿// <copyright file="Rule.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
 namespace AutoHotKeyTrigger.ProfileManager
 {
-    using AutoHotKeyTrigger;
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Linq;
     using System.Numerics;
-    using GameHelper.Localization;
     using GameHelper.Utils;
     using ImGuiNET;
     using Newtonsoft.Json;
@@ -27,9 +25,7 @@ namespace AutoHotKeyTrigger.ProfileManager
     {
         private int conditionToModify = -1;
         private int conditionIndexToSwap = -1;
-        private bool expand;
-        private bool addNewConditionDialogOpen;
-        private bool modifyConditionDialogOpen;
+        private static bool expand = false;
         private ConditionType newConditionType = ConditionType.AILMENT;
         private readonly Stopwatch cooldownStopwatch = Stopwatch.StartNew();
 
@@ -95,7 +91,7 @@ namespace AutoHotKeyTrigger.ProfileManager
             rules[1] = new($"ManaFlask");
             rules[1].Enabled = true;
             rules[1].Key = VK.KEY_2;
-            rules[1].conditions.Add(new DynamicCondition($"PlayerVitals.Mana.Percent <= 30 && Flasks.Flask2.IsUsable && !Flasks.Flask2.Active"));
+            rules[1].conditions.Add(new DynamicCondition($"PlayerVitals.MANA.Percent <= 30 && Flasks.Flask2.IsUsable && !Flasks.Flask2.Active"));
 
             return rules;
         }
@@ -113,10 +109,10 @@ namespace AutoHotKeyTrigger.ProfileManager
         /// </summary>
         public void DrawSettings()
         {
-            ImGui.Checkbox(L("Enable", "Aktivieren"), ref this.Enabled);
-            ImGui.InputText(L("Name", "Name"), ref this.Name, 100);
+            ImGui.Checkbox("Enable", ref this.Enabled);
+            ImGui.InputText("Name", ref this.Name, 100);
             var tmpKey = this.Key;
-            if (ImGuiHelper.NonContinuousEnumComboBox(L("Key", "Taste"), ref tmpKey))
+            if (ImGuiHelper.NonContinuousEnumComboBox("Key", ref tmpKey))
             {
                 this.Key = tmpKey;
             }
@@ -134,7 +130,7 @@ namespace AutoHotKeyTrigger.ProfileManager
         {
             if (this.Enabled && this.Evaluate())
             {
-                if (AhkKeySender.SendKey(this.Key, $"AHK/{this.Name}"))
+                if (MiscHelper.KeyUp(this.Key))
                 {
                     logger($"{this.Key} is pressed.");
                     this.cooldownStopwatch.Restart();
@@ -162,7 +158,6 @@ namespace AutoHotKeyTrigger.ProfileManager
                 if (!string.IsNullOrEmpty(sourceString))
                 {
                     this.conditions.Add(new(sourceString));
-                    this.addNewConditionDialogOpen = false;
                 }
             }
         }
@@ -183,7 +178,6 @@ namespace AutoHotKeyTrigger.ProfileManager
                 if (!string.IsNullOrEmpty(sourceString))
                 {
                     this.conditions[index] = new(sourceString);
-                    this.modifyConditionDialogOpen = false;
                 }
             }
         }
@@ -207,11 +201,15 @@ namespace AutoHotKeyTrigger.ProfileManager
             (this.conditions[i], this.conditions[j]) = (this.conditions[j], this.conditions[i]);
         }
 
+        /// <summary>
+        ///     Checks the specified conditions, shortcircuiting on the first unsatisfied one
+        /// </summary>
+        /// <returns>true if all the rules conditions are true otherwise false.</returns>
         private bool Evaluate()
         {
             if (this.cooldownStopwatch.Elapsed.TotalSeconds > this.delayBetweenRuns)
             {
-                if (this.conditions.Count > 0 && this.conditions.TrueForAll(x => x.Evaluate()))
+                if (this.conditions.TrueForAll(x => x.Evaluate()))
                 {
                     return true;
                 }
@@ -222,7 +220,7 @@ namespace AutoHotKeyTrigger.ProfileManager
 
         private void DrawCooldownWidget()
         {
-            ImGui.DragFloat(L("Cooldown time (seconds)", "Abklingzeit (Sekunden)") + "##DelayTimerConditionDelay", ref this.delayBetweenRuns, 0.1f, 0.0f, 30.0f);
+            ImGui.DragFloat("Cooldown time (seconds)##DelayTimerConditionDelay", ref this.delayBetweenRuns, 0.1f, 0.0f, 30.0f);
             if (this.delayBetweenRuns > 0)
             {
                 var cooldownTimeFraction = this.delayBetweenRuns <= 0f ? 1f :
@@ -231,19 +229,16 @@ namespace AutoHotKeyTrigger.ProfileManager
                 ImGui.ProgressBar(
                     (float)cooldownTimeFraction,
                     Vector2.Zero,
-                    cooldownTimeFraction < 1f
-                        ? $"{L("Cooling", "Abklingen")} {(cooldownTimeFraction * 100f):0}%"
-                        : L("Ready", "Bereit"));
+                    cooldownTimeFraction < 1f ? $"Cooling {(cooldownTimeFraction * 100f):0}%" : "Ready");
                 ImGui.PopStyleColor();
             }
         }
 
         private void DrawExistingConditions()
         {
-            var isOpened = ImGui.TreeNodeEx(L("Existing Conditions (?)", "Vorhandene Bedingungen (?)"), ImGuiTreeNodeFlags.DefaultOpen);
-            ImGuiHelper.ToolTip(L(
-                "All of the conditions needs to be true. Conditions can be moved up and down via drag and drop when not expanded.",
-                "Alle Bedingungen muessen erfuellt sein. Per Drag & Drop verschieben, wenn nicht aufgeklappt."));
+            var isOpened = ImGui.TreeNodeEx("Existing Conditions (?)", ImGuiTreeNodeFlags.DefaultOpen);
+            ImGuiHelper.ToolTip("All of the conditions needs to be true. Conditions can be moved up and " +
+                "down via drag and drop when not expanded.");
             if (isOpened)
             {
                 ImGui.PushItemWidth(ImGui.GetContentRegionAvail().X / 6);
@@ -263,7 +258,7 @@ namespace AutoHotKeyTrigger.ProfileManager
 
                     ImGui.PopStyleColor();
                     ImGui.SameLine();
-                    if (expand && ImGui.SmallButton(L("Delete", "Loeschen")))
+                    if (expand && ImGui.SmallButton("Delete"))
                     {
                         this.RemoveAt(i);
                         ImGui.PopID();
@@ -271,22 +266,26 @@ namespace AutoHotKeyTrigger.ProfileManager
                     }
 
                     ImGui.SameLine();
-                    if (expand && ImGui.SmallButton(L("Add Component", "Komponente hinzufuegen")))
+                    if (expand && ImGui.SmallButton("Add Component"))
                     {
                         this.conditions[i].Add(new Wait(0));
                     }
 
                     ImGui.SameLine();
-                    if (expand && ImGui.SmallButton(L("Edit Via Template", "Per Vorlage bearbeiten")))
+                    if (expand && ImGui.SmallButton("Edit Via Template"))
                     {
                         this.conditionToModify = i;
-                        this.addNewConditionDialogOpen = false;
-                        this.modifyConditionDialogOpen = true;
-                        StatusEffectTemplate.ResetForm();
-                        if (this.conditions[i].TryGetSource(out var source))
-                        {
-                            StatusEffectTemplate.TryLoadFromExpression(source);
-                        }
+                        ImGui.OpenPopup("ModifyExistingConditionPopUp");
+                    }
+
+                    if (ImGui.BeginPopup("ModifyExistingConditionPopUp"))
+                    {
+                        ImGui.Text("NOTE: Click outside this popup to close it.");
+                        ImGui.Text("NOTE: This Overwrites the whole condition.");
+                        ImGuiHelper.EnumComboBox("Condition Type", ref this.newConditionType);
+                        ImGui.Separator();
+                        this.ModifyExistingCondition(this.newConditionType, this.conditionToModify);
+                        ImGui.EndPopup();
                     }
 
                     ImGui.BeginGroup();
@@ -334,24 +333,23 @@ namespace AutoHotKeyTrigger.ProfileManager
 
         private void DrawAddNewCondition()
         {
-            if (ImGui.Button(L("Add New Condition", "Neue Bedingung")))
+            if (ImGui.Button("Add New Condition"))
             {
-                this.modifyConditionDialogOpen = false;
-                this.addNewConditionDialogOpen = true;
-                StatusEffectTemplate.ResetForm();
+                ImGui.OpenPopup("AddNewConditionPopUp");
             }
 
             ImGui.SameLine();
-            if (ImGui.Button(L("Clear All Conditions", "Alle Bedingungen loeschen")))
+            if (ImGui.Button("Clear All Conditions"))
             {
                 this.Clear();
             }
 
             ImGui.SameLine();
-            var isClicked = ImGui.Button(L("Merge All conditions", "Alle Bedingungen zusammenfuehren"));
-            ImGuiHelper.ToolTip(L(
-                "This merges all the conditions into one so you can easily copy paste it into multiple rules. Conditions with component can not be merged.",
-                "Fuegt Bedingungen zusammen zum Kopieren in mehrere Regeln. Bedingungen mit Komponenten werden nicht zusammengefuehrt."));
+            var isClicked = ImGui.Button("Merge All conditions");
+            ImGuiHelper.ToolTip("This merges all the conditions into one so you " +
+                "can easily copy paste it into multiple rules. Conditions with " +
+                "component can not be merged so this button will create a new " +
+                "condition when it encounter a component attached to the condition.");
             if (isClicked)
             {
                 var newConditions = new List<DynamicCondition>();
@@ -373,68 +371,14 @@ namespace AutoHotKeyTrigger.ProfileManager
                 this.conditions.AddRange(newConditions);
             }
 
-            this.DrawAddNewConditionDialog();
-            this.DrawModifyConditionDialog();
-        }
-
-        private void DrawAddNewConditionDialog()
-        {
-            if (!this.addNewConditionDialogOpen)
+            if (ImGui.BeginPopup("AddNewConditionPopUp"))
             {
-                return;
-            }
-
-            TemplateUi.PrepareConditionDialog();
-            if (ImGui.Begin(
-                    $"{L("Add New Condition", "Neue Bedingung")}###AddNewConditionPopUp",
-                    ref this.addNewConditionDialogOpen,
-                    ImGuiWindowFlags.NoCollapse))
-            {
-                ImGui.TextDisabled(L(
-                    "Drag the corner to resize. Close with X when done.",
-                    "Ecke ziehen zum Vergroessern. Mit X schliessen."));
-                ImGui.TextDisabled(L("Condition Type", "Bedingungstyp"));
-                ImGui.SetNextItemWidth(TemplateUi.FieldWidth());
-                ImGuiHelper.EnumComboBox("##ConditionType", ref this.newConditionType);
+                ImGui.Text("NOTE: Click outside this popup to close it.");
+                ImGuiHelper.EnumComboBox("Condition Type", ref this.newConditionType);
                 ImGui.Separator();
-                ImGui.PushID("AddNewConditionTemplate");
                 this.Add(this.newConditionType);
-                ImGui.PopID();
-                ImGui.End();
+                ImGui.EndPopup();
             }
         }
-
-        private void DrawModifyConditionDialog()
-        {
-            if (!this.modifyConditionDialogOpen)
-            {
-                return;
-            }
-
-            TemplateUi.PrepareConditionDialog();
-            if (ImGui.Begin(
-                    $"{L("Edit Condition", "Bedingung bearbeiten")}###ModifyExistingConditionPopUp",
-                    ref this.modifyConditionDialogOpen,
-                    ImGuiWindowFlags.NoCollapse))
-            {
-                ImGui.TextDisabled(L(
-                    "This overwrites the whole condition. Drag the corner to resize.",
-                    "Ueberschreibt die gesamte Bedingung. Ecke ziehen zum Vergroessern."));
-                ImGui.TextDisabled(L("Condition Type", "Bedingungstyp"));
-                ImGui.SetNextItemWidth(TemplateUi.FieldWidth());
-                ImGuiHelper.EnumComboBox("##ConditionType", ref this.newConditionType);
-                ImGui.Separator();
-                if (this.conditionToModify >= 0 && this.conditionToModify < this.conditions.Count)
-                {
-                    ImGui.PushID("ModifyConditionTemplate");
-                    this.ModifyExistingCondition(this.newConditionType, this.conditionToModify);
-                    ImGui.PopID();
-                }
-
-                ImGui.End();
-            }
-        }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
     }
 }

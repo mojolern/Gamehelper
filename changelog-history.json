@@ -1,6 +1,14 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.3",
+                         "published":  "2026-06-16T13:37:06.0508171Z",
+                         "changelog":  [
+                                           "[Plugin] Radar: Abyss + Breach updates, correct runestone socket counts, hide labels when near || [Plugin] Radar: Abyss + Breach, korrekte Runenstein-Sockets, Zahlen in der Nähe ausblenden",
+                                           "[Info] If Radar icons look wrong after updating, delete Plugins/Radar/config/settings.txt once and restart || [Info] Wenn Radar-Icons nach dem Update falsch aussehen: einmal Plugins/Radar/config/settings.txt löschen und neu starten"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.2",
                          "published":  "2026-06-14T15:55:33.0884532Z",
                          "changelog":  [

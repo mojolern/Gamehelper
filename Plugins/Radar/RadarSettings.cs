@@ -1,4 +1,4 @@
-// <copyright file="RadarSettings.cs" company="PlaceholderCompany">
+﻿// <copyright file="RadarSettings.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -7,7 +7,6 @@ namespace Radar
     using System.Collections.Generic;
     using System.IO;
     using System.Numerics;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using ImGuiNET;
     using Newtonsoft.Json;
@@ -52,6 +51,16 @@ namespace Radar
         public float MiniMapXOffset = 0f;
 
         /// <summary>
+        /// Automatically detect local co-op mode in controller mode.
+        /// </summary>
+        public bool AutoDetectCoopMode = true;
+
+        /// <summary>
+        /// Enable co-op mode maphack centering on the midpoint between P1 and P2.
+        /// </summary>
+        public bool EnableCoopMode = false;
+
+        /// <summary>
         /// Do not draw the Radar plugin stuff when game is in the background.
         /// </summary>
         public bool DrawWhenForeground = true;
@@ -60,12 +69,6 @@ namespace Radar
         /// Do not draw the Radar plugin stuff when user is in hideout/town.
         /// </summary>
         public bool DrawWhenNotInHideoutOrTown = true;
-
-        /// <summary>
-        /// One-time migration: restore boss_arena_tgt_files.txt from the shipped default list
-        /// after the reverted auto-discover feature (revision 0 → 1).
-        /// </summary>
-        public int BossArenaTgtListRevision = 0;
         
         /// <summary>
         /// Do not draw the Radar plugin stuff when user is in pause menu.
@@ -128,6 +131,27 @@ namespace Radar
         /// Does not change individual icon ShowPath settings.
         /// </summary>
         public bool ShowEntityPaths = true;
+
+        /// <summary>
+        /// When enabled, once the player gets close to a target that has a path,
+        /// that target is remembered for the current map and its path is no longer drawn.
+        /// Reset on area change or via the "Reset Reached Paths" button.
+        /// </summary>
+        public bool HideReachedPaths = true;
+
+        /// <summary>
+        /// Grid-distance threshold below which a path target counts as "reached"
+        /// and is hidden for the remainder of the current map. Used by
+        /// <see cref="HideReachedPaths"/>.
+        /// </summary>
+        public float ReachedPathDistance = 50f;
+
+        /// <summary>
+        /// When enabled, the socket-count label on a Runestone Encounter disappears once the
+        /// player gets within <see cref="ReachedPathDistance"/> of it (remembered per map).
+        /// Independent of <see cref="HideReachedPaths"/>.
+        /// </summary>
+        public bool HideRunestoneSocketsWhenNear = true;
 
         /// <summary>
         /// Gets a value indicating what is the maximum frequency a POI should have
@@ -266,6 +290,12 @@ namespace Radar
         public Dictionary<string, IconPicker> RitualIcons = new();
 
         /// <summary>
+        /// Icons to display on the map for Abyss nodes. "Abyss Crack" and "Abyss Pit"
+        /// match specific paths; "Other" matches any other entity with "Abyss" in its path.
+        /// </summary>
+        public Dictionary<string, IconPicker> AbyssIcons = new();
+
+        /// <summary>
         /// The group number used for expedition markers in SpecialMiscObjPaths.
         /// </summary>
         [JsonIgnore]
@@ -294,6 +324,18 @@ namespace Radar
         /// </summary>
         [JsonIgnore]
         public const int RitualGroup = 104;
+
+        /// <summary>
+        /// The group number used for Abyss nodes in SpecialMiscObjPaths.
+        /// </summary>
+        [JsonIgnore]
+        public const int AbyssGroup = 105;
+
+        /// <summary>
+        /// The group number used for Breach initiators in SpecialMiscObjPaths.
+        /// </summary>
+        [JsonIgnore]
+        public const int BreachInitiatorGroup = 106;
 
         /// <summary>
         /// Maps mod name substrings to display names used as keys in ExpeditionRemnantIcons.
@@ -356,6 +398,8 @@ namespace Radar
                 ImGui.Columns(2, $"icons columns##{headingText}", false);
                 foreach (var icon in icons)
                 {
+                    ImGui.Checkbox($"##show{headingText}{icon.Key}", ref icon.Value.Show);
+                    ImGui.SameLine();
                     ImGui.Text(icon.Key);
                     ImGui.NextColumn();
                     icon.Value.ShowSettingWidget();
@@ -373,12 +417,14 @@ namespace Radar
         /// <param name="dllDirectory">directory where the plugin dll is located.</param>
         public void DrawPOIMonsterSettingToImGui(string dllDirectory)
         {
-            if (ImGui.TreeNode(L("Monster POI Icons", "Monster-POI-Icons")))
+            if (ImGui.TreeNode($"Monster POI Icons"))
             {
                 ImGui.Columns(2, $"icons columns##POIMonsterCol", false);
                 foreach (var poimonster in this.POIMonsters)
                 {
-                    ImGui.Text(poimonster.Key == -1 ? L("Default Group", "Standardgruppe") : $"{L("Group", "Gruppe")} {poimonster.Key}");
+                    ImGui.Checkbox($"##showpoimonster{poimonster.Key}", ref poimonster.Value.Show);
+                    ImGui.SameLine();
+                    ImGui.Text(poimonster.Key  == -1 ? "Default Group" : $"Group {poimonster.Key}");
                     ImGui.NextColumn();
                     poimonster.Value.ShowSettingWidget();
                     ImGui.SameLine();
@@ -393,13 +439,13 @@ namespace Radar
                 ImGui.Columns(1);
                 ImGui.Separator();
                 ImGui.SetNextItemWidth(ImGui.GetFontSize() * 5);
-                if (ImGui.InputInt(L("Group Number", "Gruppennummer") + "##poimonster", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
+                if (ImGui.InputInt("Group Number##poimonster", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
                 {
                     poiMonsterGroupNumber = 0;
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button(L("Add", "Hinzufuegen") + "##POIMonsterGroupAdd"))
+                if (ImGui.Button("Add##POIMonsterGroupAdd"))
                 {
                     this.POIMonsters.TryAdd(poiMonsterGroupNumber, new(Path.Join(dllDirectory, "icons.png"), 12, 44, 30, IconSize));
                 }
@@ -414,12 +460,14 @@ namespace Radar
         /// <param name="dllDirectory">directory where the plugin dll is located.</param>
         public void OtherImportantObjectsSettingToImGui(string dllDirectory)
         {
-            if (ImGui.TreeNode(L("Special Objects Icons", "Spezialobjekt-Icons")))
+            if (ImGui.TreeNode($"Special Objects Icons"))
             {
                 ImGui.Columns(2, $"icons columns##SpecialObjects", false);
                 foreach (var obj in this.OtherImportantObjects)
                 {
-                    ImGui.Text(obj.Key == -1 ? L("Default Group", "Standardgruppe") : $"{L("Group", "Gruppe")} {obj.Key}");
+                    ImGui.Checkbox($"##showspecialobj{obj.Key}", ref obj.Value.Show);
+                    ImGui.SameLine();
+                    ImGui.Text(obj.Key == -1 ? "Default Group" : $"Group {obj.Key}");
                     ImGui.NextColumn();
                     obj.Value.ShowSettingWidget();
                     ImGui.SameLine();
@@ -434,13 +482,13 @@ namespace Radar
                 ImGui.Columns(1);
                 ImGui.Separator();
                 ImGui.SetNextItemWidth(ImGui.GetFontSize() * 5);
-                if (ImGui.InputInt(L("Group Number", "Gruppennummer") + "##SpecialObjects", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
+                if (ImGui.InputInt("Group Number##SpecialObjects", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
                 {
                     poiMonsterGroupNumber = 0;
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button(L("Add", "Hinzufuegen") + "##SpecialObjects"))
+                if (ImGui.Button("Add##SpecialObjects"))
                 {
                     this.OtherImportantObjects.TryAdd(poiMonsterGroupNumber, new(Path.Join(dllDirectory, "icons.png"), 1, 37, 30, IconSize));
                 }
@@ -466,6 +514,7 @@ namespace Radar
             this.AddDefaultExpeditionRemnantIcons(basicIconPathName);
             this.AddDefaultRunestoneIcons(basicIconPathName);
             this.AddDefaultRitualIcons(basicIconPathName);
+            this.AddDefaultAbyssIcons(basicIconPathName);
             this.AddDefaultTempleIcons(basicIconPathName);
             this.AddDefaultBossIcons(basicIconPathName);
         }
@@ -509,6 +558,9 @@ namespace Radar
         private void AddDefaultBreachIcons(string iconPathName)
         {
             this.BreachIcons.TryAdd("Breach Chest", new IconPicker(iconPathName, 6, 41, 30, IconSize));
+            this.BreachIcons.TryAdd("Breach", new IconPicker(iconPathName, 8, 12, 50, IconSize,
+                showPath: true,
+                pathColor: new System.Numerics.Vector4(0.8f, 0.1f, 0.5f, 1f)));
         }
 
         private void AddDefaultDeliriumIcons(string iconPathName)
@@ -545,7 +597,7 @@ namespace Radar
         private void AddDefaultRunestoneIcons(string iconPathName)
         {
             this.RunestoneIcons.TryAdd("Runestone Encounter",
-                new IconPicker(iconPathName, 8, 40, 50, IconSize,
+                new IconPicker(iconPathName, 4, 71, 50, IconSize,
                     showPath: true,
                     pathColor: new System.Numerics.Vector4(0f, 145f / 255f, 209f / 255f, 1f)));
             this.RunestoneIcons.TryAdd("Runestones", new IconPicker(iconPathName, 13, 1, 70, IconSize));
@@ -559,6 +611,18 @@ namespace Radar
                     pathColor: new System.Numerics.Vector4(113f / 255f, 0f, 1f, 1f)));
         }
 
+        private void AddDefaultAbyssIcons(string iconPathName)
+        {
+            var abyssCrack = new IconPicker(iconPathName, 5, 63, 40, IconSize,
+                showPath: false,
+                pathColor: new System.Numerics.Vector4(140f / 255f, 1f, 0f, 1f));
+            abyssCrack.Show = false; // hidden by default (icon + path off)
+            this.AbyssIcons.TryAdd("Abyss Crack", abyssCrack);
+            this.AbyssIcons.TryAdd("Abyss Pit", new IconPicker(iconPathName, 7, 63, 50, IconSize,
+                showPath: true,
+                pathColor: new System.Numerics.Vector4(140f / 255f, 1f, 0f, 1f)));
+        }
+
         private void AddDefaultExpeditionRemnantIcons(string iconPathName)
         {
             this.ExpeditionRemnantIcons.TryAdd("Chest Item Quantity Remnant", new IconPicker(iconPathName, 11, 40, 100, IconSize));
@@ -568,7 +632,5 @@ namespace Radar
         {
             this.BossIcons.TryAdd("Boss Arena", new IconPicker(iconPathName, 6, 57, 50, IconSize));
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
     }
 }

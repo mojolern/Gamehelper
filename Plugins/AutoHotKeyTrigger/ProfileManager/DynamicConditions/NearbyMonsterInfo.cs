@@ -4,14 +4,14 @@
 
 namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
 {
-    using System;
-    using System.Collections.Generic;
-    using AutoHotKeyTrigger.ProfileManager.DynamicConditions.Interface;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteEnums.Entity;
     using GameHelper.RemoteObjects.Components;
     using GameHelper.RemoteObjects.States;
     using GameHelper.RemoteObjects.States.InGameStateObjects;
+    using System;
+    using System.Collections.Generic;
+    using AutoHotKeyTrigger.ProfileManager.DynamicConditions.Interface;
 
     /// <summary>
     ///     Stores optimized information about nearby monster count
@@ -127,7 +127,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
 
         /// <summary>
         ///     Calculates the nearby monster count that are currently undamageable (i.e. in an
-        ///     invulnerability phase, flagged by the stat).
+        ///     invulnerability phase, flagged by the <see cref="GameStats.cannot_be_damaged"/> stat).
         /// </summary>
         /// <param name="rarity">filter monster based on rarity</param>
         /// <param name="zone">nearby zone in which we want to count the monster in</param>
@@ -166,7 +166,8 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         ///     Counts nearby monsters of the given rarity within an explicit distance (in the same
         ///     units as the inner/outer circle settings). Unlike the zone-based counts, this is not
         ///     bound by the configured outer circle, so it can reach out to the network bubble
-        ///     (~150); monsters beyond that are not loaded by the game and cannot be counted.
+        ///     (~<see cref="GameOffsets.Objects.States.InGameState.AreaInstanceOffsets.NETWORK_BUBBLE_RADIUS"/>);
+        ///     monsters beyond that are not loaded by the game and cannot be counted.
         /// </summary>
         /// <param name="rarity">filter monster based on rarity</param>
         /// <param name="maxDistance">maximum distance from the player to include a monster</param>
@@ -241,15 +242,14 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         /// <summary>
         ///     A monster only counts while it is alive. Corpses keep their components (so they would
         ///     otherwise still be counted, including as "damageable"), hence the explicit life check.
-        ///     <see cref="Life.IsAlive"/> is simply Health.Current &gt; 0.
+        ///     <see cref="Life.IsAlive"/> is simply <c>Health.Current &gt; 0</c>.
         /// </summary>
         private static bool IsAliveMonster(Entity entity) =>
             entity.TryGetComponent<Life>(out var life) && life.IsAlive;
 
         /// <summary>
-        ///     A monster is treated as undamageable while the
-        ///     <see cref="GameStats.cannot_be_damaged"/> (or its base variant) stat is set.
-        ///     Bosses toggle this on/off during invulnerability phases.
+        ///     A monster is treated as undamageable while the <see cref="GameStats.cannot_be_damaged"/>
+        ///     (or its base variant) stat is set. Bosses toggle this on/off during invulnerability phases.
         /// </summary>
         private static bool IsCurrentlyUndamageable(Entity entity)
         {
