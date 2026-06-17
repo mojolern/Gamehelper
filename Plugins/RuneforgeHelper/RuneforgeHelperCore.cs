@@ -14,8 +14,9 @@ namespace RuneforgeHelper
     using GameOffsets.Objects.UiElement;
     using ImGuiNET;
     using Newtonsoft.Json;
+    using Newtonsoft.Json.Linq;
 
-    public sealed class RuneforgeHelperCore : PCore<RuneforgeHelperSettings>
+    public sealed partial class RuneforgeHelperCore : PCore<RuneforgeHelperSettings>
     {
         // Fixed UI path through PoE2 0.5.x's Runeshape Combinations panel:
         //   GameUi → window-container → ? → ? → ? → recipes-container
@@ -111,12 +112,7 @@ namespace RuneforgeHelper
 
         public override void OnEnable(bool isGameOpened)
         {
-            if (File.Exists(this.SettingPathname))
-            {
-                var content = File.ReadAllText(this.SettingPathname);
-                this.Settings = JsonConvert.DeserializeObject<RuneforgeHelperSettings>(content)
-                                ?? new RuneforgeHelperSettings();
-            }
+            this.LoadSettingsWithMigration();
 
             var fresh = this.priceCache.TryLoadFromDisk(
                 this.PriceCachePathname,
@@ -128,6 +124,47 @@ namespace RuneforgeHelper
 
             this.currencyIcons.Initialize(this.DllDirectory);
             this.iconsReloadPending = true;
+        }
+
+        private void LoadSettingsWithMigration()
+        {
+            if (!File.Exists(this.SettingPathname))
+            {
+                // Fresh install: PCore already created Settings with class field defaults.
+                return;
+            }
+
+            var content = File.ReadAllText(this.SettingPathname);
+            this.Settings = JsonConvert.DeserializeObject<RuneforgeHelperSettings>(content)
+                            ?? new RuneforgeHelperSettings();
+
+            JObject? jobj;
+            try
+            {
+                jobj = JObject.Parse(content);
+            }
+            catch
+            {
+                return;
+            }
+
+            var migrated = false;
+            if (!jobj.ContainsKey(nameof(RuneforgeHelperSettings.ShowMonolithRewards)))
+            {
+                this.Settings.ShowMonolithRewards = true;
+                migrated = true;
+            }
+
+            if (!jobj.ContainsKey(nameof(RuneforgeHelperSettings.DrawMonolithValueOnMap)))
+            {
+                this.Settings.DrawMonolithValueOnMap = true;
+                migrated = true;
+            }
+
+            if (migrated)
+            {
+                this.SaveSettings();
+            }
         }
 
         public override void OnDisable()
@@ -243,6 +280,34 @@ namespace RuneforgeHelper
                     ImGui.EndTabItem();
                 }
 
+                if (ImGui.BeginTabItem(this.L("Monolith", "Monolith")))
+                {
+                    ImGui.Checkbox(this.L("Show monolith reward window", "Monolith-Belohnungsfenster"), ref this.Settings.ShowMonolithRewards);
+                    if (this.Settings.ShowMonolithRewards)
+                    {
+                        ImGui.SliderFloat(this.L("Hide rewards under (ex)", "Belohnungen unter (Ex) ausblenden"), ref this.Settings.MonolithRewardsMinExalted, 0f, 50f, "%.0f ex");
+                        ImGui.InputFloat(this.L("Highlight threshold (ex)", "Hervorhebungs-Schwelle (Ex)"), ref this.Settings.MonolithHighlightThreshold, 1f, 10f, "%.0f");
+                        if (this.Settings.MonolithHighlightThreshold < 0f) this.Settings.MonolithHighlightThreshold = 0f;
+                        ImGui.TextDisabled(this.L(
+                            "Tints a monolith header by its best reward: green at/above threshold, yellow from 0.6x up to it. 0 = use price color mode.",
+                            "Faerbt Monolith-Kopfzeilen nach bester Belohnung: gruen ab Schwelle, gelb ab 0,6x. 0 = Preisfarbe-Modus."));
+
+                        ImGui.Checkbox(this.L("Draw value on map overlay", "Wert auf Karten-Overlay"), ref this.Settings.DrawMonolithValueOnMap);
+                        if (this.Settings.DrawMonolithValueOnMap)
+                        {
+                            ImGui.TextDisabled(this.L(
+                                "Match these to your Radar large-map settings if labels are misaligned.",
+                                "An Radar-Grosskarten-Einstellungen anpassen, falls Beschriftungen versetzt sind."));
+                            ImGui.SliderFloat(this.L("Map value scale", "Karten-Massstab"), ref this.Settings.MapValueScaleMultiplier, 0.1f, 3f, "%.2f");
+                            ImGui.SliderFloat(this.L("Map value X offset", "Karten X-Versatz"), ref this.Settings.MapValueXOffset, -200f, 200f, "%.0f");
+                            ImGui.SliderFloat(this.L("Map value Y offset", "Karten Y-Versatz"), ref this.Settings.MapValueYOffset, -200f, 200f, "%.0f");
+                        }
+                    }
+
+                    ImGui.Checkbox(this.L("Show monolith debug window", "Monolith-Debugfenster"), ref this.Settings.ShowMonolithDebugWindow);
+                    ImGui.EndTabItem();
+                }
+
                 ImGui.EndTabBar();
             }
 
@@ -304,6 +369,9 @@ namespace RuneforgeHelper
             }
 
             if (!this.EnsureProcess()) return;
+
+            if (this.Settings.ShowMonolithRewards || this.Settings.ShowMonolithDebugWindow || this.Settings.DrawMonolithValueOnMap)
+                this.DrawMonolithRewards();
 
             var panel = this.GetPanelCached();
             this.panelResolvedLastFrame = panel != IntPtr.Zero;

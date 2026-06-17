@@ -275,7 +275,7 @@ function Test-PluginDeploy {
         @{ Plugin = "HealthBars"; Files = @("HealthBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") },
         @{ Plugin = "Radar"; Files = @("Radar.dll", "icons.png", "important_tgt_files.txt") },
         @{ Plugin = "RitualHelper"; Files = @("RitualHelper.dll", "item_names.json") },
-        @{ Plugin = "RuneforgeHelper"; Files = @("RuneforgeHelper.dll", "config\prices.json") },
+        @{ Plugin = "RuneforgeHelper"; Files = @("RuneforgeHelper.dll", "config\prices.json", "expedition2_recipes.json") },
         @{ Plugin = "SekhemaHelper"; Files = @("SekhemaHelper.dll") },
         @{ Plugin = "AuraTracker"; Files = @("AuraTracker.dll") },
         @{ Plugin = "MapKillCounter"; Files = @("MapKillCounter.dll") },

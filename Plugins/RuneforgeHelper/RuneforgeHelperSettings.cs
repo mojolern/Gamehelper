@@ -51,6 +51,23 @@ namespace RuneforgeHelper
 
         public bool ShowWindow;
 
+        // Monolith reward window (upstream RunecraftHelper) — on by default for new installs.
+        public bool ShowMonolithRewards = true;
+
+        public float MonolithRewardsMinExalted;
+
+        public float MonolithHighlightThreshold;
+
+        public bool DrawMonolithValueOnMap = true;
+
+        public float MapValueScaleMultiplier = 1f;
+
+        public float MapValueXOffset;
+
+        public float MapValueYOffset;
+
+        public bool ShowMonolithDebugWindow;
+
         public void ApplyDisplayDefaults()
         {
             this.DisplayCurrency = DefaultDisplayCurrency;

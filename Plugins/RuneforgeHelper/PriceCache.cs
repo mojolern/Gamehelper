@@ -64,6 +64,16 @@ namespace RuneforgeHelper
             }
         }
 
+        public bool TryGetExaltedPrice(string itemName, out double exaltedPrice)
+        {
+            exaltedPrice = 0;
+            if (!this.TryGetDivinePrice(itemName, out var divine) || divine <= 0) return false;
+            var rate = this.DivineToExaltedRate;
+            if (rate <= 0) return false;
+            exaltedPrice = divine * rate;
+            return exaltedPrice > 0;
+        }
+
         public bool TryGetDivinePriceByArtId(string artId, out double divinePrice)
         {
             divinePrice = 0;
