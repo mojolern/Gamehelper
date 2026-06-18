@@ -296,6 +296,11 @@ namespace Radar
         public Dictionary<string, IconPicker> AbyssIcons = new();
 
         /// <summary>
+        /// Icons to display on the map for Sanctum (Trial of the Sekhemas) objects.
+        /// </summary>
+        public Dictionary<string, IconPicker> SekhemasIcons = new();
+
+        /// <summary>
         /// The group number used for expedition markers in SpecialMiscObjPaths.
         /// </summary>
         [JsonIgnore]
@@ -336,6 +341,12 @@ namespace Radar
         /// </summary>
         [JsonIgnore]
         public const int BreachInitiatorGroup = 106;
+
+        /// <summary>
+        /// The group number used for Sanctum (Sekhemas) objects in SpecialMiscObjPaths.
+        /// </summary>
+        [JsonIgnore]
+        public const int SekhemasGroup = 107;
 
         /// <summary>
         /// Maps mod name substrings to display names used as keys in ExpeditionRemnantIcons.
@@ -515,6 +526,7 @@ namespace Radar
             this.AddDefaultRunestoneIcons(basicIconPathName);
             this.AddDefaultRitualIcons(basicIconPathName);
             this.AddDefaultAbyssIcons(basicIconPathName);
+            this.AddDefaultSekhemasIcons(basicIconPathName);
             this.AddDefaultTempleIcons(basicIconPathName);
             this.AddDefaultBossIcons(basicIconPathName);
         }
@@ -621,6 +633,11 @@ namespace Radar
             this.AbyssIcons.TryAdd("Abyss Pit", new IconPicker(iconPathName, 7, 63, 50, IconSize,
                 showPath: true,
                 pathColor: new System.Numerics.Vector4(140f / 255f, 1f, 0f, 1f)));
+        }
+
+        private void AddDefaultSekhemasIcons(string iconPathName)
+        {
+            this.SekhemasIcons.TryAdd("Sacred Water", new IconPicker(iconPathName, 4, 15, 30, IconSize));
         }
 
         private void AddDefaultExpeditionRemnantIcons(string iconPathName)
