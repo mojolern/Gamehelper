@@ -4,6 +4,7 @@
 
 namespace AutoHotKeyTrigger.ProfileManager
 {
+    using AutoHotKeyTrigger;
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
@@ -26,8 +27,13 @@ namespace AutoHotKeyTrigger.ProfileManager
         private int conditionToModify = -1;
         private int conditionIndexToSwap = -1;
         private static bool expand = false;
+        private const float MinEscCooldownSeconds = 0.5f;
+
+        private float EffectiveCooldownSeconds =>
+            this.Key == VK.ESCAPE ? Math.Max(this.delayBetweenRuns, MinEscCooldownSeconds) : this.delayBetweenRuns;
         private ConditionType newConditionType = ConditionType.AILMENT;
         private readonly Stopwatch cooldownStopwatch = Stopwatch.StartNew();
+        private bool cooldownFrozen;
 
         [JsonProperty("Conditions", NullValueHandling = NullValueHandling.Ignore)]
         private readonly List<DynamicCondition> conditions = new();
@@ -117,25 +123,60 @@ namespace AutoHotKeyTrigger.ProfileManager
                 this.Key = tmpKey;
             }
 
+            if (this.Key == VK.ESCAPE)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.45f, 0.2f, 1f),
+                    $"ESCAPE rules use at least {MinEscCooldownSeconds:0.0}s cooldown (pause menu is a toggle).");
+            }
+
             this.DrawCooldownWidget();
             this.DrawAddNewCondition();
             this.DrawExistingConditions();
         }
 
         /// <summary>
+        ///     Freezes the rule cooldown while the game pause menu is open.
+        /// </summary>
+        /// <param name="frozen">whether cooldown progression should pause.</param>
+        public void SetCooldownFrozen(bool frozen)
+        {
+            if (this.cooldownFrozen == frozen)
+            {
+                return;
+            }
+
+            if (frozen)
+            {
+                this.cooldownStopwatch.Stop();
+            }
+            else
+            {
+                this.cooldownStopwatch.Start();
+            }
+
+            this.cooldownFrozen = frozen;
+        }
+
+        /// <summary>
         ///     Checks the rule conditions and presses its key if conditions are satisfied
         /// </summary>
         /// <param name="logger"></param>
-        public void Execute(Action<string> logger)
+        /// <returns><see langword="true"/> when a key was sent to the game.</returns>
+        public bool Execute(Action<string> logger)
         {
-            if (this.Enabled && this.Evaluate())
+            if (!this.Enabled || !this.Evaluate())
             {
-                if (MiscHelper.KeyUp(this.Key))
-                {
-                    logger($"{this.Key} is pressed.");
-                    this.cooldownStopwatch.Restart();
-                }
+                return false;
             }
+
+            if (!AhkKeySender.SendKey(this.Key, $"AHK/{this.Name}"))
+            {
+                return false;
+            }
+
+            logger($"{this.Key} is pressed.");
+            this.cooldownStopwatch.Restart();
+            return true;
         }
 
         /// <summary>
@@ -207,7 +248,7 @@ namespace AutoHotKeyTrigger.ProfileManager
         /// <returns>true if all the rules conditions are true otherwise false.</returns>
         private bool Evaluate()
         {
-            if (this.cooldownStopwatch.Elapsed.TotalSeconds > this.delayBetweenRuns)
+            if (this.cooldownStopwatch.Elapsed.TotalSeconds >= this.EffectiveCooldownSeconds)
             {
                 if (this.conditions.TrueForAll(x => x.Evaluate()))
                 {
@@ -221,16 +262,26 @@ namespace AutoHotKeyTrigger.ProfileManager
         private void DrawCooldownWidget()
         {
             ImGui.DragFloat("Cooldown time (seconds)##DelayTimerConditionDelay", ref this.delayBetweenRuns, 0.1f, 0.0f, 30.0f);
-            if (this.delayBetweenRuns > 0)
+            if (this.EffectiveCooldownSeconds > 0)
             {
-                var cooldownTimeFraction = this.delayBetweenRuns <= 0f ? 1f :
-                    MathF.Min((float)this.cooldownStopwatch.Elapsed.TotalSeconds, this.delayBetweenRuns) / this.delayBetweenRuns;
-                ImGui.PushStyleColor(ImGuiCol.Text, ImGuiHelper.Color(200, 0, 200, 255));
-                ImGui.ProgressBar(
-                    (float)cooldownTimeFraction,
-                    Vector2.Zero,
-                    cooldownTimeFraction < 1f ? $"Cooling {(cooldownTimeFraction * 100f):0}%" : "Ready");
-                ImGui.PopStyleColor();
+                if (this.cooldownFrozen)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Text, ImGuiHelper.Color(255, 180, 0, 255));
+                    ImGui.Text("Cooldown paused (pause menu open)");
+                    ImGui.PopStyleColor();
+                }
+                else
+                {
+                    var cooldownTimeFraction = MathF.Min(
+                        (float)this.cooldownStopwatch.Elapsed.TotalSeconds,
+                        this.EffectiveCooldownSeconds) / this.EffectiveCooldownSeconds;
+                    ImGui.PushStyleColor(ImGuiCol.Text, ImGuiHelper.Color(200, 0, 200, 255));
+                    ImGui.ProgressBar(
+                        (float)cooldownTimeFraction,
+                        Vector2.Zero,
+                        cooldownTimeFraction < 1f ? $"Cooling {(cooldownTimeFraction * 100f):0}%" : "Ready");
+                    ImGui.PopStyleColor();
+                }
             }
         }
 

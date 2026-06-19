@@ -37,6 +37,17 @@ namespace AutoHotKeyTrigger.ProfileManager
         public List<Rule> Rules { get; } = new();
 
         /// <summary>
+        ///     Freezes cooldown timers on all rules (e.g. while pause menu is open).
+        /// </summary>
+        public void SetRulesCooldownFrozen(bool frozen)
+        {
+            foreach (var rule in this.Rules)
+            {
+                rule.SetCooldownFrozen(frozen);
+            }
+        }
+
+        /// <summary>
         ///     Initializes a new instance of the <see cref="Profile" /> class.
         /// </summary>
         [JsonConstructor]

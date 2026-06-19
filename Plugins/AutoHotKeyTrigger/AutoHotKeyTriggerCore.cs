@@ -6,6 +6,7 @@ namespace AutoHotKeyTrigger
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.IO;
     using System.Linq;
     using System.Numerics;
@@ -44,6 +45,10 @@ namespace AutoHotKeyTrigger
         private string debugMessage = string.Empty;
         private string newProfileName = string.Empty;
         private bool stopShowingAutoQuitWarning = false;
+        private bool escapeMenuWasOpen;
+        private bool pauseMenuWasVisible;
+        private readonly Stopwatch postEscapeMenuCooldown = new();
+        private const double PostEscapeMenuCooldownSeconds = 5.0;
 
         private string SettingPathname => Path.Join(this.DllDirectory, "config", "settings.txt");
         private bool ShouldExecuteAutoQuit =>
@@ -90,6 +95,8 @@ namespace AutoHotKeyTrigger
                 {
                     this.CreateDefaultProfile();
                 }
+
+                this.DrawTriggerStatusBanner();
             }
 
             if (ImGui.CollapsingHeader("Add New Profile"))
@@ -204,6 +211,8 @@ namespace AutoHotKeyTrigger
             }
 
             this.AutoQuitWarningUi();
+            this.UpdatePauseMenuState();
+
             if (!this.ShouldExecutePlugin())
             {
                 return;
@@ -263,6 +272,54 @@ namespace AutoHotKeyTrigger
             foreach (var rule in this.Settings.Profiles[this.Settings.CurrentProfile].Rules)
             {
                 rule.Execute(this.DebugLog);
+            }
+        }
+
+        private void UpdatePauseMenuState()
+        {
+            var current = Core.States.GameCurrentState;
+            var inEscapeMenu = current == GameStateTypes.EscapeState;
+
+            if (inEscapeMenu)
+            {
+                this.pauseMenuWasVisible = true;
+            }
+
+            if (this.escapeMenuWasOpen && !inEscapeMenu && current == GameStateTypes.InGameState)
+            {
+                if (this.pauseMenuWasVisible &&
+                    (!this.postEscapeMenuCooldown.IsRunning ||
+                     this.postEscapeMenuCooldown.Elapsed.TotalSeconds >= PostEscapeMenuCooldownSeconds))
+                {
+                    this.postEscapeMenuCooldown.Restart();
+                }
+
+                this.pauseMenuWasVisible = false;
+            }
+
+            this.escapeMenuWasOpen = inEscapeMenu;
+
+            if (string.IsNullOrEmpty(this.Settings.CurrentProfile) ||
+                !this.Settings.Profiles.TryGetValue(this.Settings.CurrentProfile, out var profile))
+            {
+                return;
+            }
+
+            profile.SetRulesCooldownFrozen(inEscapeMenu);
+        }
+
+        private void DrawTriggerStatusBanner()
+        {
+            if (Core.IsSettingsMenuOpen)
+            {
+                ImGui.TextColored(this.impTextColor,
+                    "Triggers are paused while this settings window is open. Close it to send keys to the game.");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(this.debugMessage))
+            {
+                ImGui.TextColored(new Vector4(0.6f, 0.85f, 1f, 1f), $"Trigger status: {this.debugMessage}");
             }
         }
 
@@ -445,16 +502,24 @@ namespace AutoHotKeyTrigger
                 return false;
             }
 
-            if (ImGui.GetIO().WantCaptureKeyboard)
+            var cgs = Core.States.GameCurrentState;
+            if (cgs == GameStateTypes.EscapeState)
             {
-                this.debugMessage = "GameHelper overlay is capturing keyboard input.";
+                this.debugMessage = "Pause menu is open.";
                 return false;
             }
 
-            var cgs = Core.States.GameCurrentState;
             if (cgs != GameStateTypes.InGameState)
             {
                 this.debugMessage = $"Current game state isn't InGameState, it's {cgs}.";
+                return false;
+            }
+
+            if (this.postEscapeMenuCooldown.IsRunning &&
+                this.postEscapeMenuCooldown.Elapsed.TotalSeconds < PostEscapeMenuCooldownSeconds)
+            {
+                var remaining = PostEscapeMenuCooldownSeconds - this.postEscapeMenuCooldown.Elapsed.TotalSeconds;
+                this.debugMessage = $"Cooldown after closing pause menu ({remaining:0.0}s).";
                 return false;
             }
 
