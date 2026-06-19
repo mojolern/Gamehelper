@@ -433,6 +433,24 @@ namespace AutoHotKeyTrigger
 
         private bool ShouldExecutePlugin()
         {
+            if (Core.IsSettingsMenuOpen)
+            {
+                this.debugMessage = "GameHelper settings menu is open.";
+                return false;
+            }
+
+            if (this.Settings.DebugMode && this.isDebugWindowHovered)
+            {
+                this.debugMessage = "AHK debug window is focused.";
+                return false;
+            }
+
+            if (ImGui.GetIO().WantCaptureKeyboard)
+            {
+                this.debugMessage = "GameHelper overlay is capturing keyboard input.";
+                return false;
+            }
+
             var cgs = Core.States.GameCurrentState;
             if (cgs != GameStateTypes.InGameState)
             {
