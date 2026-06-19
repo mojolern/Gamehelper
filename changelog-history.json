@@ -1,6 +1,14 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.6",
+                         "published":  "2026-06-19T16:29:09.4700704Z",
+                         "changelog":  [
+                                           "[Plugin] SekhemaHelper: smarter affliction weights from your defensive stats — synced from yokkenUA v0.0.2 (original by Nekkoy) || [Plugin] SekhemaHelper: Affliction-Gewichte nach deinen Defensivwerten — Update von yokkenUA v0.0.2 (Original von Nekkoy)",
+                                           "[Plugin] RuneforgeHelper: recipe catalog updated for PoE2 0.5.3 HF3 — data from yokkenUA RunecraftHelper v0.1.1 (original by Nekkoy) || [Plugin] RuneforgeHelper: Rezeptkatalog für PoE2 0.5.3 HF3 — Daten von yokkenUA RunecraftHelper v0.1.1 (Original von Nekkoy)"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.5",
                          "published":  "2026-06-19T12:40:05.5009653Z",
                          "changelog":  [
