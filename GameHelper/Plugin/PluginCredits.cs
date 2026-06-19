@@ -56,6 +56,8 @@ namespace GameHelper.Plugin
 
             ["PlayerBuffBar"] = new("MordWraith", "written for this fork"),
 
+            ["Hiveblood"] = new("MordWraith", "Genesis Tree Hiveblood tracker with inventory overlay (Keepers league)."),
+
         };
 
 

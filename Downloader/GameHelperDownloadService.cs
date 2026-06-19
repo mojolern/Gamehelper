@@ -53,7 +53,9 @@ namespace Downloader
 
               "PlayerBuffBar": { "Enable": true, "AutoStart": true },
 
-              "SimpleBars": { "Enable": false, "AutoStart": false }
+              "SimpleBars": { "Enable": false, "AutoStart": false },
+
+              "Hiveblood": { "Enable": true, "AutoStart": true }
 
             }
 

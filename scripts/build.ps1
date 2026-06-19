@@ -281,7 +281,8 @@ function Test-PluginDeploy {
         @{ Plugin = "MapKillCounter"; Files = @("MapKillCounter.dll") },
         @{ Plugin = "AmanamuVoidAlert"; Files = @("AmanamuVoidAlert.dll") },
         @{ Plugin = "PlayerBuffBar"; Files = @("PlayerBuffBar.dll") },
-        @{ Plugin = "SimpleBars"; Files = @("SimpleBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") }
+        @{ Plugin = "SimpleBars"; Files = @("SimpleBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") },
+        @{ Plugin = "Hiveblood"; Files = @("Hiveblood.dll") }
     )
 
     foreach ($entry in $required) {
@@ -340,6 +341,11 @@ function Repair-PluginsJson {
 
     if ($json.PSObject.Properties.Name -notcontains "MapKillCounter") {
         $json | Add-Member -NotePropertyName "MapKillCounter" -NotePropertyValue @{ Enable = $true; AutoStart = $true } -Force
+        $changed = $true
+    }
+
+    if ($json.PSObject.Properties.Name -notcontains "Hiveblood") {
+        $json | Add-Member -NotePropertyName "Hiveblood" -NotePropertyValue @{ Enable = $true; AutoStart = $true } -Force
         $changed = $true
     }
 
