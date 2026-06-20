@@ -30,7 +30,7 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 
 | Plugin | Author / upstream | Notes |
 |--------|-------------------|-------|
-| Atlas | Nekkoy / [yokkenUA](https://github.com/yokkenUA/Atlas) | GameHelper2 plugin ecosystem |
+| Atlas | Nekkoy / [yokkenUA](https://github.com/yokkenUA/Atlas) (synced **v0.1.3**) | Chevron routes, hide available maps, expedition targets, universal font, content icons |
 | Radar | Gordin | GameHelper2 |
 | RitualHelper | caio | Based on AutoRitualPricer ([Queuete/GameHelper](https://github.com/Queuete/GameHelper) lineage) |
 | RuneforgeHelper | Nekkoy / [yokkenUA](https://github.com/yokkenUA/RunecraftHelper) | Runeshape rewards overlay |
@@ -44,7 +44,7 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | MapKillCounter | MordWraith | Per-map monster kill counts |
 | AmanamuVoidAlert | [1k4ru5g3](https://github.com/1k4ru5g3/AmanamuVoidAlertPlugin) | Abyss / Amanamu void cloud tracker |
 | PlayerBuffBar | MordWraith | Player buff watchlist, charges, rage |
-| Hiveblood | MordWraith | Genesis Tree Hiveblood tracker (Keepers league) |
+| Hiveblood | MordWraith | Genesis Tree Hiveblood tracker (PoE2) |
 | FarmTracker | Senbry / [MordWraith](https://github.com/MordWraith/FarmTracker) | Farm session tracker (loot, maps, kills, div/h) |
 
 ## Third-party libraries

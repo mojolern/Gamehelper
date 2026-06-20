@@ -26,7 +26,11 @@
   </ItemGroup>
 
   <Target Name="CopyFiles" AfterTargets="Build">
-    <Copy SourceFiles="$(OutDir)$(TargetName)$(TargetExt);$(OutDir)item_names.json"
+    <ItemGroup>
+      <_RitualDeployFiles Include="$(OutDir)$(TargetName)$(TargetExt)" />
+      <_RitualDeployFiles Include="$(OutDir)item_names.json" Condition="Exists('$(OutDir)item_names.json')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_RitualDeployFiles)"
           DestinationFolder="..\..\GameHelper\$(OutDir)Plugins\$(ProjectName)"
           SkipUnchangedFiles="true" />
   </Target>

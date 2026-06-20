@@ -39,6 +39,7 @@ namespace GameHelper.Utils
         private static readonly Stopwatch DelayBetweenKeys = Stopwatch.StartNew();
         private static readonly object KeySendLock = new();
         private static Task? chatSendTask;
+        private static Task? upstreamKeyMessage;
         private static bool chatSequenceReserved;
 
         private static readonly VK[] GameplayKeys =
@@ -136,6 +137,11 @@ namespace GameHelper.Utils
         /// <returns><see langword="true"/> when the tap was sent to the focused game window.</returns>
         public static bool KeyUp(VK key, string? source = null)
         {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return KeyUpUpstream(key);
+            }
+
             var label = string.IsNullOrWhiteSpace(source) ? "GameHelper" : source.Trim();
 
             if (Core.GHSettings.EnableControllerMode)
@@ -186,6 +192,45 @@ namespace GameHelper.Utils
             }
 
             ActivityLog.Write("Input", $"{label}: key {key} sent to game");
+            return true;
+        }
+
+        /// <summary>
+        ///     Gordin/GameHelper2 upstream key release used by AutoHotKeyTrigger (WM_KEYUP via SendMessage).
+        /// </summary>
+        private static bool KeyUpUpstream(VK key)
+        {
+            if (Core.GHSettings.EnableControllerMode)
+            {
+                return false;
+            }
+
+            if (upstreamKeyMessage != null && !upstreamKeyMessage.IsCompleted)
+            {
+                return false;
+            }
+
+            if (DelayBetweenKeys.ElapsedMilliseconds >= Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
+            {
+                DelayBetweenKeys.Restart();
+            }
+            else
+            {
+                return false;
+            }
+
+            if (Core.Process.Address == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var hwnd = Core.Process.Information.MainWindowHandle;
+            if (hwnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            upstreamKeyMessage = Task.Run(() => SendMessage(hwnd, WmKeyup, (int)key, 0));
             return true;
         }
 
@@ -442,18 +487,13 @@ namespace GameHelper.Utils
 
         private static bool SendInputKeyTap(ushort virtualKey)
         {
-            var inputs = new Input[1];
+            var inputs = new Input[2];
             inputs[0].type = InputKeyboard;
             inputs[0].U.ki.wVk = virtualKey;
-            if (SendInput(1, inputs, Marshal.SizeOf<Input>()) != 1)
-            {
-                return false;
-            }
-
-            Thread.Sleep(12 + Rand.Next() % 8);
-
-            inputs[0].U.ki.dwFlags = KeyeventfKeyup;
-            return SendInput(1, inputs, Marshal.SizeOf<Input>()) == 1;
+            inputs[1].type = InputKeyboard;
+            inputs[1].U.ki.wVk = virtualKey;
+            inputs[1].U.ki.dwFlags = KeyeventfKeyup;
+            return SendInput(2, inputs, Marshal.SizeOf<Input>()) == 2;
         }
 
         private static bool SendInputCtrlChord(ushort virtualKey)

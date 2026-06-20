@@ -183,7 +183,12 @@ namespace HealthBars
                 return;
             }
 
-            if (Core.States.InGameStateObject.GameUi.IsAnyLargePanelOpen)
+            if (Core.States.InGameStateObject.GameUi.SkillTreeNodesUiElements.Count > 0)
+            {
+                return;
+            }
+
+            if (Core.States.InGameStateObject.GameUi.ShouldHideWorldSpaceBars)
             {
                 return;
             }

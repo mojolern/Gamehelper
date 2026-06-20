@@ -16,7 +16,6 @@ namespace Hiveblood
         private const int MaxDepth = 22;
         private const int MaxLabelChildrenToMerge = 6;
 
-        // Amount may use comma, dot, thin/narrow spaces as thousands separators (PoE client variants).
         private static readonly Regex TreeTotalPattern = new(
             @"hiveblood\s*:\s*([0-9][0-9\s,.\u00A0\u202F\u2009]*)",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -29,6 +28,12 @@ namespace Hiveblood
 
         private readonly Queue<(IntPtr Addr, int Depth)> queue = new();
         private readonly HashSet<IntPtr> visited = new();
+        private readonly List<string> textPartsScratch = new(MaxLabelChildrenToMerge + 1);
+        private readonly byte[] ptrBuf = new byte[8];
+        private readonly byte[] flagsBuf = new byte[4];
+        private readonly byte[] vectorBuf = new byte[16];
+        private readonly byte[] wstringHeaderBuf = new byte[0x20];
+        private byte[] wstringDataBuf = new byte[512];
 
         private IntPtr processHandle = IntPtr.Zero;
         private int handlePid;
@@ -36,10 +41,10 @@ namespace Hiveblood
         internal bool TryScan(
             IntPtr gameUiRoot,
             out long? treeTotal,
-            out List<long> gains)
+            List<long> gains)
         {
             treeTotal = null;
-            gains = new List<long>();
+            gains.Clear();
             if (!this.EnsureProcess() || gameUiRoot == IntPtr.Zero)
             {
                 return false;
@@ -64,7 +69,8 @@ namespace Hiveblood
                 {
                     foreach (var text in this.ReadCandidateTexts(addr))
                     {
-                        if (string.IsNullOrWhiteSpace(text))
+                        if (text.Length < 8 ||
+                            !text.Contains("hiveblood", StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
                         }
@@ -130,12 +136,12 @@ namespace Hiveblood
 
         private IEnumerable<string> ReadCandidateTexts(IntPtr addr)
         {
-            var parts = new List<string>(MaxLabelChildrenToMerge + 1);
+            this.textPartsScratch.Clear();
             var direct = this.ReadStdWString(addr + NameWStringOffset);
             if (!string.IsNullOrWhiteSpace(direct))
             {
                 yield return direct;
-                parts.Add(direct);
+                this.textPartsScratch.Add(direct);
             }
 
             if (!this.TryReadStdVector(addr + UiElementChildrenOffset, out var first, out var last))
@@ -159,12 +165,12 @@ namespace Hiveblood
                 }
 
                 yield return childText;
-                parts.Add(childText);
+                this.textPartsScratch.Add(childText);
             }
 
-            if (parts.Count > 1)
+            if (this.textPartsScratch.Count > 1)
             {
-                yield return string.Concat(parts);
+                yield return string.Concat(this.textPartsScratch);
             }
         }
 
@@ -212,13 +218,12 @@ namespace Hiveblood
                 return IntPtr.Zero;
             }
 
-            var buf = new byte[8];
-            if (!ReadProcessMemory(this.processHandle, addr, buf, (uint)buf.Length, out _))
+            if (!ReadProcessMemory(this.processHandle, addr, this.ptrBuf, (uint)this.ptrBuf.Length, out _))
             {
                 return IntPtr.Zero;
             }
 
-            return (IntPtr)BitConverter.ToInt64(buf, 0);
+            return (IntPtr)BitConverter.ToInt64(this.ptrBuf, 0);
         }
 
         private bool IsUiElementVisible(IntPtr addr) =>
@@ -232,13 +237,12 @@ namespace Hiveblood
                 return false;
             }
 
-            var buf = new byte[4];
-            if (!ReadProcessMemory(this.processHandle, addr + UiElementFlagsOffset, buf, (uint)buf.Length, out _))
+            if (!ReadProcessMemory(this.processHandle, addr + UiElementFlagsOffset, this.flagsBuf, (uint)this.flagsBuf.Length, out _))
             {
                 return false;
             }
 
-            flags = BitConverter.ToUInt32(buf, 0);
+            flags = BitConverter.ToUInt32(this.flagsBuf, 0);
             return true;
         }
 
@@ -246,14 +250,13 @@ namespace Hiveblood
         {
             first = IntPtr.Zero;
             last = IntPtr.Zero;
-            var buf = new byte[16];
-            if (!ReadProcessMemory(this.processHandle, addr, buf, (uint)buf.Length, out _))
+            if (!ReadProcessMemory(this.processHandle, addr, this.vectorBuf, (uint)this.vectorBuf.Length, out _))
             {
                 return false;
             }
 
-            first = (IntPtr)BitConverter.ToInt64(buf, 0);
-            last = (IntPtr)BitConverter.ToInt64(buf, 8);
+            first = (IntPtr)BitConverter.ToInt64(this.vectorBuf, 0);
+            last = (IntPtr)BitConverter.ToInt64(this.vectorBuf, 8);
             if (first == IntPtr.Zero)
             {
                 return false;
@@ -275,19 +278,18 @@ namespace Hiveblood
 
         private string ReadStdWString(IntPtr addr)
         {
-            var buf = new byte[0x20];
-            if (!ReadProcessMemory(this.processHandle, addr, buf, (uint)buf.Length, out _))
+            if (!ReadProcessMemory(this.processHandle, addr, this.wstringHeaderBuf, (uint)this.wstringHeaderBuf.Length, out _))
             {
                 return string.Empty;
             }
 
-            int len = BitConverter.ToInt32(buf, 0x10);
+            int len = BitConverter.ToInt32(this.wstringHeaderBuf, 0x10);
             if (len <= 0 || len > 256)
             {
                 return string.Empty;
             }
 
-            int cap = BitConverter.ToInt32(buf, 0x18);
+            int cap = BitConverter.ToInt32(this.wstringHeaderBuf, 0x18);
             if (cap < len)
             {
                 return string.Empty;
@@ -296,22 +298,27 @@ namespace Hiveblood
             if (cap < 8)
             {
                 int byteLen = Math.Min(len * 2, 16);
-                return Encoding.Unicode.GetString(buf, 0, byteLen);
+                return Encoding.Unicode.GetString(this.wstringHeaderBuf, 0, byteLen);
             }
 
-            long ptr = BitConverter.ToInt64(buf, 0);
+            long ptr = BitConverter.ToInt64(this.wstringHeaderBuf, 0);
             if (ptr < 0x10000 || ptr > 0x7FFFFFFFFFFF)
             {
                 return string.Empty;
             }
 
-            var outBuf = new byte[len * 2];
-            if (!ReadProcessMemory(this.processHandle, (IntPtr)ptr, outBuf, (uint)outBuf.Length, out _))
+            int outLen = len * 2;
+            if (this.wstringDataBuf.Length < outLen)
+            {
+                this.wstringDataBuf = new byte[outLen];
+            }
+
+            if (!ReadProcessMemory(this.processHandle, (IntPtr)ptr, this.wstringDataBuf, (uint)outLen, out _))
             {
                 return string.Empty;
             }
 
-            return Encoding.Unicode.GetString(outBuf);
+            return Encoding.Unicode.GetString(this.wstringDataBuf, 0, outLen);
         }
 
         private const uint ProcessVmRead = 0x0010;

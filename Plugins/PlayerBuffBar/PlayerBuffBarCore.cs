@@ -259,6 +259,11 @@ namespace PlayerBuffBar
                 return;
             }
 
+            if (inGame.GameUi.ShouldHideWorldSpaceBars && !positioningDummyActive)
+            {
+                return;
+            }
+
             var player = inGame.CurrentAreaInstance.Player;
             if (!player.IsValid || !player.TryGetComponent<Render>(out var render, true))
             {

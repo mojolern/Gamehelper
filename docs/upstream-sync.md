@@ -7,7 +7,7 @@ Stable keeps **Radar**, **AutoHotKeyTrigger**, and **HealthBars** aligned with [
 | Item | Value |
 |------|--------|
 | Upstream remote | `gordin` → `https://github.com/Gordin/GameHelper2` |
-| Last sync commit | `e476392` (2026-06) |
+| Last sync commit | `24ac9c8` (2026-06) |
 | Prior stable baseline | pre-sync stable `4077ad3` |
 
 ## Pulled in this sync
@@ -33,7 +33,7 @@ Stable keeps **Radar**, **AutoHotKeyTrigger**, and **HealthBars** aligned with [
 | Universal font / WorldArea data in core | Tied to upstream Atlas layout |
 | Discord URL in settings | Upstream points to Gordin server |
 | Plugin store / launcher / publish scripts | Stable-only |
-| `AhkKeySender`, `TemplateUi`, Radar `L()` UI, boss-arena default restore | Removed to match upstream; prefer core `InputAutomation` / English UI |
+| `AhkKeySender`, `TemplateUi`, Radar `L()` UI, boss-arena default restore | Removed to match upstream; AHK uses upstream `MiscHelper.KeyUp` (WM_KEYUP) |
 
 ## Quick re-sync
 

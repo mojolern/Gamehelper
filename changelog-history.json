@@ -1,10 +1,17 @@
 ﻿{
     "releases":  [
                      {
-                         "version":  "1.3.8",
-                         "published":  "2026-06-20T08:35:17.4343697Z",
+                         "version":  "1.3.9",
+                         "published":  "2026-06-20T12:43:03.5439851Z",
                          "changelog":  [
-                                           "[Fix] - AHK"
+                                           "Version 1.3.9 release || Version 1.3.9 Release"
+                                       ]
+                     },
+                     {
+                         "version":  "1.3.8",
+                         "published":  "2026-06-20T09:22:37.1769914Z",
+                         "changelog":  [
+                                           "[Hiveblood 1.0.1] Throttled UI scans to reduce CPU usage || [Hiveblood 1.0.1] UI-Scans gedrosselt (weniger CPU)"
                                        ]
                      },
                      {

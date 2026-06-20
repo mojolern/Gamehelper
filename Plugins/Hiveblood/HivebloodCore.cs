@@ -20,8 +20,10 @@ namespace Hiveblood
         private const int GainDedupSeconds = 4;
 
         private readonly HivebloodUiScanner scanner = new();
+        private readonly List<long> scanGainsScratch = new();
         private readonly Dictionary<string, DateTime> recentGainKeys = new(StringComparer.Ordinal);
         private readonly Stopwatch gainSaveDebounce = Stopwatch.StartNew();
+        private readonly Stopwatch uiScanTimer = Stopwatch.StartNew();
         private bool pendingTrackerSave;
 
         private string lastStatus = string.Empty;
@@ -126,6 +128,10 @@ namespace Hiveblood
                 "Ueber dem Schwellenwert wird der Text orange-rot und blinkt. Auch bei geschlossenem Inventar sichtbar (letzte Position am Inventar)."));
             ImGui.Checkbox(L("Show gains since last tree sync", "Gewinn seit letztem Tree-Sync"), ref this.Settings.ShowSessionGains);
             ImGui.Checkbox(L("Debug status line", "Debug-Statuszeile"), ref this.Settings.DebugStatusLine);
+            ImGui.SliderInt(L("UI scan interval (ms)", "UI-Scan-Intervall (ms)"), ref this.Settings.ScanIntervalMs, 150, 1000);
+            ImGuiHelper.ToolTip(L(
+                "How often the plugin reads the game UI tree. Lower values react faster but use more CPU (default 300).",
+                "Wie oft der UI-Baum gelesen wird. Niedrigere Werte = schneller, aber mehr CPU (Standard 300)."));
 
             ImGui.Separator();
             this.DrawStatusBlock();
@@ -173,11 +179,15 @@ namespace Hiveblood
             }
 
             var inventoryOpen = gameUi.RightPanel.IsVisible;
-            this.UpdateTracker(gameUi.Address);
-            this.FlushPendingTrackerSave();
-
             var nearCap = this.IsCapWarningActive();
             var positioningDummy = this.Settings.ShowPositionDummy;
+
+            if (this.ShouldScanUi(inventoryOpen, nearCap, positioningDummy))
+            {
+                this.UpdateTracker(gameUi.Address);
+            }
+
+            this.FlushPendingTrackerSave();
             if (this.Settings.ShowOnlyWithInventory && !inventoryOpen && !this.Settings.ShowAlways && !nearCap && !positioningDummy)
             {
                 return;
@@ -198,9 +208,30 @@ namespace Hiveblood
             this.DrawOverlay(gameUi.RightPanel, inventoryOpen);
         }
 
+        private bool ShouldScanUi(bool inventoryOpen, bool nearCap, bool positioningDummy)
+        {
+            var intervalMs = Math.Clamp(this.Settings.ScanIntervalMs, 150, 2000);
+            if (inventoryOpen || positioningDummy || this.Settings.ShowAlways || nearCap)
+            {
+                intervalMs = Math.Min(intervalMs, 250);
+            }
+            else
+            {
+                intervalMs = Math.Max(intervalMs, 400);
+            }
+
+            if (this.uiScanTimer.ElapsedMilliseconds < intervalMs)
+            {
+                return false;
+            }
+
+            this.uiScanTimer.Restart();
+            return true;
+        }
+
         private void UpdateTracker(IntPtr gameUiRoot)
         {
-            if (!this.scanner.TryScan(gameUiRoot, out var treeTotal, out var gains))
+            if (!this.scanner.TryScan(gameUiRoot, out var treeTotal, this.scanGainsScratch))
             {
                 return;
             }
@@ -223,7 +254,7 @@ namespace Hiveblood
                 }
             }
 
-            foreach (var gain in gains)
+            foreach (var gain in this.scanGainsScratch)
             {
                 var key = $"+{gain}";
                 var now = DateTime.UtcNow;

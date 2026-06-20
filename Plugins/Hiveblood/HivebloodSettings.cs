@@ -36,6 +36,9 @@ namespace Hiveblood
         public bool DebugStatusLine = false;
         public bool ShowPositionDummy;
 
+        /// <summary>How often the UI tree is scanned for Hiveblood text (lower = more CPU).</summary>
+        public int ScanIntervalMs = 300;
+
         public long EstimatedAmount;
         public bool HasSyncedOnce;
         public DateTime LastTreeSyncUtc = DateTime.MinValue;

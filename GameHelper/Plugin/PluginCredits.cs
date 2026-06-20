@@ -26,7 +26,7 @@ namespace GameHelper.Plugin
 
         {
 
-            ["Atlas"] = new("Nekkoy", "GameHelper2 plugin ecosystem"),
+            ["Atlas"] = new("Nekkoy", "yokkenUA/Atlas v0.1.3: chevron routes, hide available maps, expedition targets, content icons."),
 
             ["Radar"] = new("Gordin", "GameHelper2"),
 
@@ -56,7 +56,7 @@ namespace GameHelper.Plugin
 
             ["PlayerBuffBar"] = new("MordWraith", "written for this fork"),
 
-            ["Hiveblood"] = new("MordWraith", "Genesis Tree Hiveblood tracker with inventory overlay (Keepers league)."),
+            ["Hiveblood"] = new("MordWraith", "Genesis Tree Hiveblood tracker with inventory overlay (PoE2)."),
 
             ["FarmTracker"] = new("Senbry", "ported by MordWraith — farm session tracker (loot, maps, kills, div/h)"),
 

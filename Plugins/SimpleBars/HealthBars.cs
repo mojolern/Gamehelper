@@ -192,6 +192,11 @@ namespace SimpleBars
                 return;
             }
 
+            if (WorldSpaceBarVisibility.ShouldHide(Core.States.InGameStateObject.GameUi))
+            {
+                return;
+            }
+
             this.UpdateOncePerDraw();
             foreach (var entity in cAreaInstance.AwakeEntities)
             {
