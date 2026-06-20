@@ -20,7 +20,6 @@ namespace GameHelper.Utils
     /// </summary>
     public static class MiscHelper
     {
-        private const int WmKeydown = 0x100;
         private const int WmKeyup = 0x101;
         private const int WmChar = 0x102;
         private const uint CfUnicodeText = 13;
@@ -39,7 +38,6 @@ namespace GameHelper.Utils
         private static readonly Stopwatch DelayBetweenKeys = Stopwatch.StartNew();
         private static readonly object KeySendLock = new();
         private static Task? chatSendTask;
-        private static Task? upstreamKeyMessage;
         private static bool chatSequenceReserved;
 
         private static readonly VK[] GameplayKeys =
@@ -129,19 +127,20 @@ namespace GameHelper.Utils
         }
 
         /// <summary>
-        ///     Sends a full key tap to the game (down + up). There is a hard delay between taps
-        ///     to make sure game doesn't kick us for too many key-presses.
+        ///     Presses a key in the game by posting a single <c>WM_KEYUP</c> message.
+        ///     <para>
+        ///     The game registers an activation on every key-transition message it receives, so a
+        ///     full down+up tap (whether via <c>SendMessage</c> or <c>SendInput</c>) fires the bound
+        ///     action twice. Sending only the key-up — the long-standing GameHelper2 upstream
+        ///     behaviour — produces exactly one activation. There is a hard delay between presses so
+        ///     the game doesn't kick us for sending too many.
+        ///     </para>
         /// </summary>
-        /// <param name="key">key to tap.</param>
+        /// <param name="key">key to press.</param>
         /// <param name="source">optional label for the activity log (e.g. plugin/rule name).</param>
-        /// <returns><see langword="true"/> when the tap was sent to the focused game window.</returns>
+        /// <returns><see langword="true"/> when the key was sent to the focused game window.</returns>
         public static bool KeyUp(VK key, string? source = null)
         {
-            if (string.IsNullOrWhiteSpace(source))
-            {
-                return KeyUpUpstream(key);
-            }
-
             var label = string.IsNullOrWhiteSpace(source) ? "GameHelper" : source.Trim();
 
             if (Core.GHSettings.EnableControllerMode)
@@ -183,119 +182,11 @@ namespace GameHelper.Utils
                     return false;
                 }
 
-                if (!TrySendGameKeyTap(hwnd, key))
-                {
-                    return false;
-                }
-
+                SendMessage(hwnd, WmKeyup, (int)key, 0);
                 DelayBetweenKeys.Restart();
             }
 
             ActivityLog.Write("Input", $"{label}: key {key} sent to game");
-            return true;
-        }
-
-        /// <summary>
-        ///     Gordin/GameHelper2 upstream key release used by AutoHotKeyTrigger (WM_KEYUP via SendMessage).
-        /// </summary>
-        private static bool KeyUpUpstream(VK key)
-        {
-            if (Core.GHSettings.EnableControllerMode)
-            {
-                return false;
-            }
-
-            if (upstreamKeyMessage != null && !upstreamKeyMessage.IsCompleted)
-            {
-                return false;
-            }
-
-            if (DelayBetweenKeys.ElapsedMilliseconds >= Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
-            {
-                DelayBetweenKeys.Restart();
-            }
-            else
-            {
-                return false;
-            }
-
-            if (Core.Process.Address == IntPtr.Zero)
-            {
-                return false;
-            }
-
-            var hwnd = Core.Process.Information.MainWindowHandle;
-            if (hwnd == IntPtr.Zero)
-            {
-                return false;
-            }
-
-            upstreamKeyMessage = Task.Run(() => SendMessage(hwnd, WmKeyup, (int)key, 0));
-            return true;
-        }
-
-        public static bool TrySendEscapeKeyDown(string? source = null)
-        {
-            var label = string.IsNullOrWhiteSpace(source) ? "GameHelper" : source.Trim();
-
-            if (Core.GHSettings.EnableControllerMode || chatSequenceReserved)
-            {
-                return false;
-            }
-
-            if (Core.Process.Address == IntPtr.Zero)
-            {
-                ActivityLog.Write("Input", $"{label}: ESC not sent (game not loaded)");
-                return false;
-            }
-
-            if (!Core.Process.Foreground)
-            {
-                return false;
-            }
-
-            var hwnd = Core.Process.Information.MainWindowHandle;
-            if (hwnd == IntPtr.Zero)
-            {
-                return false;
-            }
-
-            if (IsBlockingPhysicalKeyHeld(VK.ESCAPE))
-            {
-                return false;
-            }
-
-            lock (KeySendLock)
-            {
-                if (DelayBetweenKeys.ElapsedMilliseconds < Core.GHSettings.KeyPressTimeout + Rand.Next() % 10)
-                {
-                    return false;
-                }
-
-                if (!TrySendEscapeKeyDownToWindow(hwnd))
-                {
-                    return false;
-                }
-
-                DelayBetweenKeys.Restart();
-            }
-
-            ActivityLog.Write("Input", $"{label}: ESC key-down sent to game");
-            return true;
-        }
-
-        private static bool TrySendEscapeKeyDownToWindow(IntPtr hwnd)
-        {
-            const ushort vkEscape = 0x1B;
-            var inputs = new Input[1];
-            inputs[0].type = InputKeyboard;
-            inputs[0].U.ki.wVk = vkEscape;
-            if (SendInput(1, inputs, Marshal.SizeOf<Input>()) == 1)
-            {
-                return true;
-            }
-
-            SendMessage(hwnd, WmKeydown, (int)VK.ESCAPE, 0);
             return true;
         }
 
@@ -433,20 +324,6 @@ namespace GameHelper.Utils
             }
 
             return false;
-        }
-
-        private static bool TrySendGameKeyTap(IntPtr hwnd, VK key)
-        {
-            var virtualKey = (ushort)(int)key;
-            if (SendInputKeyTap(virtualKey))
-            {
-                return true;
-            }
-
-            SendMessage(hwnd, WmKeydown, (int)key, 0);
-            Thread.Sleep(12 + Rand.Next() % 8);
-            SendMessage(hwnd, WmKeyup, (int)key, 0);
-            return true;
         }
 
         private static void SendGameKeyUp(IntPtr hwnd, VK key)
