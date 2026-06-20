@@ -30,11 +30,11 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 
 | Plugin | Author / upstream | Notes |
 |--------|-------------------|-------|
-| Atlas | Nekkoy / [yokkenUA](https://github.com/yokkenUA/Atlas) (synced **v0.1.4**) | Chevron routes, hide available maps, expedition targets, Grand Mirror badge, content icons |
+| Atlas | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) (synced **v0.1.4**) | Chevron routes, hide available maps, expedition targets, Grand Mirror badge, content icons |
 | Radar | Gordin | GameHelper2 |
 | RitualHelper | caio | Based on AutoRitualPricer ([Queuete/GameHelper](https://github.com/MordWraith/Gamehelper) lineage) |
 | RuneforgeHelper | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) | Runeshape rewards overlay |
-| SekhemaHelper | Nekkoy / [yokkenUA](https://github.com/yokkenUA/SekhemaHelper) (synced **v0.0.3**) | Sekhema Trial path helper; room read from FloorData content vector |
+| SekhemaHelper | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) (synced **v0.0.3**) | Sekhema Trial path helper; room read from FloorData content vector |
 | AutoPot | MordWraith | Written for this fork |
 | AutoHotKeyTrigger | GameHelper2 upstream | Bundled with GameHelper2 |
 | HealthBars | GameHelper2 upstream | Bundled with GameHelper2 |
