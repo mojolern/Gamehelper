@@ -54,6 +54,14 @@ Plugins/**/_tmp_*
 Plugins/**/Fehler.txt
 Plugins/**/Textdokument*.txt
 
+# Runtime logs / error dumps (never commit)
+*.log
+**/errorlog*.txt
+**/ErrorLog*.txt
+**/crash*.txt
+player_status_effect.txt
+**/player_status_effect.txt
+
 # Secrets
 *.token
 .env

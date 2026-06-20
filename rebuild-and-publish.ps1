@@ -5,7 +5,7 @@
 # Optional (ohne Abfrage):
 #   -Version 1.0.2
 #   -SkipUpload
-#   -SkipSourcePush
+#   -PushSource          # Quellcode manuell committen und pushen (nicht Standard)
 #   -FullUpload
 #   -Configuration Debug
 
@@ -13,7 +13,7 @@ param(
     [string]$Version,
     [string[]]$Changelog,
     [switch]$SkipUpload,
-    [switch]$SkipSourcePush,
+    [switch]$PushSource,
     [switch]$FullUpload,
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release"
@@ -83,13 +83,13 @@ else {
     if ($FullUpload) {
         $publishArgs.FullUpload = $true
     }
-    if (-not $SkipSourcePush) {
+    if ($PushSource) {
         $publishArgs.SkipRepoDocSync = $true
     }
 
     & $PublishScript @publishArgs
 
-    if (-not $SkipSourcePush) {
+    if ($PushSource) {
         if (-not (Test-Path $SourcePushScript)) {
             Write-Error "push-github-source.ps1 nicht gefunden."
         }
@@ -104,6 +104,12 @@ else {
             Write-Host ""
             & $VerifyScript -ExpectedVersion $Version
         }
+    }
+    else {
+        Write-Host ""
+        Write-Host "Hinweis: Quellcode wird nicht automatisch gepusht." -ForegroundColor Yellow
+        Write-Host "  Commits manuell mit aussagekraeftigen Messages, z.B. [Core] ..., [Radar] ..." -ForegroundColor Yellow
+        Write-Host "  Optional: -PushSource oder scripts\push-github-source.ps1" -ForegroundColor DarkGray
     }
 }
 
@@ -122,7 +128,7 @@ Write-Host " Version: $publishDir\VERSION.txt" -ForegroundColor Green
 if (-not $SkipUpload) {
     Write-Host " Releases:    https://github.com/MordWraith/Gamehelper/releases" -ForegroundColor Green
     Write-Host " Downloader:  https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe" -ForegroundColor Green
-    if (-not $SkipSourcePush) {
+    if ($PushSource) {
         Write-Host " Source:      https://github.com/MordWraith/Gamehelper/tree/main" -ForegroundColor Green
     }
 }

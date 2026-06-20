@@ -58,12 +58,16 @@ Open [`GameOverlay.sln`](GameOverlay.sln) for IDE development — not a single `
 ### Maintainer: publish
 
 ```powershell
-# Binaries (Releases) + Quellcode (main) in einem Schritt:
+# Release-Binaries hochladen (Quellcode wird NICHT automatisch committed):
 powershell -ExecutionPolicy Bypass -File rebuild-and-publish.ps1
 
-# Nur Quellcode (ohne Release):
-powershell -ExecutionPolicy Bypass -File scripts\push-github-source.ps1
+# Optional: alten Auto-Push-Quellcode-Flow (nicht empfohlen):
+powershell -ExecutionPolicy Bypass -File rebuild-and-publish.ps1 -PushSource
+
+# Quellcode manuell committen (bevorzugt): normales git add/commit/push mit Messages wie [Core] ...
 ```
+
+Source commits should be descriptive (`[Core] …`, `[Radar] …`), not bulk `Release vX source` snapshots.
 
 ## Project layout
 

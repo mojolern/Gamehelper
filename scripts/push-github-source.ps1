@@ -1,4 +1,5 @@
-# Quellcode nach GitHub pushen (separat von Release-Binaries).
+# Quellcode nach GitHub pushen (manuell — nicht mehr Teil von rebuild-and-publish.ps1).
+# Erzeugt Bulk-Commits wie "Release vX source"; bevorzugt normales git mit [Core]/[Radar]-Messages.
 param(
     [string]$Repository = "MordWraith/Gamehelper",
     [string]$Branch = "main",
