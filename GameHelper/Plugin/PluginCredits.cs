@@ -58,6 +58,8 @@ namespace GameHelper.Plugin
 
             ["Hiveblood"] = new("MordWraith", "Genesis Tree Hiveblood tracker with inventory overlay (Keepers league)."),
 
+            ["FarmTracker"] = new("Senbry", "ported by MordWraith — farm session tracker (loot, maps, kills, div/h)"),
+
         };
 
 

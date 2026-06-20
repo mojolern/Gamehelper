@@ -44,6 +44,8 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | MapKillCounter | MordWraith | Per-map monster kill counts |
 | AmanamuVoidAlert | [1k4ru5g3](https://github.com/1k4ru5g3/AmanamuVoidAlertPlugin) | Abyss / Amanamu void cloud tracker |
 | PlayerBuffBar | MordWraith | Player buff watchlist, charges, rage |
+| Hiveblood | MordWraith | Genesis Tree Hiveblood tracker (Keepers league) |
+| FarmTracker | Senbry / [MordWraith](https://github.com/MordWraith/FarmTracker) | Farm session tracker (loot, maps, kills, div/h) |
 
 ## Third-party libraries
 

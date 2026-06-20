@@ -55,7 +55,9 @@ namespace Downloader
 
               "SimpleBars": { "Enable": false, "AutoStart": false },
 
-              "Hiveblood": { "Enable": true, "AutoStart": true }
+              "Hiveblood": { "Enable": true, "AutoStart": true },
+
+              "FarmTracker": { "Enable": true, "AutoStart": true }
 
             }
 

@@ -1,0 +1,4 @@
+# Custom item prices in Divine Orbs (display name = value)
+# Example:
+# Divine Orb=1
+# Exalted Orb=0.05

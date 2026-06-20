@@ -30,6 +30,8 @@ Plugins/SimpleBars/bin/
 Plugins/SimpleBars/obj/
 Plugins/MapKillCounter/bin/
 Plugins/MapKillCounter/obj/
+Plugins/FarmTracker/bin/
+Plugins/FarmTracker/obj/
 Plugins/RunecraftHelper/
 
 # Alte Deployment-Binaerdateien im Root

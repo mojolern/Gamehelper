@@ -282,7 +282,8 @@ function Test-PluginDeploy {
         @{ Plugin = "AmanamuVoidAlert"; Files = @("AmanamuVoidAlert.dll") },
         @{ Plugin = "PlayerBuffBar"; Files = @("PlayerBuffBar.dll") },
         @{ Plugin = "SimpleBars"; Files = @("SimpleBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") },
-        @{ Plugin = "Hiveblood"; Files = @("Hiveblood.dll") }
+        @{ Plugin = "Hiveblood"; Files = @("Hiveblood.dll") },
+        @{ Plugin = "FarmTracker"; Files = @("FarmTracker.dll", "custom_prices.txt", "metaArt.json") }
     )
 
     foreach ($entry in $required) {
@@ -346,6 +347,11 @@ function Repair-PluginsJson {
 
     if ($json.PSObject.Properties.Name -notcontains "Hiveblood") {
         $json | Add-Member -NotePropertyName "Hiveblood" -NotePropertyValue @{ Enable = $true; AutoStart = $true } -Force
+        $changed = $true
+    }
+
+    if ($json.PSObject.Properties.Name -notcontains "FarmTracker") {
+        $json | Add-Member -NotePropertyName "FarmTracker" -NotePropertyValue @{ Enable = $true; AutoStart = $true } -Force
         $changed = $true
     }
 
