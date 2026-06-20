@@ -2,9 +2,9 @@
     "releases":  [
                      {
                          "version":  "1.3.7",
-                         "published":  "2026-06-19T23:25:00.9620754Z",
+                         "published":  "2026-06-20T00:32:17.2176961Z",
                          "changelog":  [
-                                           "New Plugin - Hiveblood"
+                                           "New Plugin - Farmtracker"
                                        ]
                      },
                      {
