@@ -1,6 +1,13 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.10",
+                         "published":  "2026-06-20T15:34:50.2171346Z",
+                         "changelog":  [
+                                           "[Fix] - AHK double klick (Thx to Gordin for Help)"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.9",
                          "published":  "2026-06-20T12:43:03.5439851Z",
                          "changelog":  [

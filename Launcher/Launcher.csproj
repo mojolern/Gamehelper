@@ -9,9 +9,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <StartupObject>Launcher.Program</StartupObject>
     <AssemblyName>GameHelper</AssemblyName>
-    <Version>1.3.9</Version>
-    <AssemblyVersion>1.3.9.0</AssemblyVersion>
-    <FileVersion>1.3.9.0</FileVersion>
+    <Version>1.3.10</Version>
+    <AssemblyVersion>1.3.10.0</AssemblyVersion>
+    <FileVersion>1.3.10.0</FileVersion>
     <SelfContained>false</SelfContained>
     <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
@@ -41,6 +41,7 @@
   </Target>
 
 </Project>
+
 
 
 
