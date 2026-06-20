@@ -10,9 +10,9 @@ namespace AutoHotKeyTrigger
     using Process = System.Diagnostics.Process;
 
     /// <summary>
-    ///     AHK-only key sender — WM_KEYUP via SendMessage (v1.3.2 fork behaviour).
-    ///     Kept separate because <see cref="MiscHelper.KeyUp"/> uses SendInput full taps,
-    ///     which breaks PoE ESC (down + up toggles the pause menu twice).
+    ///     AHK key sender. Non-escape keys use <see cref="MiscHelper.KeyUp"/> (full tap, shared
+    ///     rate limit with AutoPot and other plugins). Escape uses WM_KEYUP only — a full tap
+    ///     toggles the PoE pause menu twice.
     /// </summary>
     internal static class AhkKeySender
     {
@@ -24,6 +24,11 @@ namespace AutoHotKeyTrigger
 
         internal static bool SendKey(VK key, string? source = null)
         {
+            if (key != VK.ESCAPE)
+            {
+                return MiscHelper.KeyUp(key, source);
+            }
+
             var label = string.IsNullOrWhiteSpace(source) ? "AHK" : source.Trim();
 
             if (Core.GHSettings.EnableControllerMode)
