@@ -34,6 +34,7 @@ namespace Hiveblood
         public int WarnThreshold = 95_000;
         public bool ShowSessionGains = true;
         public bool DebugStatusLine = false;
+        public bool ShowPositionDummy;
 
         public long EstimatedAmount;
         public bool HasSyncedOnce;

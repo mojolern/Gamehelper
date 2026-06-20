@@ -1,6 +1,13 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.8",
+                         "published":  "2026-06-20T08:35:17.4343697Z",
+                         "changelog":  [
+                                           "[Fix] - AHK"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.7",
                          "published":  "2026-06-20T01:37:57.1924948Z",
                          "changelog":  [

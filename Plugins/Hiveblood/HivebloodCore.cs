@@ -27,6 +27,7 @@ namespace Hiveblood
         private string lastStatus = string.Empty;
         private Vector2 lastInventoryOverlayPosition;
         private bool hasLastInventoryOverlayPosition;
+        private bool positionDummySeeded;
 
         private string SettingsPath => Path.Join(this.DllDirectory, "config", "settings.txt");
 
@@ -66,9 +67,11 @@ namespace Hiveblood
 
         public override void DrawSettings()
         {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.92f, 0.2f, 1f));
             ImGui.TextWrapped(L(
-                "Tracks Hiveblood for Keepers of the Flame: syncs from the Genesis Tree UI and adds +N popups from Breach runs. Visit the Genesis Tree once to calibrate.",
-                "Verfolgt Hiveblood (Keepers of the Flame): Sync am Genesis Tree und +N-Popups aus Breaches. Einmal am Genesis Tree kalibrieren."));
+                "Tracks Hiveblood: syncs from Genesis Tree (+ Breach popups). Visit the tree once to calibrate.",
+                "Verfolgt Hiveblood: Sync am Genesis Tree (+ Breach-Popups). Einmal am Tree kalibrieren."));
+            ImGui.PopStyleColor();
 
             ImGui.Separator();
             ImGui.Checkbox(L("Only when inventory is open", "Nur bei offenem Inventar"), ref this.Settings.ShowOnlyWithInventory);
@@ -97,7 +100,15 @@ namespace Hiveblood
                 "Bottom anchor: left edge of the inventory panel, just above the gold line. Drag X/Y to fine-tune.",
                 "Unten-Anker: linke Kante des Inventars, knapp ueber der Gold-Zeile. X/Y zum Feintuning."));
 
-            if (this.Settings.OverlayAnchor == HivebloodOverlayAnchor.CustomScreen)
+            ImGui.Checkbox(
+                L("Show position dummy (drag, then disable)", "Positions-Dummy anzeigen (ziehen, dann aus)"),
+                ref this.Settings.ShowPositionDummy);
+            ImGuiHelper.ToolTip(L(
+                "Shows a draggable preview in-game and saves a fixed screen position. Switches to custom screen position.",
+                "Zeigt eine verschiebbare Vorschau im Spiel und speichert eine feste Bildschirmposition. Wechselt zur eigenen Bildschirmposition."));
+
+            if (this.Settings.ShowPositionDummy ||
+                this.Settings.OverlayAnchor == HivebloodOverlayAnchor.CustomScreen)
             {
                 ImGui.DragFloat2(
                     L("Screen position (px)", "Bildschirmposition (px)"),
@@ -156,18 +167,31 @@ namespace Hiveblood
                 return;
             }
 
+            if (!this.Settings.ShowPositionDummy)
+            {
+                this.positionDummySeeded = false;
+            }
+
             var inventoryOpen = gameUi.RightPanel.IsVisible;
             this.UpdateTracker(gameUi.Address);
             this.FlushPendingTrackerSave();
 
             var nearCap = this.IsCapWarningActive();
-            if (this.Settings.ShowOnlyWithInventory && !inventoryOpen && !this.Settings.ShowAlways && !nearCap)
+            var positioningDummy = this.Settings.ShowPositionDummy;
+            if (this.Settings.ShowOnlyWithInventory && !inventoryOpen && !this.Settings.ShowAlways && !nearCap && !positioningDummy)
             {
                 return;
             }
 
-            if (!this.ShouldDrawOverlay(inventoryOpen))
+            if (!this.ShouldDrawOverlay(inventoryOpen, positioningDummy))
             {
+                return;
+            }
+
+            if (positioningDummy)
+            {
+                this.EnsurePositionDummySeeded(gameUi.RightPanel, inventoryOpen);
+                this.DrawPositionDummy();
                 return;
             }
 
@@ -256,8 +280,13 @@ namespace Hiveblood
             this.gainSaveDebounce.Restart();
         }
 
-        private bool ShouldDrawOverlay(bool inventoryOpen)
+        private bool ShouldDrawOverlay(bool inventoryOpen, bool positioningDummy)
         {
+            if (positioningDummy)
+            {
+                return true;
+            }
+
             if (!this.Settings.HasSyncedOnce && this.Settings.EstimatedAmount <= 0)
             {
                 return this.Settings.DebugStatusLine;
@@ -292,44 +321,15 @@ namespace Hiveblood
             var scale = Math.Clamp(this.Settings.OverlayFontScale, 0.75f, 1.6f);
             var fontSize = ImGui.GetFontSize() * scale;
 
-            string line1;
-            string? line2 = null;
-            if (!this.Settings.HasSyncedOnce)
-            {
-                line1 = L("Hiveblood: visit Genesis Tree", "Hiveblood: Genesis Tree besuchen");
-            }
-            else
-            {
-                line1 = $"Hiveblood: {this.Settings.EstimatedAmount:N0}";
-                if (this.Settings.ShowSessionGains && this.Settings.SessionGainSinceSync > 0)
-                {
-                    line2 = L(
-                        $"(+{this.Settings.SessionGainSinceSync:N0} since tree)",
-                        $"(+{this.Settings.SessionGainSinceSync:N0} seit Tree)");
-                }
-            }
-
+            this.BuildOverlayLines(out var line1, out var line2);
             var pos = this.ResolveOverlayPosition(rightPanel, inventoryOpen);
+            var color = this.ResolveOverlayColor();
 
-            var color = this.Settings.TextColor;
-            if (this.IsCapWarningActive())
-            {
-                color = new Vector4(1f, 0.45f, 0.35f, 1f);
-                color.W *= CapWarningBlinkAlpha();
-            }
-
-            var textColor = ImGui.ColorConvertFloat4ToU32(color);
-            var shadow = ImGui.ColorConvertFloat4ToU32(this.Settings.ShadowColor);
-            this.DrawShadowedText(fg, font, fontSize, pos, shadow, textColor, line1);
-            if (!string.IsNullOrEmpty(line2))
-            {
-                var size1 = ImGui.CalcTextSize(line1);
-                var pos2 = pos + new Vector2(0f, size1.Y * (scale / Math.Max(ImGui.GetFontSize(), 1f)) + 2f);
-                this.DrawShadowedText(fg, font, fontSize * 0.9f, pos2, shadow, textColor, line2);
-            }
+            this.DrawOverlayLines(fg, font, fontSize, scale, pos, color, line1, line2);
 
             if (this.Settings.DebugStatusLine && !string.IsNullOrEmpty(this.lastStatus))
             {
+                var shadow = ImGui.ColorConvertFloat4ToU32(this.Settings.ShadowColor);
                 var debugPos = pos + new Vector2(0f, 36f);
                 this.DrawShadowedText(
                     fg,
@@ -340,6 +340,161 @@ namespace Hiveblood
                     ImGui.ColorConvertFloat4ToU32(new Vector4(0.7f, 0.7f, 0.7f, 1f)),
                     this.lastStatus);
             }
+        }
+
+        private void DrawPositionDummy()
+        {
+            var fg = ImGui.GetForegroundDrawList();
+            var font = ImGui.GetFont();
+            var scale = Math.Clamp(this.Settings.OverlayFontScale, 0.75f, 1.6f);
+            var fontSize = ImGui.GetFontSize() * scale;
+
+            this.BuildOverlayLines(out var line1, out var line2);
+            var pos = this.Settings.OverlayScreenPosition;
+            var color = this.ResolveOverlayColor();
+
+            var size1 = ImGui.CalcTextSize(line1);
+            var blockWidth = size1.X;
+            var blockHeight = size1.Y * (scale / Math.Max(ImGui.GetFontSize(), 1f));
+            if (!string.IsNullOrEmpty(line2))
+            {
+                var size2 = ImGui.CalcTextSize(line2);
+                blockWidth = MathF.Max(blockWidth, size2.X);
+                blockHeight += size2.Y * (scale / Math.Max(ImGui.GetFontSize(), 1f)) * 0.9f + 2f;
+            }
+
+            this.DrawOverlayLines(fg, font, fontSize, scale, pos, color, line1, line2);
+
+            var outlineMin = pos - new Vector2(4f, 4f);
+            var outlineMax = pos + new Vector2(blockWidth, blockHeight) + new Vector2(4f, 4f);
+            fg.AddRect(
+                outlineMin,
+                outlineMax,
+                ImGuiHelper.Color(new Vector4(0.4f, 0.85f, 1f, 0.85f)),
+                4f,
+                ImDrawFlags.None,
+                1.5f);
+
+            var hint = L("Drag to move. Disable dummy in settings when done.", "Ziehen zum Verschieben. Dummy danach in Einstellungen aus.");
+            var hintSize = ImGui.CalcTextSize(hint);
+            var hintPos = new Vector2(pos.X, pos.Y - hintSize.Y - 6f);
+            fg.AddText(hintPos + Vector2.One, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.9f)), hint);
+            fg.AddText(hintPos, ImGuiHelper.Color(new Vector4(0.75f, 0.9f, 1f, 0.95f)), hint);
+
+            ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
+            ImGui.SetNextWindowSize(new Vector2(blockWidth + 8f, blockHeight + 8f), ImGuiCond.Always);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
+            ImGui.PushStyleColor(ImGuiCol.WindowBg, Vector4.Zero);
+
+            if (!ImGui.Begin(
+                    "###HivebloodPositionDummy",
+                    ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove |
+                    ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoBackground))
+            {
+                ImGui.PopStyleColor();
+                ImGui.PopStyleVar(2);
+                ImGui.End();
+                return;
+            }
+
+            ImGui.InvisibleButton("##drag", new Vector2(blockWidth + 8f, blockHeight + 8f));
+            if (ImGui.IsItemActive() && ImGui.IsMouseDragging(ImGuiMouseButton.Left))
+            {
+                this.Settings.OverlayScreenPosition += ImGui.GetIO().MouseDelta;
+            }
+
+            var saveSettings = ImGui.IsItemDeactivated();
+            ImGui.End();
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar(2);
+
+            if (saveSettings)
+            {
+                this.Settings.OverlayAnchor = HivebloodOverlayAnchor.CustomScreen;
+                this.Settings.OverlayOffset = Vector2.Zero;
+                this.lastInventoryOverlayPosition = this.Settings.OverlayScreenPosition;
+                this.hasLastInventoryOverlayPosition = true;
+                this.SaveSettings();
+            }
+        }
+
+        private void BuildOverlayLines(out string line1, out string? line2)
+        {
+            line2 = null;
+            if (!this.Settings.HasSyncedOnce)
+            {
+                line1 = L("Hiveblood: visit Genesis Tree", "Hiveblood: Genesis Tree besuchen");
+                return;
+            }
+
+            line1 = $"Hiveblood: {this.Settings.EstimatedAmount:N0}";
+            if (this.Settings.ShowSessionGains && this.Settings.SessionGainSinceSync > 0)
+            {
+                line2 = L(
+                    $"(+{this.Settings.SessionGainSinceSync:N0} since tree)",
+                    $"(+{this.Settings.SessionGainSinceSync:N0} seit Tree)");
+            }
+        }
+
+        private Vector4 ResolveOverlayColor()
+        {
+            var color = this.Settings.TextColor;
+            if (this.IsCapWarningActive())
+            {
+                color = new Vector4(1f, 0.45f, 0.35f, 1f);
+                color.W *= CapWarningBlinkAlpha();
+            }
+
+            return color;
+        }
+
+        private void DrawOverlayLines(
+            ImDrawListPtr fg,
+            ImFontPtr font,
+            float fontSize,
+            float scale,
+            Vector2 pos,
+            Vector4 color,
+            string line1,
+            string? line2)
+        {
+            var textColor = ImGui.ColorConvertFloat4ToU32(color);
+            var shadow = ImGui.ColorConvertFloat4ToU32(this.Settings.ShadowColor);
+            this.DrawShadowedText(fg, font, fontSize, pos, shadow, textColor, line1);
+            if (string.IsNullOrEmpty(line2))
+            {
+                return;
+            }
+
+            var size1 = ImGui.CalcTextSize(line1);
+            var pos2 = pos + new Vector2(0f, size1.Y * (scale / Math.Max(ImGui.GetFontSize(), 1f)) + 2f);
+            this.DrawShadowedText(fg, font, fontSize * 0.9f, pos2, shadow, textColor, line2);
+        }
+
+        private void EnsurePositionDummySeeded(UiElementBase rightPanel, bool inventoryOpen)
+        {
+            if (this.positionDummySeeded)
+            {
+                return;
+            }
+
+            if (this.Settings.OverlayAnchor != HivebloodOverlayAnchor.CustomScreen)
+            {
+                if (inventoryOpen && rightPanel.Size.X > 0f)
+                {
+                    this.Settings.OverlayScreenPosition = this.ResolveInventoryAnchorPosition(rightPanel);
+                }
+                else if (this.hasLastInventoryOverlayPosition)
+                {
+                    this.Settings.OverlayScreenPosition = this.lastInventoryOverlayPosition;
+                }
+
+                this.Settings.OverlayAnchor = HivebloodOverlayAnchor.CustomScreen;
+                this.Settings.OverlayOffset = Vector2.Zero;
+            }
+
+            this.positionDummySeeded = true;
         }
 
         private void DrawShadowedText(
@@ -398,6 +553,14 @@ namespace Hiveblood
                 return this.Settings.OverlayScreenPosition + this.Settings.OverlayOffset;
             }
 
+            var pos = this.ResolveInventoryAnchorPosition(rightPanel);
+            this.lastInventoryOverlayPosition = pos;
+            this.hasLastInventoryOverlayPosition = true;
+            return pos;
+        }
+
+        private Vector2 ResolveInventoryAnchorPosition(UiElementBase rightPanel)
+        {
             var panelPos = rightPanel.Position;
             var panelSize = rightPanel.Size;
             var basePos = this.Settings.OverlayAnchor switch
@@ -406,10 +569,7 @@ namespace Hiveblood
                 _ => panelPos,
             };
 
-            var pos = basePos + this.Settings.OverlayOffset;
-            this.lastInventoryOverlayPosition = pos;
-            this.hasLastInventoryOverlayPosition = true;
-            return pos;
+            return basePos + this.Settings.OverlayOffset;
         }
 
         private static string L(string english, string german) => OverlayLocalization.L(english, german);
