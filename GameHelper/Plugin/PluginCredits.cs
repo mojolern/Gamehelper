@@ -26,7 +26,7 @@ namespace GameHelper.Plugin
 
         {
 
-            ["Atlas"] = new("Nekkoy", "yokkenUA/Atlas v0.1.3: chevron routes, hide available maps, expedition targets, content icons."),
+            ["Atlas"] = new("Nekkoy", "yokkenUA/Atlas v0.1.4: chevron routes, hide available maps, expedition targets, Grand Mirror badge, content icons."),
 
             ["Radar"] = new("Gordin", "GameHelper2"),
 
