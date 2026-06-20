@@ -25,7 +25,6 @@ namespace AuraTracker
         private readonly SettingsUiRenderer settingsRenderer = new(PluginVersion);
         private ActiveCoroutine? onAreaChange;
         private Vector2? defaultLargeMapCenter;
-        private bool isMenuOpen;
 
         private string SettingsPath => Path.Join(this.DllDirectory, "config", "AuraTracker.settings.json");
 
@@ -50,7 +49,6 @@ namespace AuraTracker
 
             this.onAreaChange = CoroutineHandler.Start(OnAreaChange(), string.Empty, 0);
             this.defaultLargeMapCenter = null;
-            this.isMenuOpen = false;
         }
 
         public override void OnDisable()
@@ -59,7 +57,6 @@ namespace AuraTracker
             this.onAreaChange = null;
             this.dpsTracker.Reset();
             this.defaultLargeMapCenter = null;
-            this.isMenuOpen = false;
         }
 
         public override void SaveSettings()
@@ -120,7 +117,6 @@ namespace AuraTracker
                 yield return new Wait(RemoteEvents.AreaChanged);
                 this.dpsTracker.Reset();
                 this.defaultLargeMapCenter = null;
-                this.isMenuOpen = false;
             }
         }
 
@@ -132,7 +128,6 @@ namespace AuraTracker
             if (!this.defaultLargeMapCenter.HasValue)
             {
                 this.defaultLargeMapCenter = currentCenter;
-                this.isMenuOpen = false;
                 return false;
             }
 
@@ -141,11 +136,9 @@ namespace AuraTracker
 
             if (delta >= menuThreshold)
             {
-                this.isMenuOpen = true;
                 return true;
             }
 
-            this.isMenuOpen = false;
             this.defaultLargeMapCenter = currentCenter;
             return false;
         }

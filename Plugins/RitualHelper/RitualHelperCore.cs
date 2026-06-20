@@ -27,14 +27,14 @@ namespace RitualHelper
         private readonly HashSet<string> alertedItemsThisSession = new(StringComparer.OrdinalIgnoreCase);
         private readonly CurrencyIconLoader currencyIcons = new();
 
-        private MethodInfo readUiOffsetMethod;
-        private MethodInfo readStdVectorMethod;
-        private MethodInfo readIntPtrMethod;
-        private object handleObj;
+        private MethodInfo? readUiOffsetMethod;
+        private MethodInfo? readStdVectorMethod;
+        private MethodInfo? readIntPtrMethod;
+        private object? handleObj;
         private bool wasRitualWindowOpen;
         private string lastClipboardText = string.Empty;
         private bool clipboardChangedThisFrame;
-        private Dictionary<string, string> customNamesCache;
+        private Dictionary<string, string>? customNamesCache;
         private int selectedLeagueIndex = -1;
         private bool iconsReloadPending;
         private int? pendingSoundPlayback;
@@ -122,7 +122,7 @@ namespace RitualHelper
                     ImGui.SliderInt(this.L("Refresh interval (min)", "Aktualisierungsintervall (Min.)"), ref this.Settings.RefreshIntervalMin, 1, 120);
                     if (ImGui.Button(this.L("Refresh Prices Now", "Preise jetzt aktualisieren")))
                     {
-                        PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League, this.Settings.RefreshIntervalMin);
+                        PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League ?? string.Empty, this.Settings.RefreshIntervalMin);
                         PoeNinjaPriceFetcher.ForceRefresh(this.DllDirectory);
                     }
 
@@ -227,7 +227,7 @@ namespace RitualHelper
             {
                 PoeNinjaPriceFetcher.Configure(
                     this.Settings.PriceSource,
-                    this.Settings.League,
+                    this.Settings.League ?? string.Empty,
                     this.Settings.RefreshIntervalMin);
                 PoeNinjaPriceFetcher.ForceRefresh(this.DllDirectory, ignoreCooldown: true);
             }
@@ -251,7 +251,7 @@ namespace RitualHelper
             if (!this.Settings.ShowOverlay && !this.Settings.DebugMode) return;
             if (Core.States.GameCurrentState != GameStateTypes.InGameState) return;
 
-            PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League, this.Settings.RefreshIntervalMin);
+            PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League ?? string.Empty, this.Settings.RefreshIntervalMin);
             PoeNinjaPriceFetcher.RefreshIfNeeded();
 
             if (this.iconsReloadPending || !this.currencyIcons.TryGet("divine.png", out _, out _, out _))
@@ -291,17 +291,40 @@ namespace RitualHelper
                 }
 
                 var gameUiAddr = Core.States.InGameStateObject.GameUi.Address;
-                var rootOffsetObj = this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { gameUiAddr });
-                var mainChildren = (IntPtr[])this.readStdVectorMethod.Invoke(this.handleObj, new object[] { ((UiElementBaseOffset)rootOffsetObj).ChildrensPtr });
+                var rootOffsetObj = this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { gameUiAddr });
+                if (rootOffsetObj is not UiElementBaseOffset rootOffset)
+                {
+                    return;
+                }
+
+                var mainChildrenObj = this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { rootOffset.ChildrensPtr });
+                if (mainChildrenObj is not IntPtr[] mainChildren)
+                {
+                    return;
+                }
 
                 if (mainChildren.Length > 76)
                 {
-                    var child76Offset = (UiElementBaseOffset)this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { mainChildren[76] });
-                    var child76Children = (IntPtr[])this.readStdVectorMethod.Invoke(this.handleObj, new object[] { child76Offset.ChildrensPtr });
+                    var child76OffsetObj = this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { mainChildren[76] });
+                    if (child76OffsetObj is not UiElementBaseOffset child76Offset)
+                    {
+                        return;
+                    }
+
+                    var child76ChildrenObj = this.readStdVectorMethod.Invoke(this.handleObj, new object[] { child76Offset.ChildrensPtr });
+                    if (child76ChildrenObj is not IntPtr[] child76Children)
+                    {
+                        return;
+                    }
 
                     if (child76Children.Length > 13)
                     {
-                        var ritualWindowOffset = (UiElementBaseOffset)this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { child76Children[13] });
+                        var ritualWindowOffsetObj = this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { child76Children[13] });
+                        if (ritualWindowOffsetObj is not UiElementBaseOffset ritualWindowOffset)
+                        {
+                            return;
+                        }
+
                         var ritualWindowOpen = UiElementBaseFuncs.IsVisibleChecker(ritualWindowOffset.Flags);
 
                         if (!ritualWindowOpen && this.wasRitualWindowOpen)
@@ -351,7 +374,12 @@ namespace RitualHelper
 
             this.nextPriceRecomputeUtc = now.AddMilliseconds(recomputeIntervalMs);
 
-            var itemUiElements = (IntPtr[])this.readStdVectorMethod.Invoke(this.handleObj, new object[] { ritualWindowOffset.ChildrensPtr });
+            var itemUiElementsObj = this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { ritualWindowOffset.ChildrensPtr });
+            if (itemUiElementsObj is not IntPtr[] itemUiElements)
+            {
+                return;
+            }
+
             var mousePos = ImGui.GetMousePos();
             var priceLabels = this.cachedPriceLabels;
             priceLabels.Clear();
@@ -361,19 +389,25 @@ namespace RitualHelper
 
             for (var i = 0; i < itemUiElements.Length; i++)
             {
-                var itemUiOffset = (UiElementBaseOffset)this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { itemUiElements[i] });
+                var itemUiOffsetObj = this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { itemUiElements[i] });
+                if (itemUiOffsetObj is not UiElementBaseOffset itemUiOffset)
+                {
+                    continue;
+                }
+
                 if (!UiElementBaseFuncs.IsVisibleChecker(itemUiOffset.Flags)) continue;
 
                 object? uiElementObj = parentsObj == null
                     ? null
                     : PluginUiElementReflection.CreateUiElement(itemUiElements[i], parentsObj);
 
-                var ptr = (IntPtr)this.readIntPtrMethod.Invoke(this.handleObj, new object[] { itemUiElements[i] + 0x4F8 });
+                var ptrObj = this.readIntPtrMethod!.Invoke(this.handleObj, new object[] { itemUiElements[i] + 0x4F8 });
+                var ptr = ptrObj is IntPtr intPtr ? intPtr : IntPtr.Zero;
                 var itemName = $"Item {i}";
                 var internalNameOnly = string.Empty;
                 var fullItemPath = string.Empty;
                 var scoutText = string.Empty;
-                List<string> memoryMods = null;
+                List<string>? memoryMods = null;
 
                 if (ptr != IntPtr.Zero)
                 {
@@ -423,7 +457,7 @@ namespace RitualHelper
                     scoutText = this.BuildScoutText(cachedHint.Name, cachedHint.BaseType);
                 }
 
-                List<string> clipboardMods = null;
+                List<string>? clipboardMods = null;
                 if (useClipboardForItem)
                 {
                     clipboardMods = ParseClipboardMods(currentClipboard);
@@ -519,14 +553,14 @@ namespace RitualHelper
             AlertSoundPlayer.Play(soundType);
         }
 
-        private string ParseClipboardForItemName(string text)
+        private string? ParseClipboardForItemName(string text)
         {
             if (string.IsNullOrEmpty(text) || !text.StartsWith("Item Class:", StringComparison.Ordinal)) return null;
             var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             return lines.Length > 2 ? lines[2].Trim() : null;
         }
 
-        private string ParseClipboardBaseType(string text)
+        private string? ParseClipboardBaseType(string text)
         {
             if (string.IsNullOrEmpty(text) || !text.StartsWith("Item Class:", StringComparison.Ordinal)) return null;
             var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
@@ -537,7 +571,7 @@ namespace RitualHelper
             return baseType;
         }
 
-        private string BuildScoutText(string itemName, string baseType)
+        private string BuildScoutText(string itemName, string? baseType)
         {
             if (string.IsNullOrWhiteSpace(itemName)) return string.Empty;
             if (string.IsNullOrWhiteSpace(baseType)) return itemName.Trim();
@@ -549,7 +583,7 @@ namespace RitualHelper
             string internalNameOnly,
             string fullItemPath,
             string memoryDisplayName,
-            IReadOnlyList<string> memoryMods)
+            IReadOnlyList<string>? memoryMods)
         {
             if (this.ClipboardBelongsToItem(clipboard, internalNameOnly, fullItemPath, memoryDisplayName, memoryMods))
             {
@@ -566,7 +600,7 @@ namespace RitualHelper
             string internalNameOnly,
             string fullItemPath,
             string memoryDisplayName,
-            IReadOnlyList<string> memoryMods)
+            IReadOnlyList<string>? memoryMods)
         {
             if (string.IsNullOrWhiteSpace(clipboard) ||
                 !clipboard.StartsWith("Item Class:", StringComparison.Ordinal))
@@ -835,7 +869,7 @@ namespace RitualHelper
         {
             this.EnsureNameCache();
             TrySplitRuneforgeSuffix(internalName, out var baseInternalName, out _);
-            if (!this.customNamesCache.TryGetValue(baseInternalName, out var existing) ||
+            if (!this.customNamesCache!.TryGetValue(baseInternalName, out var existing) ||
                 !string.Equals(existing, newName, StringComparison.Ordinal))
             {
                 this.customNamesCache[baseInternalName] = newName;
@@ -867,7 +901,7 @@ namespace RitualHelper
             try
             {
                 var dictionaryPath = Path.Combine(this.DllDirectory, "item_names.json");
-                File.WriteAllText(dictionaryPath, JsonConvert.SerializeObject(this.customNamesCache, Formatting.Indented));
+                File.WriteAllText(dictionaryPath, JsonConvert.SerializeObject(this.customNamesCache!, Formatting.Indented));
             }
             catch { }
         }
@@ -907,7 +941,7 @@ namespace RitualHelper
             this.EnsureNameCache();
             TrySplitRuneforgeSuffix(internalName, out var baseInternalName, out var suffix);
 
-            if (this.customNamesCache.TryGetValue(baseInternalName, out var pretty))
+            if (this.customNamesCache!.TryGetValue(baseInternalName, out var pretty))
             {
                 isMapped = true;
                 return string.IsNullOrEmpty(suffix) ? pretty : $"{pretty} {suffix}";
@@ -974,7 +1008,7 @@ namespace RitualHelper
 
             this.NormalizePriceSourceSetting();
             LeagueProvider.EnsureLoaded();
-            PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League, this.Settings.RefreshIntervalMin);
+            PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League ?? string.Empty, this.Settings.RefreshIntervalMin);
             PoeNinjaPriceFetcher.Initialize(this.DllDirectory);
             this.currencyIcons.Initialize(this.DllDirectory);
             this.iconsReloadPending = true;

@@ -37,7 +37,7 @@ internal static class BuffVisuals
 
             foreach (var kv in component.StatusEffects.ToArray())
             {
-                string cleaned = CleanBuffName(kv.Key);
+                string? cleaned = CleanBuffName(kv.Key);
                 if (string.IsNullOrEmpty(cleaned))
                 {
                     continue;
@@ -355,9 +355,9 @@ internal static class BuffVisuals
         return buff.Name + stack + duration;
     }
 
-    private static string CleanBuffName(string raw)
+    private static string? CleanBuffName(string raw)
     {
-        string baseName = CleanBuffBase(raw);
+        string? baseName = CleanBuffBase(raw);
         if (baseName == null)
         {
             return null;
@@ -366,7 +366,7 @@ internal static class BuffVisuals
         return Titleize(baseName);
     }
 
-    private static string CleanBuffBase(string raw)
+    private static string? CleanBuffBase(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {

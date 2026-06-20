@@ -16,12 +16,12 @@ namespace FarmTracker
         public double PriceChaos { get; set; }
         public string Currency { get; set; } = "ex";
         public double? MaxVolumeRate { get; set; }
-        public string MaxVolumeCurrency { get; set; }
+        public string MaxVolumeCurrency { get; set; } = string.Empty;
         public double? TotalChange { get; set; }
         public double? Volume { get; set; }
-        public string ExchangeRateDisplay { get; set; }
-        public string ChangePercentDisplay { get; set; }
-        public string VolumeDisplay { get; set; }
+        public string ExchangeRateDisplay { get; set; } = string.Empty;
+        public string ChangePercentDisplay { get; set; } = string.Empty;
+        public string VolumeDisplay { get; set; } = string.Empty;
     }
 
     internal sealed class UniquePriceListing
@@ -180,16 +180,26 @@ namespace FarmTracker
             displayName = string.Empty;
             if (string.IsNullOrWhiteSpace(internalPathBasename)) return false;
 
-            if (FarmCurrencyCatalog.TryResolveItemName(internalPathBasename, out displayName))
+            if (FarmCurrencyCatalog.TryResolveItemName(internalPathBasename, out var catalogName))
             {
+                displayName = catalogName;
                 return true;
             }
 
-            if (DefaultPathBasenames.TryGetValue(NormalizeKey(internalPathBasename), out displayName))
+            if (DefaultPathBasenames.TryGetValue(NormalizeKey(internalPathBasename), out var defaultName))
+            {
+                displayName = defaultName;
                 return true;
+            }
 
-            return pathBasenameToItemName.TryGetValue(NormalizeKey(internalPathBasename), out displayName)
-                   && !string.IsNullOrWhiteSpace(displayName);
+            if (pathBasenameToItemName.TryGetValue(NormalizeKey(internalPathBasename), out var resolvedName) &&
+                !string.IsNullOrWhiteSpace(resolvedName))
+            {
+                displayName = resolvedName;
+                return true;
+            }
+
+            return false;
         }
 
         public static bool IsGenericLookupName(string? name)
@@ -551,7 +561,7 @@ namespace FarmTracker
             return s;
         }
 
-        private static FarmPrice FromChaos(double chaosValue)
+        private static FarmPrice? FromChaos(double chaosValue)
         {
             if (chaosValue <= 0) return null;
 
@@ -836,7 +846,7 @@ namespace FarmTracker
             return dot > 0 ? file[..dot] : file;
         }
 
-        private static void AddFlatPrice(Dictionary<string, double> flat, string key, double price)
+        private static void AddFlatPrice(Dictionary<string, double> flat, string? key, double price)
         {
             if (string.IsNullOrWhiteSpace(key) || price <= 0) return;
             var norm = NormalizeKey(key);

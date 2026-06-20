@@ -44,7 +44,7 @@ namespace SimpleBars
 
         private readonly Dictionary<uint, Vector2> bPositions = new();
 
-        private ActiveCoroutine onAreaChange = null;
+        private ActiveCoroutine? onAreaChange;
 
         /// <inheritdoc />
         public override void DrawSettings()
@@ -283,7 +283,7 @@ namespace SimpleBars
             if (File.Exists(this.SettingPathname))
             {
                 var content = File.ReadAllText(this.SettingPathname);
-                this.Settings = JsonConvert.DeserializeObject<SimpleBarsSettings>(content);
+                this.Settings = JsonConvert.DeserializeObject<SimpleBarsSettings>(content) ?? new SimpleBarsSettings();
             }
 
             for (var i = 0; i < this.textureToValidate.Count; i++)
@@ -300,7 +300,11 @@ namespace SimpleBars
         /// <inheritdoc />
         public override void SaveSettings()
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(this.SettingPathname));
+            var settingsDir = Path.GetDirectoryName(this.SettingPathname);
+            if (!string.IsNullOrEmpty(settingsDir))
+            {
+                Directory.CreateDirectory(settingsDir);
+            }
             var settingsData = JsonConvert.SerializeObject(this.Settings, Formatting.Indented);
             File.WriteAllText(this.SettingPathname, settingsData);
         }

@@ -49,7 +49,7 @@ namespace RitualHelper
             }
         }
 
-        public static List<string> MergeModLines(IReadOnlyList<string> memoryMods, IReadOnlyList<string> clipboardMods)
+        public static List<string> MergeModLines(IReadOnlyList<string>? memoryMods, IReadOnlyList<string>? clipboardMods)
         {
             var merged = new List<string>();
             if (clipboardMods != null)

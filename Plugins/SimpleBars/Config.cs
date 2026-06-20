@@ -259,7 +259,7 @@ namespace SimpleBars
         /// <summary>
         ///     Display the Config on imgui.
         /// </summary>
-        public void Draw(bool isSelf = false, TextureLoader textures = null, bool useGradientGlobal = false)
+        public void Draw(bool isSelf = false, TextureLoader? textures = null, bool useGradientGlobal = false)
         {
             ImGui.Text("NOTE: For going above/below the limit, or for manual editing, press CTRL + Left Mouse Button click.");
             if (ImGui.BeginTable("config_table", 2))
