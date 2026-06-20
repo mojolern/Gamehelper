@@ -34,7 +34,7 @@ Open **Plugins** in the GameHelper menu (top bar). The plugin table shows each p
 | Radar | Gordin | GameHelper2 |
 | RitualHelper | caio | Based on AutoRitualPricer ([Queuete/GameHelper](https://github.com/MordWraith/Gamehelper) lineage) |
 | RuneforgeHelper | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) | Runeshape rewards overlay |
-| SekhemaHelper | Nekkoy / [yokkenUA](https://github.com/MordWraith/Gamehelper) | Sekhema Trial option helper |
+| SekhemaHelper | Nekkoy / [yokkenUA](https://github.com/yokkenUA/SekhemaHelper) (synced **v0.0.3**) | Sekhema Trial path helper; room read from FloorData content vector |
 | AutoPot | MordWraith | Written for this fork |
 | AutoHotKeyTrigger | GameHelper2 upstream | Bundled with GameHelper2 |
 | HealthBars | GameHelper2 upstream | Bundled with GameHelper2 |

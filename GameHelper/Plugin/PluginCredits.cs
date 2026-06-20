@@ -34,7 +34,7 @@ namespace GameHelper.Plugin
 
             ["RuneforgeHelper"] = new("Nekkoy", "GameHelper2 plugin ecosystem"),
 
-            ["SekhemaHelper"] = new("Nekkoy", "Sekhema Trial path helper"),
+            ["SekhemaHelper"] = new("Nekkoy", "yokkenUA/SekhemaHelper v0.0.3: Sekhema Trial path helper; weights affect path again."),
 
             ["AutoPot"] = new("MordWraith", "written for this fork"),
 

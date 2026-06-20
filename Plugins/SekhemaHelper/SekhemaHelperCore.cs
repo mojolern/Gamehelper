@@ -1,7 +1,6 @@
 namespace SekhemaHelper
 {
     using GameHelper;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteObjects.Components;
@@ -46,8 +45,8 @@ namespace SekhemaHelper
 
         public override void DrawSettings()
         {
-            ImGui.SeparatorText(L("Profile", "Profil"));
-            if (ImGui.BeginCombo(L("Active Profile", "Aktives Profil"), Settings.CurrentProfile))
+            ImGui.SeparatorText("Profile");
+            if (ImGui.BeginCombo("Active Profile", Settings.CurrentProfile))
             {
                 foreach (var name in Settings.Profiles.Keys)
                 {
@@ -60,15 +59,20 @@ namespace SekhemaHelper
                 ImGui.EndCombo();
             }
 
-            ImGui.SeparatorText(L("Display", "Anzeige"));
-            ImGui.Checkbox(L("Draw Best Path", "Bester Pfad zeichnen"), ref Settings.DrawBestPath);
-            ImGui.SliderFloat(L("Frame Thickness", "Rahmenstaerke"), ref Settings.FrameThickness, 1f, 10f);
-            ColorSwatch(L("Best Path Color", "Pfadfarbe"), ref Settings.BestPathColor);
-            ImGui.Checkbox(L("Debug (show weights)", "Debug (Gewichte anzeigen)"), ref Settings.DebugEnable);
+            ImGui.SeparatorText("Display");
+            ImGui.Checkbox("Draw Best Path", ref Settings.DrawBestPath);
+            ImGui.SliderFloat("Frame Thickness", ref Settings.FrameThickness, 1f, 10f);
+            ColorSwatch("Best Path Color", ref Settings.BestPathColor);
+            ImGui.Checkbox("Debug (show weights)", ref Settings.DebugEnable);
             if (Settings.DebugEnable)
             {
-                ColorSwatch(L("Debug Text Color", "Debug-Schriftfarbe"), ref Settings.TextColor);
-                ColorSwatch(L("Debug Background", "Debug-Hintergrund"), ref Settings.BackgroundColor);
+                ColorSwatch("Debug Text Color", ref Settings.TextColor);
+                ColorSwatch("Debug Background", ref Settings.BackgroundColor);
+                // Dump every room's content FK pairs (+ the FloorData content vector) to
+                // config\fk_dump.txt on the next frame the Trial map is open. Use to verify
+                // classification / re-map FK offsets after a client patch.
+                if (ImGui.Button("Dump FK -> config\\fk_dump.txt"))
+                    this.dumpRequested = true;
             }
 
             DrawWeightSettings();
@@ -82,12 +86,10 @@ namespace SekhemaHelper
             if (!Settings.Profiles.TryGetValue(Settings.CurrentProfile, out var profile) || profile == null)
                 return;
 
-            ImGui.SeparatorText($"{L("Weights", "Gewichte")} — {Settings.CurrentProfile}");
-            ImGui.TextDisabled(L(
-                "Higher = more desirable. Drag to adjust (Ctrl+click to type). Saved to config.",
-                "Hoeher = attraktiver. Ziehen zum Anpassen (Strg+Klick zum Tippen). Wird in der Config gespeichert."));
+            ImGui.SeparatorText($"Weights — {Settings.CurrentProfile}");
+            ImGui.TextDisabled("Higher = more desirable. Drag to adjust (Ctrl+click to type). Saved to config.");
 
-            if (ImGui.Button(L("Reset this profile to defaults", "Profil auf Standard zuruecksetzen")))
+            if (ImGui.Button("Reset this profile to defaults"))
             {
                 Settings.Profiles[Settings.CurrentProfile] = Settings.CurrentProfile == "No-Hit"
                     ? ProfileContent.CreateNoHitProfile()
@@ -95,9 +97,9 @@ namespace SekhemaHelper
                 return;
             }
 
-            DrawWeightGroup(L("Room types", "Raumtypen"), profile.RoomTypeWeights);
-            DrawWeightGroup(L("Afflictions", "Afflictions"), profile.AfflictionWeights);
-            DrawWeightGroup(L("Rewards", "Belohnungen"), profile.RewardWeights);
+            DrawWeightGroup("Room types", profile.RoomTypeWeights);
+            DrawWeightGroup("Afflictions", profile.AfflictionWeights);
+            DrawWeightGroup("Rewards", profile.RewardWeights);
         }
 
         // One collapsible group of {name → weight} sliders. Edits the dictionary value in place.
@@ -134,14 +136,12 @@ namespace SekhemaHelper
             var panel = gameUi?.SekhemasTrialMapPanel;
             if (panel == null)
             {
-                DebugHud(drawList, L("panel = null (not in Trial?)", "Panel = null (nicht im Trial?)"));
+                DebugHud(drawList, "panel = null (not in Trial?)");
                 return;
             }
             if (!panel.IsVisible)
             {
-                DebugHud(drawList, L(
-                    $"panel 0x{panel.Address.ToInt64():X} not visible (map closed)",
-                    $"Panel 0x{panel.Address.ToInt64():X} nicht sichtbar (Karte geschlossen)"));
+                DebugHud(drawList, $"panel 0x{panel.Address.ToInt64():X} not visible (map closed)");
                 return;
             }
 
@@ -207,54 +207,70 @@ namespace SekhemaHelper
             }
         }
 
-        // Classify each revealed room from its content FK pairs (widget+0x4D8, stride 0x10, up to 3):
+        // Classify each revealed room from the FloorData content vector (FloorData+0x18, stride 0x40),
+        // each entry keyed by (layer,room) in its first two bytes and carrying up to 3 content FK
+        // pairs {row, table} at +0x08 + k*0x10:
         //   SanctumRooms.dat  -> fight room "Caverns_<TYPE>_NN" (type) OR "Caverns_Treasure..." (reward)
         //   SanctumPersistentEffects.dat -> affliction (display name at row+0x28)
-        // Only revealed rooms carry content; deeper rooms stay unclassified (weight = base).
+        //
+        // This reads the game-data structure directly (verified live 2026-06-20: ids like
+        // "Caverns_Arena_02" and affliction names like "Fiendish Wings" resolve here). It replaces the
+        // old per-widget read at widget+0x4D8, which a client patch left empty — every room then fell
+        // back to base weight, so editing the weight tables had no effect on the chosen path. Only
+        // revealed rooms have entries in this vector; deeper rooms stay unclassified (weight = base).
         private static void ClassifyRooms(SekhemaFloor floor)
         {
-            foreach (var layer in floor.Layers)
-                foreach (var room in layer)
+            if (floor.FloorDataAddr == IntPtr.Zero)
+                return;
+            var first = Mem.Read<IntPtr>(floor.FloorDataAddr + 0x18);
+            var last = Mem.Read<IntPtr>(floor.FloorDataAddr + 0x20);
+            if (first == IntPtr.Zero || last.ToInt64() <= first.ToInt64())
+                return;
+            long count = (last.ToInt64() - first.ToInt64()) / 0x40;
+            for (long i = 0; i < count && i < 512; i++)
+            {
+                var e = first + (int)(i * 0x40);
+                int layer = Mem.Read<byte>(e + 0x00);
+                int idx = Mem.Read<byte>(e + 0x01);
+                var room = floor.Get(layer, idx);
+                if (room == null)
+                    continue;
+                for (int k = 0; k < 3; k++)
                 {
-                    if (room.WidgetAddr == IntPtr.Zero)
+                    var rowPtr = Mem.Read<IntPtr>(e + 0x08 + k * 0x10);
+                    var tablePtr = Mem.Read<IntPtr>(e + 0x10 + k * 0x10);
+                    if (rowPtr == IntPtr.Zero || tablePtr == IntPtr.Zero)
                         continue;
-                    for (int k = 0; k < 3; k++)
-                    {
-                        var slot = room.WidgetAddr + 0x4D8 + k * 0x10;
-                        var rowPtr = Mem.Read<IntPtr>(slot);
-                        var tablePtr = Mem.Read<IntPtr>(slot + 8);
-                        if (rowPtr == IntPtr.Zero || tablePtr == IntPtr.Zero)
-                            continue;
-                        var tpath = Mem.ReadWideString(Mem.Read<IntPtr>(tablePtr + 0x08), 96);
-                        if (string.IsNullOrEmpty(tpath))
-                            continue;
+                    var tpath = Mem.ReadWideString(Mem.Read<IntPtr>(tablePtr + 0x08), 96);
+                    if (string.IsNullOrEmpty(tpath))
+                        continue;
 
-                        if (tpath.IndexOf("SanctumPersistentEffects", StringComparison.OrdinalIgnoreCase) >= 0)
+                    if (tpath.IndexOf("SanctumPersistentEffects", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        var name = Mem.ReadWideString(Mem.Read<IntPtr>(rowPtr + 0x28), 48);
+                        if (!string.IsNullOrEmpty(name))
+                            room.Affliction = name;
+                    }
+                    else if (tpath.IndexOf("SanctumRooms", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        var id = Mem.ReadWideString(Mem.Read<IntPtr>(rowPtr + 0x00), 64);
+                        if (string.IsNullOrEmpty(id))
+                            continue;
+                        if (id.IndexOf("Treasure", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
-                            var name = Mem.ReadWideString(Mem.Read<IntPtr>(rowPtr + 0x28), 48);
-                            if (!string.IsNullOrEmpty(name))
-                                room.Affliction = name;
+                            var rw = MapReward(id);
+                            if (rw != null)
+                                room.Reward = rw;
                         }
-                        else if (tpath.IndexOf("SanctumRooms", StringComparison.OrdinalIgnoreCase) >= 0)
+                        else
                         {
-                            var id = Mem.ReadWideString(Mem.Read<IntPtr>(rowPtr + 0x00), 64);
-                            if (string.IsNullOrEmpty(id))
-                                continue;
-                            if (id.IndexOf("Treasure", StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                var rw = MapReward(id);
-                                if (rw != null)
-                                    room.Reward = rw;
-                            }
-                            else
-                            {
-                                var t = ExtractRoomType(id);
-                                if (t != null)
-                                    room.RoomType = t;
-                            }
+                            var t = ExtractRoomType(id);
+                            if (t != null)
+                                room.RoomType = t;
                         }
                     }
                 }
+            }
         }
 
         // Map the SanctumRooms.Id token (parts[1]) to the in-game DISPLAY name the player sees, which
@@ -463,8 +479,7 @@ namespace SekhemaHelper
             var size = ImGui.CalcTextSize(text);
             drawList.AddRectFilled(pos - new Vector2(4, 2), pos + size + new Vector2(4, 2),
                 ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.8f)));
-            drawList.AddText(pos, ImGuiHelper.Color(new Vector4(1f, 0.9f, 0.2f, 1f)),
-                L("SekhemaHelper: ", "SekhemaHelper: ") + text);
+            drawList.AddText(pos, ImGuiHelper.Color(new Vector4(1f, 0.9f, 0.2f, 1f)), "SekhemaHelper: " + text);
         }
 
         [DllImport("user32.dll")]
@@ -482,7 +497,5 @@ namespace SekhemaHelper
                 ImGui.EndPopup();
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
     }
 }
