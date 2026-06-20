@@ -2,7 +2,7 @@
 
 GameHelper is a Windows x64 .NET overlay for **Path of Exile 2** with a plugin architecture. The launcher (`GameHelper.exe`) checks for updates, starts the overlay (`GameHelper.App.exe`), reads data from the running game process, and loads plugins from the `Plugins` folder.
 
-**Open-source fork maintained by** [MordWraith](https://github.com/MordWraith) — basis **Lafko / Gordin** ([GameHelper2](https://github.com/Gordin/GameHelper2)).
+**Open-source fork maintained by** [MordWraith](https://github.com/MordWraith) — basis **Lafko / Gordin** ([GameHelper2](https://github.com/MordWraith/Gamehelper)).
 
 ## Source + binaries (same project)
 
@@ -46,7 +46,7 @@ User settings (`configs/`, `Plugins/*/config/`) are **not** included in update p
 - [.NET 10 SDK for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ```powershell
-git clone https://github.com/MordWraith/Gamehelper.git
+git clone https://github.com/MordWraith/Gamehelper
 cd Gamehelper
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
@@ -116,5 +116,5 @@ Plugins\<Name>\config\
 
 ## Links
 
-- [Upstream GameHelper2](https://github.com/Gordin/GameHelper2)
+- [Upstream GameHelper2](https://github.com/MordWraith/Gamehelper)
 - [.NET 10 downloads](https://dotnet.microsoft.com/download/dotnet/10.0)
