@@ -647,6 +647,17 @@ namespace GameHelper.Utils
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        private struct MouseInput
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         private struct KeyboardInput
         {
             public ushort wVk;
@@ -656,11 +667,30 @@ namespace GameHelper.Utils
             public IntPtr dwExtraInfo;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct HardwareInput
+        {
+            public uint uMsg;
+            public ushort wParamL;
+            public ushort wParamH;
+        }
+
+        // The native INPUT union is sized to its largest member (MOUSEINPUT). All three
+        // variants MUST be declared so Marshal.SizeOf<Input>() equals the real sizeof(INPUT)
+        // (40 bytes on x64). With only the keyboard variant it was 32 bytes, so every
+        // SendInput call was rejected with ERROR_INVALID_PARAMETER (87) and silently injected
+        // nothing — masking failures behind the SendMessage/WmChar fallbacks.
         [StructLayout(LayoutKind.Explicit)]
         private struct InputUnion
         {
             [FieldOffset(0)]
+            public MouseInput mi;
+
+            [FieldOffset(0)]
             public KeyboardInput ki;
+
+            [FieldOffset(0)]
+            public HardwareInput hi;
         }
 
         [StructLayout(LayoutKind.Sequential)]
