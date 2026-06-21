@@ -39,6 +39,14 @@ namespace RitualHelper
         /// <summary>Debug mode (shows all inventories).</summary>
         public bool DebugMode = false;
 
+        /// <summary>Diagnose ritual pricing: label every visible tile with the resolved name / rarity
+        /// and flag items that produced no price, so you can see which stage failed.</summary>
+        public bool DiagnosePricing = false;
+
+        /// <summary>Force the signature BFS fallback for locating the ritual window, bypassing the fast
+        /// index chain. For testing the fallback (normally it only engages when the index chain breaks).</summary>
+        public bool ForceBfsFallback = false;
+
         /// <summary>Font scale factor for price labels.</summary>
         public float PriceFontScale = 1.025f;
 

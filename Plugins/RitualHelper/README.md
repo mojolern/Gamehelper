@@ -3,11 +3,9 @@
 AutoRitualPricer is a plugin for [GameHelper](https://github.com/Queuete/GameHelper) that automatically checks the prices of items inside the Path of Exile 2 Ritual UI using real-time data from **poe.ninja**.
 
 ## Features
-- 💸 **Live Pricing**: Fetches item prices from `poe.ninja` in the background (Ritual currencies, Unique Armours, Accessories, and Charms).
-- 🟩 **Green/Red Indicators**: Automatically draws a bounding box over items in the Ritual window.
-  - **Red Box**: The item's internal name has not been mapped yet.
-  - **Green Box**: The item is mapped and the price is displayed.
-- 📋 **Auto-Mapping (Ctrl+C)**: Hover over a red item in-game and press `Ctrl+C`. The plugin will instantly read the clipboard, map the internal name to the English unique/currency name, and update the box to green with the item's price.
+- 💸 **Live Pricing**: Fetches item prices from `poe.ninja` / `poe2scout` in the background (Ritual currencies, Unique Armours, Accessories, and Charms).
+- 🏷️ **Automatic Naming**: Item names are read directly from game memory — base types via the `Base` component, uniques via their icon art. No hover or copy needed; every recognized item is priced automatically.
+- 🔎 **Pricing Diagnostics** (Advanced tab): label every tile with its rarity, the name read from memory, and the internal id, flagging anything that produced no price.
 
 ## Installation
 1. Ensure you have [GameHelper](https://github.com/Queuete/GameHelper) installed.
@@ -18,9 +16,8 @@ AutoRitualPricer is a plugin for [GameHelper](https://github.com/Queuete/GameHel
 
 ## How to Use
 1. Open a Ritual Window in Path of Exile 2.
-2. The plugin will draw boxes over the items.
-3. If a box is **Red**, hover your mouse over the item in-game and press `Ctrl + C`. The plugin will read the item name and bind it forever.
-4. The box will turn **Green** and the value (e.g., `1.5 Ex`, `0.5 Div`) will appear in the bottom right corner of the item!
+2. The plugin reads each reward directly from memory and shows its value (e.g., `1.5 Ex`, `0.5 Div`) on the tile.
+3. Items the price source doesn't list show no label. Turn on **Diagnose Pricing** (Advanced tab) to see what name each tile resolved to.
 
 ## Requirements
 - Path of Exile 2

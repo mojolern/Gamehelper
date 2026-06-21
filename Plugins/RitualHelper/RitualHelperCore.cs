@@ -14,6 +14,7 @@ namespace RitualHelper
     using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
+    using GameHelper.RemoteObjects.Components;
     using GameHelper.RemoteObjects.States.InGameStateObjects;
     using GameOffsets.Objects.States.InGameState;
     using GameOffsets.Objects.UiElement;
@@ -27,25 +28,31 @@ namespace RitualHelper
         private readonly HashSet<string> alertedItemsThisSession = new(StringComparer.OrdinalIgnoreCase);
         private readonly CurrencyIconLoader currencyIcons = new();
 
+        // Displayed-text std::wstring offset on a UiElement (used by the BFS fallback signature scan).
+        private const int UiElementTextOffset = 0x390;
+
+        // Signature strings that only render while the ritual tribute shop is open.
+        private static readonly string[] RitualSignatureTexts = { "Rituals Remaining", "tribute to the king" };
+
         private MethodInfo? readUiOffsetMethod;
         private MethodInfo? readStdVectorMethod;
         private MethodInfo? readIntPtrMethod;
+        private MethodInfo? readStdWStringStructMethod;
+        private MethodInfo? readStdWStringMethod;
         private object? handleObj;
         private bool wasRitualWindowOpen;
-        private string lastClipboardText = string.Empty;
-        private bool clipboardChangedThisFrame;
         private Dictionary<string, string>? customNamesCache;
         private int selectedLeagueIndex = -1;
         private bool iconsReloadPending;
         private int? pendingSoundPlayback;
-        private readonly Dictionary<string, (string Name, string BaseType, List<string> Mods)> itemClipboardHints =
-            new(StringComparer.OrdinalIgnoreCase);
-        private readonly Dictionary<string, (string Name, string BaseType, List<string> Mods)> clipboardHintsByDisplayName =
-            new(StringComparer.OrdinalIgnoreCase);
         private readonly List<PriceLabelDraw> cachedPriceLabels = new();
         private readonly Dictionary<string, double> sessionStablePriceChaos = new(StringComparer.OrdinalIgnoreCase);
         private object? uiParentsObj;
         private DateTime nextPriceRecomputeUtc = DateTime.MinValue;
+
+        // BFS fallback: only runs when the fast index chain is structurally broken (post-patch).
+        private IntPtr scannedGridAddr = IntPtr.Zero;
+        private DateTime nextScanUtc = DateTime.MinValue;
 
         private string SettingPathname => Path.Join(this.DllDirectory, "config", "settings.txt");
 
@@ -105,11 +112,9 @@ namespace RitualHelper
 
                     ImGui.Separator();
                     ImGui.TextWrapped(this.L(
-                        "POE2 should be set to English for item name matching. " +
-                        "For uniques, copy the item once (Ctrl+C) while hovering — prices then stay stable for that slot. " +
+                        "All items (currency and uniques) are named automatically from game memory. " +
                         "Prices come from poe2scout + poe.ninja; items missing there show no label (trade tools may differ).",
-                        "POE2 sollte auf Englisch eingestellt sein. " +
-                        "Bei Uniques einmal mit Maus darueber und Ctrl+C kopieren — der Preis bleibt dann fuer den Slot stabil. " +
+                        "Alle Items (Waehrung und Uniques) werden automatisch aus dem Spielspeicher benannt. " +
                         "Preise von poe2scout + poe.ninja; fehlende Items ohne Label (Trade-Tools koennen abweichen)."));
                     ImGui.EndTabItem();
                 }
@@ -149,6 +154,20 @@ namespace RitualHelper
                 if (ImGui.BeginTabItem(this.L("Advanced", "Erweitert")))
                 {
                     ImGui.Checkbox(this.L("Debug Mode (Show All Inventories)", "Debug-Modus (alle Inventare anzeigen)"), ref this.Settings.DebugMode);
+                    ImGui.Checkbox(this.L("Diagnose Pricing (label every tile)", "Preis-Diagnose (jedes Feld beschriften)"), ref this.Settings.DiagnosePricing);
+                    ImGui.TextWrapped(this.L(
+                        "When on, every ritual tile is labelled with its rarity, the base name read from memory, " +
+                        "the final lookup name, and the internal id. Tiles with no price show a red 'NO PRICE'.",
+                        "Wenn aktiv, wird jedes Ritual-Feld mit Seltenheit, dem aus dem Speicher gelesenen Basisnamen, " +
+                        "dem finalen Suchnamen und der internen Id beschriftet. Felder ohne Preis zeigen rot 'NO PRICE'."));
+
+                    ImGui.Separator();
+                    ImGui.Checkbox(this.L("Force BFS window search (testing)", "BFS-Fenstersuche erzwingen (Test)"), ref this.Settings.ForceBfsFallback);
+                    ImGui.TextWrapped(this.L(
+                        "Bypass the fast index chain and always locate the ritual window via the signature BFS " +
+                        "fallback. Normally the fallback only engages if the index chain breaks after a patch.",
+                        "Umgeht die schnelle Index-Kette und findet das Ritual-Fenster immer ueber die Signatur-BFS-" +
+                        "Ausweichsuche. Normalerweise greift die Ausweichsuche nur, wenn die Index-Kette nach einem Patch bricht."));
                     ImGui.EndTabItem();
                 }
 
@@ -262,16 +281,6 @@ namespace RitualHelper
 
             try
             {
-                var currentClipboard = string.Empty;
-                try { currentClipboard = ImGui.GetClipboardText() ?? string.Empty; } catch { }
-
-                if (currentClipboard.StartsWith("Item Class:", StringComparison.Ordinal) &&
-                    !string.Equals(currentClipboard, this.lastClipboardText, StringComparison.Ordinal))
-                {
-                    this.lastClipboardText = currentClipboard;
-                    this.clipboardChangedThisFrame = true;
-                }
-
                 if (this.handleObj == null)
                 {
                     PoeNinjaPriceFetcher.Initialize(this.DllDirectory);
@@ -288,6 +297,9 @@ namespace RitualHelper
                     this.readUiOffsetMethod = readMemMethod.MakeGenericMethod(typeof(UiElementBaseOffset));
                     this.readStdVectorMethod = readVectorMethod.MakeGenericMethod(typeof(IntPtr));
                     this.readIntPtrMethod = readMemMethod.MakeGenericMethod(typeof(IntPtr));
+                    this.readStdWStringStructMethod = readMemMethod.MakeGenericMethod(typeof(StdWString));
+                    this.readStdWStringMethod = System.Linq.Enumerable.First(
+                        methods, m => m.Name == "ReadStdWString" && m.GetParameters().Length == 1);
                 }
 
                 var gameUiAddr = Core.States.InGameStateObject.GameUi.Address;
@@ -303,46 +315,52 @@ namespace RitualHelper
                     return;
                 }
 
-                if (mainChildren.Length > 76)
+                // FAST PATH: fixed index chain root.children[76].children[13] = ritual window.
+                // Cheap but brittle to UI patches; if the chain is structurally broken we fall back
+                // to the signature BFS (TryScanRitualWindowThrottled) below.
+                var ritualWindowAddr = IntPtr.Zero;
+                var fastChainValid = false;
+                if (mainChildren.Length > 76 &&
+                    this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { mainChildren[76] }) is UiElementBaseOffset child76Offset &&
+                    this.readStdVectorMethod.Invoke(this.handleObj, new object[] { child76Offset.ChildrensPtr }) is IntPtr[] child76Children &&
+                    child76Children.Length > 13)
                 {
-                    var child76OffsetObj = this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { mainChildren[76] });
-                    if (child76OffsetObj is not UiElementBaseOffset child76Offset)
-                    {
-                        return;
-                    }
-
-                    var child76ChildrenObj = this.readStdVectorMethod.Invoke(this.handleObj, new object[] { child76Offset.ChildrensPtr });
-                    if (child76ChildrenObj is not IntPtr[] child76Children)
-                    {
-                        return;
-                    }
-
-                    if (child76Children.Length > 13)
-                    {
-                        var ritualWindowOffsetObj = this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { child76Children[13] });
-                        if (ritualWindowOffsetObj is not UiElementBaseOffset ritualWindowOffset)
-                        {
-                            return;
-                        }
-
-                        var ritualWindowOpen = UiElementBaseFuncs.IsVisibleChecker(ritualWindowOffset.Flags);
-
-                        if (!ritualWindowOpen && this.wasRitualWindowOpen)
-                        {
-                            this.alertedItemsThisSession.Clear();
-                            this.itemClipboardHints.Clear();
-                            this.clipboardHintsByDisplayName.Clear();
-                            this.sessionStablePriceChaos.Clear();
-                            this.cachedPriceLabels.Clear();
-                            this.nextPriceRecomputeUtc = DateTime.MinValue;
-                        }
-
-                        this.wasRitualWindowOpen = ritualWindowOpen;
-
-                        if (ritualWindowOpen && this.Settings.ShowOverlay)
-                            this.DrawRitualPrices(ritualWindowOffset, currentClipboard);
-                    }
+                    ritualWindowAddr = child76Children[13];
+                    fastChainValid = true;
                 }
+
+                var haveWindow = false;
+                var ritualWindowOpen = false;
+                UiElementBaseOffset ritualWindowOffset = default;
+
+                if (!this.Settings.ForceBfsFallback && fastChainValid &&
+                    this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { ritualWindowAddr }) is UiElementBaseOffset fastOffset)
+                {
+                    ritualWindowOffset = fastOffset;
+                    haveWindow = true;
+                    ritualWindowOpen = UiElementBaseFuncs.IsVisibleChecker(fastOffset.Flags);
+                }
+                else if (this.TryScanRitualWindowThrottled(gameUiAddr, out var scanAddr) &&
+                         this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { scanAddr }) is UiElementBaseOffset scanOffset)
+                {
+                    // Fast chain broke (post-patch); the BFS located the reward grid by signature text.
+                    ritualWindowOffset = scanOffset;
+                    haveWindow = true;
+                    ritualWindowOpen = true; // a grid with reward items was found -> shop is open
+                }
+
+                if (!ritualWindowOpen && this.wasRitualWindowOpen)
+                {
+                    this.alertedItemsThisSession.Clear();
+                    this.sessionStablePriceChaos.Clear();
+                    this.cachedPriceLabels.Clear();
+                    this.nextPriceRecomputeUtc = DateTime.MinValue;
+                }
+
+                this.wasRitualWindowOpen = ritualWindowOpen;
+
+                if (haveWindow && ritualWindowOpen && this.Settings.ShowOverlay)
+                    this.DrawRitualPrices(ritualWindowOffset);
             }
             catch { }
 
@@ -358,7 +376,7 @@ namespace RitualHelper
             }
         }
 
-        private void DrawRitualPrices(UiElementBaseOffset ritualWindowOffset, string currentClipboard)
+        private void DrawRitualPrices(UiElementBaseOffset ritualWindowOffset)
         {
             var fgDraw = ImGui.GetForegroundDrawList();
             var font = ImGui.GetFont();
@@ -380,7 +398,6 @@ namespace RitualHelper
                 return;
             }
 
-            var mousePos = ImGui.GetMousePos();
             var priceLabels = this.cachedPriceLabels;
             priceLabels.Clear();
 
@@ -407,6 +424,9 @@ namespace RitualHelper
                 var internalNameOnly = string.Empty;
                 var fullItemPath = string.Empty;
                 var scoutText = string.Empty;
+                var baseItemName = string.Empty;
+                var artBasename = string.Empty;
+                var itemRarity = Rarity.Normal;
                 List<string>? memoryMods = null;
 
                 if (ptr != IntPtr.Zero)
@@ -422,6 +442,54 @@ namespace RitualHelper
                             itemName = this.GetPrettyName(internalNameOnly, out _);
                         }
 
+                        if (itemInstance.TryGetComponent<Mods>(out var rarityMods))
+                        {
+                            itemRarity = rarityMods.Rarity;
+                        }
+
+                        // Prefer the item's rendered base-type name, read straight from the Base
+                        // component (GameHelper Core). For non-uniques this IS the correct price key
+                        // (e.g. "Greater Orb of Augmentation"). Uniques render only their base type,
+                        // so they're resolved by icon art below instead.
+                        if (itemInstance.TryGetComponent<Base>(out var baseComponent) &&
+                            !string.IsNullOrWhiteSpace(baseComponent.BaseItemName))
+                        {
+                            baseItemName = baseComponent.BaseItemName.Trim();
+                            if (itemRarity != Rarity.Unique)
+                            {
+                                itemName = baseItemName;
+                            }
+                        }
+
+                        // Uniques: resolve the real unique name from the item's icon-art basename.
+                        // Each unique has its own .dds, and the price index is keyed by that same
+                        // basename (poe.ninja/poe2scout IconUrl), so this is unambiguous. (Base type /
+                        // metadata id are shared across uniques, so they can't identify the unique.)
+                        if (itemRarity == Rarity.Unique &&
+                            itemInstance.TryGetComponent<RenderItem>(out var renderItem))
+                        {
+                            artBasename = ExtractArtBasename(renderItem.ResourcePath);
+
+                            // GGG's .dds basename and the price DB disagree on a leading "The"
+                            // (inconsistently, both directions), so try the key with and without it,
+                            // and accept either an icon-map hit or a direct price-index hit.
+                            foreach (var key in ArtKeyVariants(artBasename))
+                            {
+                                if (PoeNinjaPriceFetcher.TryResolveDisplayName(key, out var uniqueFromArt) &&
+                                    !PoeNinjaPriceFetcher.IsGenericLookupName(uniqueFromArt))
+                                {
+                                    itemName = uniqueFromArt;
+                                    break;
+                                }
+
+                                if (PoeNinjaPriceFetcher.HasPriceDataForName(key))
+                                {
+                                    itemName = key;
+                                    break;
+                                }
+                            }
+                        }
+
                         memoryMods = ItemModHelper.GetModLines(itemInstance);
                         if (memoryMods.Count > 0)
                         {
@@ -435,47 +503,32 @@ namespace RitualHelper
 
                 var screenPos = (Vector2)PluginUiElementReflection.UiElementPositionProperty!.GetValue(uiElementObj)!;
                 var size = (Vector2)PluginUiElementReflection.UiElementSizeProperty!.GetValue(uiElementObj)!;
-                var mouseIsHovering = mousePos.X >= screenPos.X && mousePos.X <= screenPos.X + size.X &&
-                                      mousePos.Y >= screenPos.Y && mousePos.Y <= screenPos.Y + size.Y;
 
-                var useClipboardForItem = mouseIsHovering &&
-                    currentClipboard.StartsWith("Item Class:", StringComparison.Ordinal) &&
-                    this.ShouldUseClipboardForItem(
-                        currentClipboard,
-                        internalNameOnly,
-                        fullItemPath,
-                        itemName,
-                        memoryMods);
-
-                if (useClipboardForItem && !string.IsNullOrEmpty(internalNameOnly))
-                {
-                    this.ApplyClipboardHintToItem(currentClipboard, internalNameOnly, ref itemName, ref scoutText);
-                }
-                else if (this.TryGetCachedItemHint(internalNameOnly, out var cachedHint))
-                {
-                    itemName = cachedHint.Name;
-                    scoutText = this.BuildScoutText(cachedHint.Name, cachedHint.BaseType);
-                }
-
-                List<string>? clipboardMods = null;
-                if (useClipboardForItem)
-                {
-                    clipboardMods = ParseClipboardMods(currentClipboard);
-                }
-                else if (this.TryGetCachedItemHint(internalNameOnly, out var hintForMods))
-                {
-                    clipboardMods = hintForMods.Mods;
-                }
-                var mods = ItemModHelper.MergeModLines(memoryMods, clipboardMods);
-
+                var mods = memoryMods;
                 itemName = this.ResolveItemDisplayName(itemName, internalNameOnly);
                 var priceInfo = PoeNinjaPriceFetcher.GetPrice(itemName, mods, internalNameOnly, fullItemPath, scoutText);
-                if (priceInfo == null) continue;
 
-                var priceChaos = this.StabilizeSessionPrice(
-                    internalNameOnly,
-                    priceInfo.PriceChaos,
-                    useClipboardForItem);
+                var diagFontSize = ImGui.GetFontSize() * this.Settings.PriceFontScale * 0.8f;
+                if (priceInfo == null)
+                {
+                    // Only diagnose slots that actually hold an item — empty/stale tiles (e.g. when the
+                    // window is closed but its element still reads visible) have no internal name.
+                    if (this.Settings.DiagnosePricing && !string.IsNullOrEmpty(internalNameOnly))
+                    {
+                        priceLabels.Add(new PriceLabelDraw
+                        {
+                            ValueText = string.Empty,
+                            IconFile = string.Empty,
+                            DebugText = $"{itemRarity} NO PRICE\nbase:{(string.IsNullOrEmpty(baseItemName) ? "<none>" : baseItemName)}\nart:{(string.IsNullOrEmpty(artBasename) ? "<none>" : artBasename)}\nname:{itemName}\nint:{internalNameOnly}",
+                            DebugPos = new Vector2(screenPos.X + 2f, screenPos.Y + 2f),
+                            DebugFontSize = diagFontSize,
+                        });
+                    }
+
+                    continue;
+                }
+
+                var priceChaos = this.StabilizeSessionPrice(internalNameOnly, priceInfo.PriceChaos);
 
                 var (displayValue, displayCurrency) = PoeNinjaPriceFetcher.GetDisplayPrice(
                     new PoeNinjaPrice { PriceChaos = priceChaos },
@@ -520,26 +573,43 @@ namespace RitualHelper
                     ValueText = valueText,
                     TextColor = ImGui.ColorConvertFloat4ToU32(this.Settings.PriceTextColor),
                     FontSize = fontSize,
+                    DebugText = this.Settings.DiagnosePricing
+                        ? $"{itemRarity} OK\nbase:{(string.IsNullOrEmpty(baseItemName) ? "<none>" : baseItemName)}\nart:{(string.IsNullOrEmpty(artBasename) ? "<none>" : artBasename)}\nname:{itemName}\nint:{internalNameOnly}"
+                        : null,
+                    DebugPos = new Vector2(screenPos.X + 2f, screenPos.Y + 2f),
+                    DebugFontSize = diagFontSize,
                 });
             }
 
             this.DrawPriceLabels(fgDraw, font, shadowColor, priceLabels);
-            this.clipboardChangedThisFrame = false;
         }
 
         private void DrawPriceLabels(ImDrawListPtr fgDraw, ImFontPtr font, uint shadowColor, List<PriceLabelDraw> priceLabels)
         {
             foreach (var label in priceLabels)
             {
-                var textPos = label.Pos;
-                fgDraw.AddText(font, label.FontSize, textPos + new Vector2(1f, 1f), shadowColor, label.ValueText);
-                fgDraw.AddText(font, label.FontSize, textPos, label.TextColor, label.ValueText);
-
-                if (this.currencyIcons.TryGet(label.IconFile, out var texPtr, out _, out _))
+                if (!string.IsNullOrEmpty(label.ValueText))
                 {
-                    var iconPos = label.Pos + new Vector2(label.TextWidth + 3f, 0f);
-                    var iconMax = iconPos + new Vector2(label.IconWidth, label.IconHeight);
-                    fgDraw.AddImage(texPtr, iconPos, iconMax);
+                    var textPos = label.Pos;
+                    fgDraw.AddText(font, label.FontSize, textPos + new Vector2(1f, 1f), shadowColor, label.ValueText);
+                    fgDraw.AddText(font, label.FontSize, textPos, label.TextColor, label.ValueText);
+
+                    if (this.currencyIcons.TryGet(label.IconFile, out var texPtr, out _, out _))
+                    {
+                        var iconPos = label.Pos + new Vector2(label.TextWidth + 3f, 0f);
+                        var iconMax = iconPos + new Vector2(label.IconWidth, label.IconHeight);
+                        fgDraw.AddImage(texPtr, iconPos, iconMax);
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(label.DebugText))
+                {
+                    // 0=no-price (red), otherwise ok (green). Distinguished by the "NO PRICE" marker.
+                    var diagColor = label.DebugText.Contains("NO PRICE", StringComparison.Ordinal)
+                        ? 0xFF4040FFu
+                        : 0xFF40FF40u;
+                    fgDraw.AddText(font, label.DebugFontSize, label.DebugPos + new Vector2(1f, 1f), shadowColor, label.DebugText);
+                    fgDraw.AddText(font, label.DebugFontSize, label.DebugPos, diagColor, label.DebugText);
                 }
             }
         }
@@ -553,22 +623,179 @@ namespace RitualHelper
             AlertSoundPlayer.Play(soundType);
         }
 
-        private string? ParseClipboardForItemName(string text)
+        // FALLBACK window finder, used only when the fast index chain is broken (post-patch) or when
+        // ForceBfsFallback is set. The expensive BFS runs ONCE; the found grid address is then reused
+        // every frame for as long as it keeps validating (no errors, still visible, still holds items).
+        // Only when the cached address goes stale do we re-walk the tree (throttled).
+        private bool TryScanRitualWindowThrottled(IntPtr gameUiRoot, out IntPtr gridAddr)
         {
-            if (string.IsNullOrEmpty(text) || !text.StartsWith("Item Class:", StringComparison.Ordinal)) return null;
-            var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            return lines.Length > 2 ? lines[2].Trim() : null;
+            if (this.scannedGridAddr != IntPtr.Zero && this.IsValidRewardGrid(this.scannedGridAddr))
+            {
+                gridAddr = this.scannedGridAddr;
+                return true;
+            }
+
+            // Cached path is gone/invalid (window closed, UI rebuilt, or a read failed): re-discover,
+            // throttled so a closed-window poll doesn't re-walk the tree every frame.
+            this.scannedGridAddr = IntPtr.Zero;
+            var now = DateTime.UtcNow;
+            if (now >= this.nextScanUtc)
+            {
+                this.nextScanUtc = now.AddMilliseconds(750);
+                this.scannedGridAddr = this.FindRitualRewardGrid(gameUiRoot);
+            }
+
+            gridAddr = this.scannedGridAddr;
+            return gridAddr != IntPtr.Zero;
         }
 
-        private string? ParseClipboardBaseType(string text)
+        // Cheap per-frame revalidation of a cached grid address: it must still read as a visible
+        // UiElement that holds at least one item-slot tile (entity at +0x4F8). Any read failure => invalid.
+        private bool IsValidRewardGrid(IntPtr gridAddr)
         {
-            if (string.IsNullOrEmpty(text) || !text.StartsWith("Item Class:", StringComparison.Ordinal)) return null;
-            var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            if (lines.Length <= 3) return null;
+            try
+            {
+                if (this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { gridAddr }) is not UiElementBaseOffset off ||
+                    !UiElementBaseFuncs.IsVisibleChecker(off.Flags) ||
+                    this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { off.ChildrensPtr }) is not IntPtr[] tiles ||
+                    tiles.Length is < 1 or > 16)
+                {
+                    return false;
+                }
 
-            var baseType = lines[3].Trim();
-            if (baseType.StartsWith("--------", StringComparison.Ordinal)) return null;
-            return baseType;
+                foreach (var t in tiles)
+                {
+                    if (this.readIntPtrMethod!.Invoke(this.handleObj, new object[] { t + 0x4F8 }) is IntPtr p && p != IntPtr.Zero)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // BFS the visible UI tree for the ritual-shop signature text, then walk up to the reward grid
+        // (the container whose children are item-slot tiles). Mirrors POE2Radar's ReadRitualRewards.
+        private IntPtr FindRitualRewardGrid(IntPtr gameUiRoot)
+        {
+            if (gameUiRoot == IntPtr.Zero || this.readUiOffsetMethod == null || this.readStdVectorMethod == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            var queue = new Queue<IntPtr>();
+            var visited = new HashSet<IntPtr>();
+            queue.Enqueue(gameUiRoot);
+            var sigEl = IntPtr.Zero;
+
+            while (queue.Count > 0 && visited.Count < 20000)
+            {
+                var el = queue.Dequeue();
+                if (el == IntPtr.Zero || !visited.Add(el)) continue;
+                if (this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { el }) is not UiElementBaseOffset off) continue;
+                if (el != gameUiRoot && !UiElementBaseFuncs.IsVisibleChecker(off.Flags)) continue; // prune invisible subtrees
+
+                if (this.readStdVectorMethod.Invoke(this.handleObj, new object[] { off.ChildrensPtr }) is IntPtr[] kids)
+                {
+                    foreach (var k in kids) queue.Enqueue(k);
+                }
+
+                if (sigEl == IntPtr.Zero && this.MatchesRitualSignature(el))
+                {
+                    sigEl = el;
+                }
+            }
+
+            if (sigEl == IntPtr.Zero) return IntPtr.Zero;
+
+            // Walk up from the signature element; at each ancestor look for the reward grid.
+            var cur = sigEl;
+            for (var up = 0; up < 8; up++)
+            {
+                var grid = this.FindRewardGridChild(cur);
+                if (grid != IntPtr.Zero) return grid;
+                if (this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { cur }) is not UiElementBaseOffset o ||
+                    o.ParentPtr == IntPtr.Zero)
+                {
+                    break;
+                }
+
+                cur = o.ParentPtr;
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private bool MatchesRitualSignature(IntPtr element)
+        {
+            var text = this.ReadUiElementText(element);
+            if (text.Length < 6) return false;
+            foreach (var sig in RitualSignatureTexts)
+            {
+                if (text.Contains(sig, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+
+            return false;
+        }
+
+        // Among a parent's direct children, the one whose own children are mostly item-slot tiles
+        // (item entity at +0x4F8). Returns the best (>=2 tiles) or zero. Excludes the flask bar by
+        // virtue of being reached from the shop-signature ancestor, not the HUD.
+        private IntPtr FindRewardGridChild(IntPtr parent)
+        {
+            if (this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { parent }) is not UiElementBaseOffset poff ||
+                this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { poff.ChildrensPtr }) is not IntPtr[] children)
+            {
+                return IntPtr.Zero;
+            }
+
+            var best = IntPtr.Zero;
+            var bestItems = 0;
+            foreach (var c in children)
+            {
+                if (this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { c }) is not UiElementBaseOffset coff ||
+                    this.readStdVectorMethod.Invoke(this.handleObj, new object[] { coff.ChildrensPtr }) is not IntPtr[] tiles ||
+                    tiles.Length is < 1 or > 16)
+                {
+                    continue;
+                }
+
+                var items = 0;
+                foreach (var t in tiles)
+                {
+                    if (this.readIntPtrMethod!.Invoke(this.handleObj, new object[] { t + 0x4F8 }) is IntPtr p && p != IntPtr.Zero)
+                    {
+                        items++;
+                    }
+                }
+
+                if (items >= 2 && items > bestItems && items * 2 >= tiles.Length)
+                {
+                    best = c;
+                    bestItems = items;
+                }
+            }
+
+            return best;
+        }
+
+        private string ReadUiElementText(IntPtr element)
+        {
+            try
+            {
+                var ws = this.readStdWStringStructMethod!.Invoke(this.handleObj, new object[] { element + UiElementTextOffset });
+                if (ws == null) return string.Empty;
+                return this.readStdWStringMethod!.Invoke(this.handleObj, new object[] { ws }) as string ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private string BuildScoutText(string itemName, string? baseType)
@@ -578,244 +805,46 @@ namespace RitualHelper
             return $"{itemName.Trim()} {baseType.Trim()}";
         }
 
-        private bool ShouldUseClipboardForItem(
-            string clipboard,
-            string internalNameOnly,
-            string fullItemPath,
-            string memoryDisplayName,
-            IReadOnlyList<string>? memoryMods)
-        {
-            if (this.ClipboardBelongsToItem(clipboard, internalNameOnly, fullItemPath, memoryDisplayName, memoryMods))
-            {
-                return true;
-            }
-
-            // Fresh copy (e.g. Ctrl+C / overlay hotkey) while hovering this slot — bind once to this item.
-            return this.clipboardChangedThisFrame &&
-                   (memoryMods == null || memoryMods.Count == 0);
-        }
-
-        private bool ClipboardBelongsToItem(
-            string clipboard,
-            string internalNameOnly,
-            string fullItemPath,
-            string memoryDisplayName,
-            IReadOnlyList<string>? memoryMods)
-        {
-            if (string.IsNullOrWhiteSpace(clipboard) ||
-                !clipboard.StartsWith("Item Class:", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            var parsedName = this.ParseClipboardForItemName(clipboard);
-            if (string.IsNullOrWhiteSpace(parsedName))
-            {
-                return false;
-            }
-
-            var parsedKey = NormalizeItemLookupKey(parsedName);
-            foreach (var candidate in this.BuildDisplayNameCandidates(memoryDisplayName, internalNameOnly))
-            {
-                if (string.Equals(candidate, parsedName, StringComparison.OrdinalIgnoreCase) ||
-                    NormalizeItemLookupKey(candidate) == parsedKey)
-                {
-                    return true;
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(fullItemPath))
-            {
-                foreach (var segment in fullItemPath.Split('/', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    if (NormalizeItemLookupKey(segment) == parsedKey)
-                    {
-                        return true;
-                    }
-
-                    if (PoeNinjaPriceFetcher.TryResolveDisplayName(segment, out var mapped) &&
-                        NormalizeItemLookupKey(mapped) == parsedKey)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            var clipboardMods = ParseClipboardMods(clipboard);
-            if (memoryMods != null && memoryMods.Count > 0 && clipboardMods.Count > 0)
-            {
-                return ScoreModOverlap(memoryMods, clipboardMods) >= 2;
-            }
-
-            return false;
-        }
-
-        private static int ScoreModOverlap(IReadOnlyList<string> left, IReadOnlyList<string> right)
-        {
-            var score = 0;
-            foreach (var leftMod in left)
-            {
-                if (string.IsNullOrWhiteSpace(leftMod))
-                {
-                    continue;
-                }
-
-                var leftNorm = NormalizeModForMatch(leftMod);
-                if (leftNorm.Length < 4)
-                {
-                    continue;
-                }
-
-                foreach (var rightMod in right)
-                {
-                    if (string.IsNullOrWhiteSpace(rightMod))
-                    {
-                        continue;
-                    }
-
-                    var rightNorm = NormalizeModForMatch(rightMod);
-                    if (rightNorm == leftNorm ||
-                        rightNorm.Contains(leftNorm, StringComparison.Ordinal) ||
-                        leftNorm.Contains(rightNorm, StringComparison.Ordinal))
-                    {
-                        score++;
-                        break;
-                    }
-                }
-            }
-
-            return score;
-        }
-
-        private static string NormalizeModForMatch(string mod) =>
-            Regex.Replace(mod.ToLowerInvariant(), @"\s+", " ").Trim();
-
-        private double StabilizeSessionPrice(string internalNameOnly, double priceChaos, bool useClipboardForItem)
+        // Keep the highest price seen this session for a given item so the label doesn't flicker
+        // downward as the source data is re-fetched. Cleared when the ritual window closes.
+        private double StabilizeSessionPrice(string internalNameOnly, double priceChaos)
         {
             if (string.IsNullOrWhiteSpace(internalNameOnly) || priceChaos <= 0)
             {
                 return priceChaos;
             }
 
-            if (useClipboardForItem)
+            if (this.sessionStablePriceChaos.TryGetValue(internalNameOnly, out var stable) && priceChaos < stable)
             {
-                this.sessionStablePriceChaos[internalNameOnly] = priceChaos;
-                return priceChaos;
+                return stable;
             }
 
-            if (this.sessionStablePriceChaos.TryGetValue(internalNameOnly, out var stable))
-            {
-                if (priceChaos < stable)
-                {
-                    return stable;
-                }
-
-                this.sessionStablePriceChaos[internalNameOnly] = priceChaos;
-                return priceChaos;
-            }
-
-            if (this.TryGetCachedItemHint(internalNameOnly, out _))
-            {
-                this.sessionStablePriceChaos[internalNameOnly] = priceChaos;
-            }
-
+            this.sessionStablePriceChaos[internalNameOnly] = priceChaos;
             return priceChaos;
         }
 
-        private void RegisterClipboardHint(string clipboard)
+        // "Art/2DItems/.../Uniques/Deidbell.dds" -> "Deidbell" (last path segment, no extension).
+        // Matches the price index's IconUrl basename key.
+        private static string ExtractArtBasename(string? artPath)
         {
-            var parsedName = this.ParseClipboardForItemName(clipboard);
-            if (string.IsNullOrWhiteSpace(parsedName))
-            {
-                return;
-            }
-
-            var parsedBaseType = this.ParseClipboardBaseType(clipboard) ?? string.Empty;
-            var parsedMods = ParseClipboardMods(clipboard);
-            var hint = (parsedName, parsedBaseType, parsedMods);
-            this.clipboardHintsByDisplayName[parsedName] = hint;
-            this.clipboardHintsByDisplayName[NormalizeItemLookupKey(parsedName)] = hint;
-
-            var scoutText = this.BuildScoutText(parsedName, parsedBaseType);
-            if (!string.IsNullOrWhiteSpace(scoutText))
-            {
-                this.clipboardHintsByDisplayName[scoutText] = hint;
-                this.clipboardHintsByDisplayName[NormalizeItemLookupKey(scoutText)] = hint;
-            }
+            if (string.IsNullOrWhiteSpace(artPath)) return string.Empty;
+            var slash = artPath.LastIndexOfAny(new[] { '/', '\\' });
+            var file = slash >= 0 && slash < artPath.Length - 1 ? artPath[(slash + 1)..] : artPath;
+            var dot = file.LastIndexOf('.');
+            return dot > 0 ? file[..dot] : file;
         }
 
-        private void ApplyClipboardHintToItem(
-            string clipboard,
-            string internalNameOnly,
-            ref string itemName,
-            ref string scoutText)
+        // GGG art basenames and the price DB's keys are inconsistent about a leading "The"
+        // (e.g. art "TheEmptyRoar" vs "DarkDefiler"), so yield the key both with and without it.
+        private static IEnumerable<string> ArtKeyVariants(string artBasename)
         {
-            var parsedName = this.ParseClipboardForItemName(clipboard);
-            var parsedBaseType = this.ParseClipboardBaseType(clipboard);
-            var parsedMods = ParseClipboardMods(clipboard);
-            if (string.IsNullOrWhiteSpace(parsedName))
-            {
-                return;
-            }
-
-            this.UpdateCustomName(internalNameOnly, parsedName);
-            var hint = (parsedName, parsedBaseType ?? string.Empty, parsedMods);
-            this.itemClipboardHints[internalNameOnly] = hint;
-            this.RegisterClipboardHint(clipboard);
-            itemName = parsedName;
-            scoutText = this.BuildScoutText(parsedName, parsedBaseType);
+            if (string.IsNullOrWhiteSpace(artBasename)) yield break;
+            yield return artBasename;
+            if (artBasename.StartsWith("The", StringComparison.OrdinalIgnoreCase) && artBasename.Length > 3)
+                yield return artBasename[3..];
+            else
+                yield return "The" + artBasename;
         }
-
-        private bool TryGetCachedItemHint(
-            string internalNameOnly,
-            out (string Name, string BaseType, List<string> Mods) hint)
-        {
-            if (!string.IsNullOrEmpty(internalNameOnly) &&
-                this.itemClipboardHints.TryGetValue(internalNameOnly, out hint))
-            {
-                return true;
-            }
-
-            hint = default;
-            return false;
-        }
-
-        private IEnumerable<string> BuildDisplayNameCandidates(string currentDisplayName, string internalNameOnly)
-        {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            void track(string? value)
-            {
-                if (!string.IsNullOrWhiteSpace(value))
-                {
-                    seen.Add(value.Trim());
-                }
-            }
-
-            track(currentDisplayName);
-            if (!string.IsNullOrWhiteSpace(internalNameOnly))
-            {
-                track(this.GetPrettyName(internalNameOnly, out _));
-            }
-
-            if (PoeNinjaPriceFetcher.TryResolveDisplayName(internalNameOnly, out var mapped))
-            {
-                track(mapped);
-            }
-
-            foreach (var value in seen)
-            {
-                yield return value;
-                var key = NormalizeItemLookupKey(value);
-                if (!string.IsNullOrEmpty(key))
-                {
-                    yield return key;
-                }
-            }
-        }
-
-        private static string NormalizeItemLookupKey(string value) =>
-            Regex.Replace(value.ToLowerInvariant(), @"[^a-z0-9]+", string.Empty);
 
         private string InferBaseTypeFromMetadataPath(string metadataPath)
         {
@@ -836,47 +865,6 @@ namespace RitualHelper
             return spaced.Trim();
         }
 
-        private static List<string> ParseClipboardMods(string text)
-        {
-            var mods = new List<string>();
-            if (string.IsNullOrEmpty(text) || !text.StartsWith("Item Class:", StringComparison.Ordinal)) return mods;
-
-            var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var inModBlock = false;
-            foreach (var raw in lines)
-            {
-                var line = raw.Trim();
-                if (line.Length == 0) continue;
-                if (line.StartsWith("--------", StringComparison.Ordinal))
-                {
-                    inModBlock = !inModBlock;
-                    continue;
-                }
-
-                if (!inModBlock) continue;
-                if (line.StartsWith("Requirements:", StringComparison.OrdinalIgnoreCase)) break;
-                if (line.StartsWith("Item Level:", StringComparison.OrdinalIgnoreCase)) break;
-                if (line.StartsWith("Quality:", StringComparison.OrdinalIgnoreCase)) break;
-                if (line.StartsWith("Sockets:", StringComparison.OrdinalIgnoreCase)) break;
-                if (line.StartsWith("Corrupted", StringComparison.OrdinalIgnoreCase)) continue;
-                mods.Add(line);
-            }
-
-            return mods;
-        }
-
-        private void UpdateCustomName(string internalName, string newName)
-        {
-            this.EnsureNameCache();
-            TrySplitRuneforgeSuffix(internalName, out var baseInternalName, out _);
-            if (!this.customNamesCache!.TryGetValue(baseInternalName, out var existing) ||
-                !string.Equals(existing, newName, StringComparison.Ordinal))
-            {
-                this.customNamesCache[baseInternalName] = newName;
-                this.SaveNameCache();
-            }
-        }
-
         private void EnsureNameCache()
         {
             if (this.customNamesCache != null) return;
@@ -894,16 +882,6 @@ namespace RitualHelper
             }
 
             this.customNamesCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-
-        private void SaveNameCache()
-        {
-            try
-            {
-                var dictionaryPath = Path.Combine(this.DllDirectory, "item_names.json");
-                File.WriteAllText(dictionaryPath, JsonConvert.SerializeObject(this.customNamesCache!, Formatting.Indented));
-            }
-            catch { }
         }
 
         private static bool TrySplitRuneforgeSuffix(string internalName, out string baseInternalName, out string suffix)
@@ -1150,6 +1128,11 @@ namespace RitualHelper
             public uint TextColor;
             public float FontSize;
             public float TextWidth;
+
+            // Optional pricing-diagnostic overlay (set only when DiagnosePricing is on).
+            public string? DebugText;
+            public Vector2 DebugPos;
+            public float DebugFontSize;
         }
     }
 }

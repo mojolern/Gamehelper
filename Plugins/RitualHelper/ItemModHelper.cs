@@ -49,31 +49,6 @@ namespace RitualHelper
             }
         }
 
-        public static List<string> MergeModLines(IReadOnlyList<string>? memoryMods, IReadOnlyList<string>? clipboardMods)
-        {
-            var merged = new List<string>();
-            if (clipboardMods != null)
-            {
-                foreach (var mod in clipboardMods)
-                {
-                    if (!string.IsNullOrWhiteSpace(mod))
-                        merged.Add(mod);
-                }
-            }
-
-            if (memoryMods == null) return merged;
-
-            foreach (var mod in memoryMods)
-            {
-                if (string.IsNullOrWhiteSpace(mod)) continue;
-                if (merged.Exists(existing => string.Equals(existing, mod, StringComparison.OrdinalIgnoreCase)))
-                    continue;
-                merged.Add(mod);
-            }
-
-            return merged;
-        }
-
         private static void AddModGroup(List<string> lines, List<(string name, (float value0, float value1) values)> mods)
         {
             foreach (var (name, values) in mods)
