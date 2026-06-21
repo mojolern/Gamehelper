@@ -17,8 +17,16 @@ namespace RuneforgeHelper
         public const int SourcePoeNinja = 0;
         public const int SourcePoe2Scout = 1;
 
+        // Bump when cache shape or art-index build changes so stale files are discarded.
+        private const int CacheFormatVersion = 5;
+
         private static readonly string[] NinjaOverviewTypes =
             { "Currency", "UncutGems", "Runes", "Idols", "Verisium", "Expedition" };
+
+        private static readonly string[] NinjaStashTypes =
+        {
+            "UniqueArmours", "UniqueAccessories", "UniqueCharms", "UniqueWeapons",
+        };
 
         private static readonly string[] ScoutCurrencyCategories =
         {
@@ -78,24 +86,34 @@ namespace RuneforgeHelper
         {
             divinePrice = 0;
             if (string.IsNullOrEmpty(artId)) return false;
-            var key = Normalize(artId);
-            if (key.Length == 0) return false;
             lock (this.gate)
             {
-                return this.pricesByArtDivine.TryGetValue(key, out divinePrice);
+                foreach (var variant in ArtKeyVariants(artId))
+                {
+                    var key = Normalize(variant);
+                    if (key.Length > 0 && this.pricesByArtDivine.TryGetValue(key, out divinePrice))
+                        return true;
+                }
             }
+
+            return false;
         }
 
         public bool TryGetNameByArtId(string artId, out string name)
         {
             name = string.Empty;
             if (string.IsNullOrEmpty(artId)) return false;
-            var key = Normalize(artId);
-            if (key.Length == 0) return false;
             lock (this.gate)
             {
-                return this.namesByArt.TryGetValue(key, out name!);
+                foreach (var variant in ArtKeyVariants(artId))
+                {
+                    var key = Normalize(variant);
+                    if (key.Length > 0 && this.namesByArt.TryGetValue(key, out name!))
+                        return true;
+                }
             }
+
+            return false;
         }
 
         public bool TryLoadFromDisk(string filePath, string league, int priceSource, int ttlMinutes)
@@ -105,8 +123,11 @@ namespace RuneforgeHelper
                 if (!File.Exists(filePath)) return false;
                 var content = File.ReadAllText(filePath);
                 var dto = JsonConvert.DeserializeObject<PriceCacheDto>(content);
-                if (dto == null || dto.PricesDivine == null) return false;
-                if (dto.FormatVersion < 3) return false;
+                if (dto == null || dto.PricesDivine == null || dto.FormatVersion != CacheFormatVersion)
+                {
+                    TryDeleteCacheFile(filePath);
+                    return false;
+                }
                 if (dto.PriceSource != priceSource) return false;
                 if (!string.Equals(dto.League, league?.Trim(), StringComparison.OrdinalIgnoreCase)) return false;
 
@@ -130,6 +151,7 @@ namespace RuneforgeHelper
             }
             catch (Exception ex)
             {
+                TryDeleteCacheFile(filePath);
                 lock (this.gate) this.LastError = $"load failed: {ex.Message}";
                 return false;
             }
@@ -211,7 +233,7 @@ namespace RuneforgeHelper
 
                 var dto = new PriceCacheDto
                 {
-                    FormatVersion = 4,
+                    FormatVersion = CacheFormatVersion,
                     PriceSource = priceSource,
                     League = league.Trim(),
                     LastSyncUtc = this.LastSyncUtc,
@@ -252,6 +274,10 @@ namespace RuneforgeHelper
                 if (!string.IsNullOrEmpty(error))
                     failedTypes.Add(error);
             }
+
+            var stashError = await this.FetchNinjaStashOverviewsAsync(league, aggregated, artPrices, artNames, divToEx).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(stashError))
+                failedTypes.Add(stashError);
 
             var partial = failedTypes.Count == 0
                 ? string.Empty
@@ -343,6 +369,135 @@ namespace RuneforgeHelper
             }
 
             return (prices, artPrices, artNames, divToEx, string.Empty);
+        }
+
+        private async Task<string> FetchNinjaStashOverviewsAsync(
+            string league,
+            Dictionary<string, double> aggregated,
+            Dictionary<string, double> artPrices,
+            Dictionary<string, string> artNames,
+            double divToEx)
+        {
+            var leagueParam = Uri.EscapeDataString(league).Replace("%20", "+");
+            var failedTypes = new List<string>();
+
+            foreach (var type in NinjaStashTypes)
+            {
+                var url = $"https://poe.ninja/poe2/api/economy/stash/current/item/overview?league={leagueParam}&type={type}";
+                var error = await this.FetchNinjaStashApi(url, aggregated, artPrices, artNames, divToEx).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(error))
+                    failedTypes.Add(error);
+            }
+
+            return failedTypes.Count == 0 ? string.Empty : $"stash: {string.Join(", ", failedTypes)}";
+        }
+
+        private async Task<string> FetchNinjaStashApi(
+            string url,
+            Dictionary<string, double> aggregated,
+            Dictionary<string, double> artPrices,
+            Dictionary<string, string> artNames,
+            double divToEx)
+        {
+            try
+            {
+                using var resp = await http.GetAsync(url).ConfigureAwait(false);
+                resp.EnsureSuccessStatusCode();
+                var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                var data = JObject.Parse(json);
+
+                var primaryCurrency = data["core"]?["primary"]?.Value<string>() ?? "exalted";
+                if (data["lines"] is not JArray lines)
+                    return string.Empty;
+
+                foreach (var line in lines)
+                {
+                    var name = line["name"]?.Value<string>();
+                    var baseType = line["baseType"]?.Value<string>() ?? string.Empty;
+                    var primary = line["primaryValue"]?.Value<double?>() ?? 0;
+                    if (string.IsNullOrEmpty(name) || primary <= 0)
+                        continue;
+
+                    var divine = this.PrimaryValueToDivine(primary, primaryCurrency, divToEx);
+                    if (divine <= 0)
+                        continue;
+
+                    var cacheKey = BuildStashCacheKey(name, baseType);
+                    this.AddDivinePrice(aggregated, cacheKey, divine);
+                    this.AddDivinePrice(aggregated, name, divine);
+
+                    var icon = line["icon"]?.Value<string>() ?? line["image"]?.Value<string>();
+                    var artBasename = ExtractArtId(icon);
+                    if (!string.IsNullOrEmpty(artBasename))
+                    {
+                        this.AddDivinePrice(artPrices, artBasename, divine);
+                        this.IndexArtName(artNames, artBasename, cacheKey);
+                        this.IndexArtName(artNames, artBasename, name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                return ex.Message;
+            }
+
+            return string.Empty;
+        }
+
+        private double PrimaryValueToDivine(double value, string primaryCurrency, double divToEx)
+        {
+            if (primaryCurrency.Equals("divine", StringComparison.OrdinalIgnoreCase))
+                return value;
+
+            if (divToEx > 0)
+                return value / divToEx;
+
+            return 0;
+        }
+
+        private static string BuildStashCacheKey(string name, string baseType)
+        {
+            if (baseType.Contains("Runeforged", StringComparison.OrdinalIgnoreCase))
+                return $"{name} Runeforged";
+
+            if (baseType.Contains("Runemastered", StringComparison.OrdinalIgnoreCase))
+                return $"{name} Runemastered";
+
+            return name;
+        }
+
+        private void IndexArtName(Dictionary<string, string> artNames, string artBasename, string displayName)
+        {
+            if (string.IsNullOrWhiteSpace(artBasename) || string.IsNullOrWhiteSpace(displayName))
+                return;
+
+            var key = Normalize(artBasename);
+            if (key.Length > 0)
+                artNames[key] = displayName.Trim();
+        }
+
+        private static IEnumerable<string> ArtKeyVariants(string artBasename)
+        {
+            if (string.IsNullOrWhiteSpace(artBasename))
+                yield break;
+
+            yield return artBasename;
+            if (artBasename.StartsWith("The", StringComparison.OrdinalIgnoreCase) && artBasename.Length > 3)
+                yield return artBasename[3..];
+            else
+                yield return "The" + artBasename;
+        }
+
+        private static void TryDeleteCacheFile(string filePath)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+                    File.Delete(filePath);
+            }
+            catch
+            {
+            }
         }
 
         private void MergePrices(Dictionary<string, double> target, Dictionary<string, double> source)
@@ -524,7 +679,7 @@ namespace RuneforgeHelper
 
         private sealed class PriceCacheDto
         {
-            public int FormatVersion { get; set; } = 4;
+            public int FormatVersion { get; set; } = CacheFormatVersion;
             public int PriceSource { get; set; }
             public string League { get; set; } = string.Empty;
             public DateTime LastSyncUtc { get; set; }

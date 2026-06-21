@@ -1,6 +1,14 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.3.13",
+                         "published":  "2026-06-21T18:09:31.3405123Z",
+                         "changelog":  [
+                                           "[update] - RitualHelper: instant pricing without Ctrl+C (Thx Gordin, Sikaka) || [update] - RitualHelper: Sofort-Preise ohne Ctrl+C (Thx Gordin, Sikaka)",
+                                           "[update] - RuneforgeHelper: ninja stash art index and improved price cache || [update] - RuneforgeHelper: Ninja-Stash-Art-Index und verbesserter Preis-Cache"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.10",
                          "published":  "2026-06-20T15:34:50.2171346Z",
                          "changelog":  [
