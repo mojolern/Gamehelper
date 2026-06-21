@@ -49,6 +49,7 @@ namespace FarmTracker
         public bool PauseTimerInTownOrHideout = true;
         public bool PauseTimerWhenGameInBackground;
         public bool HideOverlayWhenGameInBackground = true;
+        /// <summary>Pause map timer (and div/h active time) while the escape menu is open.</summary>
         public bool PauseTimerWhenGamePaused = true;
         public bool CountKillsInTownOrHideout;
 

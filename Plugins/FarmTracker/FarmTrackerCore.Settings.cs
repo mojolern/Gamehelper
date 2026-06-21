@@ -104,7 +104,11 @@ namespace FarmTracker
             ImGui.Checkbox(L("Show profit/h (div/h)", "Profit/h (div/h) anzeigen"), ref this.Settings.OverlayShowProfitPerHour);
             ImGui.Checkbox(L("Overlay icons", "Overlay-Icons"), ref this.Settings.ShowCurrencyIcons);
             ImGui.Checkbox(L("Hide when game in background", "Bei Hintergrund ausblenden"), ref this.Settings.HideOverlayWhenGameInBackground);
-            ImGui.Checkbox(L("Pause timer when game paused (ESC)", "Timer bei ESC pausieren"), ref this.Settings.PauseTimerWhenGamePaused);
+            ImGui.Checkbox(L("Pause map timer when game paused (ESC)", "Map-Timer bei ESC pausieren"),
+                ref this.Settings.PauseTimerWhenGamePaused);
+            ImGuiHelper.ToolTip(L(
+                "Stops the map timer and div/h denominator while the escape menu is open.",
+                "Stoppt Map-Timer und div/h-Nenner solange das ESC-Menue offen ist."));
             ImGui.Checkbox(L("Count kills in town / hideout", "Kills in Stadt / Hideout"), ref this.Settings.CountKillsInTownOrHideout);
 
             if (!FarmMetaArt.HasBridge)

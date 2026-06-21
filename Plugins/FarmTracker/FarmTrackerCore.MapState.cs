@@ -79,6 +79,7 @@ namespace FarmTracker
             }
             else if (this.currentMap != null)
             {
+                this.mapTimerPausedByEsc = false;
                 this.BankMapTime(now);
                 this.FoldInventoryIntoCurrentRun();
                 this.currentMap.IsCurrent = false;
@@ -99,6 +100,43 @@ namespace FarmTracker
             this.currentMap.BankedSeconds += (now - this.mapRunStartUtc.Value).TotalSeconds;
             this.mapRunStartUtc = null;
         }
+
+        /// <summary>
+        ///     While the escape menu is open, bank map time so div/h and the map strip do not
+        ///     count ESC idle (same idea as MapKillCounter's pause-on-ESC).
+        /// </summary>
+        private void UpdateMapTimerEscPause(bool isGamePaused)
+        {
+            if (!this.Settings.PauseTimerWhenGamePaused)
+            {
+                if (!isGamePaused && this.mapTimerPausedByEsc && this.onMapArea && this.currentMap != null
+                    && this.mapRunStartUtc == null)
+                {
+                    this.mapRunStartUtc = DateTime.UtcNow;
+                }
+
+                this.mapTimerPausedByEsc = false;
+                this.wasGamePaused = isGamePaused;
+                return;
+            }
+
+            if (isGamePaused && !this.wasGamePaused && this.onMapArea && this.mapRunStartUtc != null)
+            {
+                this.BankMapTime(DateTime.UtcNow);
+                this.mapTimerPausedByEsc = true;
+            }
+            else if (!isGamePaused && this.wasGamePaused && this.mapTimerPausedByEsc && this.onMapArea
+                     && this.currentMap != null && this.mapRunStartUtc == null)
+            {
+                this.mapRunStartUtc = DateTime.UtcNow;
+                this.mapTimerPausedByEsc = false;
+            }
+
+            this.wasGamePaused = isGamePaused;
+        }
+
+        private bool IsMapTimerPausedByEsc(bool isGamePaused) =>
+            this.Settings.PauseTimerWhenGamePaused && isGamePaused && this.onMapArea && this.mapTimerPausedByEsc;
 
         private void FoldInventoryIntoCurrentRun()
         {

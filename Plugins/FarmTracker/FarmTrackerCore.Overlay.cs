@@ -10,7 +10,7 @@ namespace FarmTracker
         private const float SegmentGap = 14f;
         private const float IconPad = 4f;
 
-        private bool ShouldDrawOverlay(bool isGamePaused, bool isTownOrHideout)
+        private bool ShouldDrawOverlay(bool isTownOrHideout)
         {
             if (this.Settings.OverlayMode == FarmOverlayMode.Hidden)
             {
@@ -23,11 +23,6 @@ namespace FarmTracker
                 {
                     return false;
                 }
-            }
-
-            if (this.Settings.PauseTimerWhenGamePaused && isGamePaused)
-            {
-                return false;
             }
 
             if (this.Settings.OverlayAnchor == FarmOverlayAnchor.ExperienceBar &&
@@ -45,7 +40,7 @@ namespace FarmTracker
             return inGame.GameUi.SkillTreeNodesUiElements.Count > 0;
         }
 
-        private void DrawSlimOverlay(bool isTownOrHideout)
+        private void DrawSlimOverlay(bool isTownOrHideout, bool isGamePaused)
         {
             var mode = this.Settings.OverlayMode;
             var showMap = mode == FarmOverlayMode.MapOnly ||
@@ -55,7 +50,7 @@ namespace FarmTracker
 
             if (showMap && this.onMapArea && !isTownOrHideout)
             {
-                this.DrawMapStrip();
+                this.DrawMapStrip(isGamePaused);
             }
             else if (showSession)
             {
@@ -63,7 +58,7 @@ namespace FarmTracker
             }
         }
 
-        private void DrawMapStrip()
+        private void DrawMapStrip(bool isGamePaused)
         {
             if (!this.TryGetCenteredStripAnchor(out var anchorX, out var anchorY))
             {
@@ -97,6 +92,11 @@ namespace FarmTracker
             }
 
             ImGui.TextUnformatted(FormatElapsed(this.CurrentLiveMapTime()));
+            if (this.IsMapTimerPausedByEsc(isGamePaused))
+            {
+                ImGui.SameLine(0f, IconPad);
+                ImGui.TextDisabled(L("(paused)", "(pausiert)"));
+            }
 
             ImGui.SameLine(0f, SegmentGap);
             this.DrawOverlayProfit(profit, showAltCurrency: false);
