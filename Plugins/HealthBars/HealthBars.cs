@@ -183,12 +183,7 @@ namespace HealthBars
                 return;
             }
 
-            if (Core.States.InGameStateObject.GameUi.SkillTreeNodesUiElements.Count > 0)
-            {
-                return;
-            }
-
-            if (Core.States.InGameStateObject.GameUi.ShouldHideWorldSpaceBars)
+            if (Core.States.InGameStateObject.GameUi.IsAnyLargePanelOpen)
             {
                 return;
             }
@@ -338,7 +333,10 @@ namespace HealthBars
 
             ptr.AddRectFilled(start, end, ImGuiHelper.Color(healthbarConfig.BackgroundColor));
             var (hb_ptr, _, _) = this.textures.GetTexture(this.textureToValidate[0]);
-            var hPercent = hComp.Health.CurrentInPercent();
+
+            // Ward behaves like Life (only lost once HP hits 1), so fold it into the health
+            // bar: a 50 Life / 50 Ward entity reads as a single 100-health pool.
+            var hPercent = CombinedHealthPercent(hComp);
             ptr.AddImage(hb_ptr, start, end - (Vector2.UnitX * healthbarConfig.Scale * (100 - hPercent) / 100f), Vector2.Zero, Vector2.One,
                 (hPercent > this.Settings.CullingStrikeRangePerRarity[rarity] || !healthbarConfig.ShowCullStrike) ?
                 ImGuiHelper.Color(healthbarConfig.HealthbarColor) :
@@ -372,7 +370,7 @@ namespace HealthBars
             if (healthbarConfig.ShowText)
             {
                 ptr.AddText(start - this.fontSize, ImGuiHelper.Color(healthbarConfig.TextColor),
-                    this.healthToHumanReadable(hComp.Health.Current + hComp.EnergyShield.Current));
+                    this.healthToHumanReadable(hComp.Health.Current + hComp.Ward.Current + hComp.EnergyShield.Current));
             }
         }
 
@@ -380,6 +378,19 @@ namespace HealthBars
         {
             this.graduationsThickness = ImGui.GetFontSize() / 9f;
             this.fontSize = new(0f, ImGui.GetFontSize());
+        }
+
+        private static int CombinedHealthPercent(Life life)
+        {
+            // Combine Health and Ward into a single pool (mirrors VitalStruct.CurrentInPercent,
+            // using Unreserved so reserved Health is excluded just like the plain health bar).
+            var total = life.Health.Unreserved + life.Ward.Unreserved;
+            if (total <= 0)
+            {
+                return 0;
+            }
+
+            return (int)Math.Round(100d * (life.Health.Current + life.Ward.Current) / total);
         }
 
         private string healthToHumanReadable(int value)

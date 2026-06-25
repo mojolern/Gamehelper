@@ -1,8 +1,24 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.4.0",
+                         "published":  "2026-06-24T20:55:14.8950384Z",
+                         "changelog":  [
+                                           "Neue Plugins: RunecraftHelper, LootTracker, LootValue, Atlas || New plugins: RunecraftHelper, LootTracker, LootValue, Atlas",
+                                           "RuneforgeHelper, FarmTracker, MapKillCounter entfernt || Removed RuneforgeHelper, FarmTracker, MapKillCounter",
+                                           "Automatische Bereinigung alter Plugin-Ordner beim Start || Automatic cleanup of legacy plugin folders on startup"
+                                       ]
+                     },
+                     {
+                         "version":  "1.3.14",
+                         "published":  "2026-06-23T21:22:05.5287565Z",
+                         "changelog":  [
+                                           "[Plugin] LootValue from Gordin"
+                                       ]
+                     },
+                     {
                          "version":  "1.3.13",
-                         "published":  "2026-06-21T18:45:57.7124041Z",
+                         "published":  "2026-06-21T18:55:57.9094385Z",
                          "changelog":  [
                                            "[update] - RitualHelper: instant pricing without Ctrl+C (Thx Gordin, Sikaka) || [update] - RitualHelper: Sofort-Preise ohne Ctrl+C (Thx Gordin, Sikaka)",
                                            "[update] - RuneforgeHelper: ninja stash art index and improved price cache || [update] - RuneforgeHelper: Ninja-Stash-Art-Index und verbesserter Preis-Cache"

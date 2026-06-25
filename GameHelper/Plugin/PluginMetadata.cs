@@ -1,4 +1,4 @@
-namespace GameHelper.Plugin
+﻿namespace GameHelper.Plugin
 {
     /// <summary>
     ///     Container for plugin metadata.
@@ -6,13 +6,8 @@ namespace GameHelper.Plugin
     internal class PluginMetadata
     {
         /// <summary>
-        ///     Gets or sets a value indicating whether the plugin is active this session.
+        ///     Gets or sets a value indicating whether the plugin is enabled or not.
         /// </summary>
-        public bool Enable { get; set; }
-
-        /// <summary>
-        ///     Gets or sets a value indicating whether the plugin loads automatically on startup.
-        /// </summary>
-        public bool AutoStart { get; set; }
+        public bool Enable { get; set; } = true;
     }
 }

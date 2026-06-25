@@ -30,8 +30,7 @@ namespace GameHelper.RemoteObjects.UiElement
         public override Vector2 Size => new(Core.Process.WindowArea.Width - (Core.GameCull.Value * 2), Core.Process.WindowArea.Height);
 
         /// <summary>
-        ///     Gets the large-map anchor used by Radar (top-left of the map viewport, before shift).
-        ///     Despite the name, this matches upstream GameHelper2 — not the geometric center.
+        ///     Gets the center of the map.
         /// </summary>
         public Vector2 Center => base.Position;
 

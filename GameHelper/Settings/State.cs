@@ -1,4 +1,4 @@
-// <copyright file="State.cs" company="None">
+﻿// <copyright file="State.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -8,7 +8,6 @@ namespace GameHelper.Settings
     using System.IO;
     using ClickableTransparentOverlay;
     using ClickableTransparentOverlay.Win32;
-    using GameHelper.Localization;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteEnums.Entity;
     using Newtonsoft.Json;
@@ -64,12 +63,6 @@ namespace GameHelper.Settings
         public bool HidePerfStatsWhenBg = true;
 
         /// <summary>
-        ///     Gets or sets a value indicating whether to hide the overlay window
-        ///     while Path of Exile is not the foreground application.
-        /// </summary>
-        public bool HideOverlayWhenGameInBackground;
-
-        /// <summary>
         ///     Gets or sets a value indicating wherther to show
         ///     full performance stats window or minimum one.
         /// </summary>
@@ -106,11 +99,6 @@ namespace GameHelper.Settings
         /// </summary>
         public FontGlyphRangeType FontLanguage = FontGlyphRangeType.ChineseSimplifiedCommon;
 
-        /// <summary>
-        ///     Globale Sprache fuer Overlay-Menues und Plugin-Oberflaechen.
-        /// </summary>
-        public OverlayLanguage OverlayLanguage = OverlayLanguage.English;
-
 
         /// <summary>
         ///     Gets the custom glyph range to load from the font texture. This is useful in case
@@ -118,6 +106,16 @@ namespace GameHelper.Settings
         ///     feature.
         /// </summary>
         public string FontCustomGlyphRange = string.Empty;
+
+        /// <summary>
+        ///     Gets a value indicating whether to load the bundled Universal Font instead of the
+        ///     configured <see cref="FontPathName"/>. When enabled, a merged font (DejaVuSans +
+        ///     the configured font + GNU Unifont over the whole BMP) is loaded so text in any
+        ///     language renders across the whole overlay. Off by default (the full-BMP atlas is
+        ///     large to build); <see cref="FontPathName"/>/<see cref="FontSize"/>/<see cref="FontLanguage"/>
+        ///     still apply (the configured font is merged in as the priority for its language).
+        /// </summary>
+        public bool UniversalFont = false;
 
         /// <summary>
         ///     Gets or sets hotKey to show/hide the main menu.
@@ -143,6 +141,12 @@ namespace GameHelper.Settings
         public bool ShowGameUiExplorer = false;
 
         /// <summary>
+        ///     Gets or sets a value indicating whether
+        ///     to show Element Finder or not.
+        /// </summary>
+        public bool ShowElementFinder = false;
+
+        /// <summary>
         ///     Gets or sets a value indicating whether to show
         ///     the performance stats or not.
         /// </summary>
@@ -152,6 +156,13 @@ namespace GameHelper.Settings
         ///     Gets or sets a value indicating whether to show PerformanceProfiler window or not.
         /// </summary>
         public bool ShowPerfProfiler = false;
+
+        /// <summary>
+        ///     Gets or sets a value indicating whether to show the Memory Read Diagnostics
+        ///     window or not. While enabled, failed memory reads are recorded (incl. the ones
+        ///     normally silenced) so torn reads can be distinguished from offset breakage.
+        /// </summary>
+        public bool ShowMemoryDiagnostics = false;
 
         /// <summary>
         ///     Gets or sets a value indicating what big nearby means to the user.
@@ -206,14 +217,9 @@ namespace GameHelper.Settings
         public VK DisableAllRenderingKey = VK.F9;
 
         /// <summary>
-        ///     Gets or sets a value indicating whether the hideout chat-command hotkey is active.
+        ///     Gets or sets hotKey to trigger Element Finder search under cursor.
         /// </summary>
-        public bool HideoutAutomationEnabled = false;
-
-        /// <summary>
-        ///     Gets or sets the hotkey that types <c>/hideout</c> into the game chat.
-        /// </summary>
-        public VK HideoutAutomationKey = VK.F8;
+        public VK ElementFinderHotKey = VK.F10;
 
         /// <summary>
         ///     Gets or sets the important NPC Paths.

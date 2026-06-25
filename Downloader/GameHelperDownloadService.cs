@@ -35,7 +35,17 @@ namespace Downloader
 
               "AutoHotKeyTrigger": { "Enable": false, "AutoStart": false },
 
+              "AuraTracker": { "Enable": true, "AutoStart": true },
+
               "HealthBars": { "Enable": true, "AutoStart": true },
+
+              "Hiveblood": { "Enable": true, "AutoStart": true },
+
+              "LootTracker": { "Enable": true, "AutoStart": true },
+
+              "LootValue": { "Enable": true, "AutoStart": true },
+
+              "PlayerBuffBar": { "Enable": true, "AutoStart": true },
 
               "PreloadAlert": { "Enable": false, "AutoStart": false },
 
@@ -43,21 +53,11 @@ namespace Downloader
 
               "RitualHelper": { "Enable": true, "AutoStart": true },
 
-              "RuneforgeHelper": { "Enable": true, "AutoStart": true },
+              "RunecraftHelper": { "Enable": true, "AutoStart": true },
 
               "SekhemaHelper": { "Enable": true, "AutoStart": true },
 
-              "AuraTracker": { "Enable": true, "AutoStart": true },
-
-              "MapKillCounter": { "Enable": true, "AutoStart": true },
-
-              "PlayerBuffBar": { "Enable": true, "AutoStart": true },
-
-              "SimpleBars": { "Enable": false, "AutoStart": false },
-
-              "Hiveblood": { "Enable": true, "AutoStart": true },
-
-              "FarmTracker": { "Enable": true, "AutoStart": true }
+              "SimpleBars": { "Enable": false, "AutoStart": false }
 
             }
 
@@ -74,8 +74,6 @@ namespace Downloader
         [
 
             "GameHelper.exe",
-
-            "GameHelper.App.exe",
 
             "AsmResolver.dll",
 

@@ -1,0 +1,19 @@
+﻿{
+    "_comment":  "mordWraith = eigene Plugins, upstream = externe Repos. Gordin-Plugins (Radar, HealthBars usw.) kommen via sync-gordin.ps1.",
+    "mordWraith":  {
+                       "AuraTracker":  "MordWraith/AuraTracker",
+                       "AmanamuVoidAlert":  "MordWraith/AmanamuVoidAlert",
+                       "Autopot":  "MordWraith/Autopot",
+                       "Hiveblood":  "MordWraith/Hiveblood",
+                       "PlayerBuffBar":  "MordWraith/PlayerBuffBar",
+                       "RitualHelper":  "MordWraith/RitualHelper",
+                       "SimpleBars":  "MordWraith/SimpleBars"
+                   },
+    "upstream":  {
+                     "Atlas":  "yokkenUA/Atlas",
+                     "LootTracker":  "yokkenUA/LootTracker",
+                     "RunecraftHelper":  "yokkenUA/RunecraftHelper",
+                     "SekhemaHelper":  "yokkenUA/SekhemaHelper",
+                     "StashValue":  "zx0CF1/StashValue"
+                 }
+}

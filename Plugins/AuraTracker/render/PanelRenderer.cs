@@ -7,7 +7,6 @@ using AuraTracker.util;
 using GameHelper.RemoteEnums;
 using GameHelper.Utils;
 using ImGuiNET;
-using static AuraTracker.AuraTrackerLocalization;
 
 namespace AuraTracker.render;
 
@@ -37,7 +36,7 @@ internal sealed class PanelRenderer
         string headerText = string.Empty;
         if (showHeader)
         {
-            headerText = L("TOTAL DPS ", "GESAMT-DPS ") + NumberFormatter.Format((long)totalDps) + " ";
+            headerText = "TOTAL DPS " + NumberFormatter.Format((long)totalDps) + " ";
             headerHeight = ImGui.CalcTextSize(headerText).Y + 2f;
         }
 
@@ -142,7 +141,7 @@ internal sealed class PanelRenderer
             if (settings.ShowDps)
             {
                 float dpsValue = dpsMap.TryGetValue(snapshot.Entity.Id, out var d) ? d : 0f;
-                string dpsText = L("DPS ", "DPS ") + NumberFormatter.Format((long)MathF.Max(0f, dpsValue));
+                string dpsText = "DPS " + NumberFormatter.Format((long)MathF.Max(0f, dpsValue));
                 var size = ImGui.CalcTextSize(dpsText);
                 var pos = new Vector2(barTopLeft.X + contentWidth - size.X - 4f, barTopLeft.Y + (settings.BarSize.Y - size.Y) * 0.5f);
 

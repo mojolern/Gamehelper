@@ -7,7 +7,6 @@ namespace Hiveblood
     using System.Numerics;
     using System.Runtime.InteropServices;
     using GameHelper;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteObjects.UiElement;
@@ -70,73 +69,68 @@ namespace Hiveblood
         public override void DrawSettings()
         {
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.92f, 0.2f, 1f));
-            ImGui.TextWrapped(L(
-                "Tracks Hiveblood: syncs from Genesis Tree (+ Breach popups). Visit the tree once to calibrate.",
-                "Verfolgt Hiveblood: Sync am Genesis Tree (+ Breach-Popups). Einmal am Tree kalibrieren."));
+            ImGui.TextWrapped(
+                "Tracks Hiveblood: syncs from Genesis Tree (+ Breach popups). Visit the tree once to calibrate.");
             ImGui.PopStyleColor();
 
             ImGui.Separator();
-            ImGui.Checkbox(L("Only when inventory is open", "Nur bei offenem Inventar"), ref this.Settings.ShowOnlyWithInventory);
-            ImGui.Checkbox(L("Also show when inventory is closed", "Auch bei geschlossenem Inventar"), ref this.Settings.ShowAlways);
-            ImGui.SliderFloat(L("Font scale", "Schriftgroesse"), ref this.Settings.OverlayFontScale, 0.75f, 1.6f, "%.2f");
+            ImGui.Checkbox("Only when inventory is open", ref this.Settings.ShowOnlyWithInventory);
+            ImGui.Checkbox("Also show when inventory is closed", ref this.Settings.ShowAlways);
+            ImGui.SliderFloat("Font scale", ref this.Settings.OverlayFontScale, 0.75f, 1.6f, "%.2f");
 
             var anchorIndex = (int)this.Settings.OverlayAnchor;
             if (ImGui.Combo(
-                    L("Position anchor", "Positions-Anker"),
+                    "Position anchor",
                     ref anchorIndex,
-                    $"{L("Inventory top-left", "Inventar oben links")}\0" +
-                    $"{L("Inventory bottom (near gold)", "Inventar unten (nahe Gold)")}\0" +
-                    $"{L("Custom screen position", "Eigene Bildschirmposition")}\0"))
+                    "Inventory top-left\0" +
+                    "Inventory bottom (near gold)\0" +
+                    "Custom screen position\0"))
             {
                 this.Settings.OverlayAnchor = (HivebloodOverlayAnchor)anchorIndex;
             }
 
             ImGui.DragFloat2(
-                L("Offset from anchor (px)", "Offset vom Anker (px)"),
+                "Offset from anchor (px)",
                 ref this.Settings.OverlayOffset,
                 1f,
                 -400f,
                 400f,
                 "%.0f");
-            ImGuiHelper.ToolTip(L(
-                "Bottom anchor: left edge of the inventory panel, just above the gold line. Drag X/Y to fine-tune.",
-                "Unten-Anker: linke Kante des Inventars, knapp ueber der Gold-Zeile. X/Y zum Feintuning."));
+            ImGuiHelper.ToolTip(
+                "Bottom anchor: left edge of the inventory panel, just above the gold line. Drag X/Y to fine-tune.");
 
             ImGui.Checkbox(
-                L("Show position dummy (drag, then disable)", "Positions-Dummy anzeigen (ziehen, dann aus)"),
+                "Show position dummy (drag, then disable)",
                 ref this.Settings.ShowPositionDummy);
-            ImGuiHelper.ToolTip(L(
-                "Shows a draggable preview in-game and saves a fixed screen position. Switches to custom screen position.",
-                "Zeigt eine verschiebbare Vorschau im Spiel und speichert eine feste Bildschirmposition. Wechselt zur eigenen Bildschirmposition."));
+            ImGuiHelper.ToolTip(
+                "Shows a draggable preview in-game and saves a fixed screen position. Switches to custom screen position.");
 
             if (this.Settings.ShowPositionDummy ||
                 this.Settings.OverlayAnchor == HivebloodOverlayAnchor.CustomScreen)
             {
                 ImGui.DragFloat2(
-                    L("Screen position (px)", "Bildschirmposition (px)"),
+                    "Screen position (px)",
                     ref this.Settings.OverlayScreenPosition,
                     1f,
                     0f,
                     4000f,
                     "%.0f");
             }
-            ImGui.ColorEdit4(L("Text color", "Textfarbe"), ref this.Settings.TextColor);
-            ImGui.Checkbox(L("Warn near cap (100,000)", "Warnung nahe Cap (100.000)"), ref this.Settings.WarnNearCap);
-            ImGui.SliderInt(L("Warn from amount", "Warnung ab Betrag"), ref this.Settings.WarnThreshold, 80_000, 100_000);
-            ImGuiHelper.ToolTip(L(
-                "Above the threshold the overlay text turns orange-red and blinks. It is also shown while the inventory is closed (at the last in-inventory position).",
-                "Ueber dem Schwellenwert wird der Text orange-rot und blinkt. Auch bei geschlossenem Inventar sichtbar (letzte Position am Inventar)."));
-            ImGui.Checkbox(L("Show gains since last tree sync", "Gewinn seit letztem Tree-Sync"), ref this.Settings.ShowSessionGains);
-            ImGui.Checkbox(L("Debug status line", "Debug-Statuszeile"), ref this.Settings.DebugStatusLine);
-            ImGui.SliderInt(L("UI scan interval (ms)", "UI-Scan-Intervall (ms)"), ref this.Settings.ScanIntervalMs, 150, 1000);
-            ImGuiHelper.ToolTip(L(
-                "How often the plugin reads the game UI tree. Lower values react faster but use more CPU (default 300).",
-                "Wie oft der UI-Baum gelesen wird. Niedrigere Werte = schneller, aber mehr CPU (Standard 300)."));
+            ImGui.ColorEdit4("Text color", ref this.Settings.TextColor);
+            ImGui.Checkbox("Warn near cap (100,000)", ref this.Settings.WarnNearCap);
+            ImGui.SliderInt("Warn from amount", ref this.Settings.WarnThreshold, 80_000, 100_000);
+            ImGuiHelper.ToolTip(
+                "Above the threshold the overlay text turns orange-red and blinks. It is also shown while the inventory is closed (at the last in-inventory position).");
+            ImGui.Checkbox("Show gains since last tree sync", ref this.Settings.ShowSessionGains);
+            ImGui.Checkbox("Debug status line", ref this.Settings.DebugStatusLine);
+            ImGui.SliderInt("UI scan interval (ms)", ref this.Settings.ScanIntervalMs, 150, 1000);
+            ImGuiHelper.ToolTip(
+                "How often the plugin reads the game UI tree. Lower values react faster but use more CPU (default 300).");
 
             ImGui.Separator();
             this.DrawStatusBlock();
 
-            if (ImGui.Button(L("Reset tracker", "Tracker zuruecksetzen")))
+            if (ImGui.Button("Reset tracker"))
             {
                 this.Settings.EstimatedAmount = 0;
                 this.Settings.HasSyncedOnce = false;
@@ -147,7 +141,7 @@ namespace Hiveblood
             }
 
             ImGui.SameLine();
-            if (ImGui.Button(L("Save now", "Jetzt speichern")))
+            if (ImGui.Button("Save now"))
             {
                 this.FlushPendingTrackerSave(force: true);
                 this.SaveSettings();
@@ -250,7 +244,7 @@ namespace Hiveblood
                     this.recentGainKeys.Clear();
                     changed = true;
                     treeSyncedThisFrame = true;
-                    this.lastStatus = L($"Synced from Genesis Tree: {total:N0}", $"Genesis Tree Sync: {total:N0}");
+                    this.lastStatus = $"Synced from Genesis Tree: {total:N0}";
                 }
             }
 
@@ -276,7 +270,7 @@ namespace Hiveblood
                 }
 
                 changed = true;
-                this.lastStatus = L($"+{gain:N0} Hiveblood", $"+{gain:N0} Hiveblood");
+                this.lastStatus = $"+{gain:N0} Hiveblood";
             }
 
             if (changed)
@@ -406,7 +400,7 @@ namespace Hiveblood
                 ImDrawFlags.None,
                 1.5f);
 
-            var hint = L("Drag to move. Disable dummy in settings when done.", "Ziehen zum Verschieben. Dummy danach in Einstellungen aus.");
+            var hint = "Drag to move. Disable dummy in settings when done.";
             var hintSize = ImGui.CalcTextSize(hint);
             var hintPos = new Vector2(pos.X, pos.Y - hintSize.Y - 6f);
             fg.AddText(hintPos + Vector2.One, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.9f)), hint);
@@ -455,16 +449,14 @@ namespace Hiveblood
             line2 = null;
             if (!this.Settings.HasSyncedOnce)
             {
-                line1 = L("Hiveblood: visit Genesis Tree", "Hiveblood: Genesis Tree besuchen");
+                line1 = "Hiveblood: visit Genesis Tree";
                 return;
             }
 
             line1 = $"Hiveblood: {this.Settings.EstimatedAmount:N0}";
             if (this.Settings.ShowSessionGains && this.Settings.SessionGainSinceSync > 0)
             {
-                line2 = L(
-                    $"(+{this.Settings.SessionGainSinceSync:N0} since tree)",
-                    $"(+{this.Settings.SessionGainSinceSync:N0} seit Tree)");
+                line2 = $"(+{this.Settings.SessionGainSinceSync:N0} since tree)";
             }
         }
 
@@ -543,22 +535,20 @@ namespace Hiveblood
 
         private void DrawStatusBlock()
         {
-            ImGui.TextDisabled(L("Tracker", "Tracker"));
+            ImGui.TextDisabled("Tracker");
             ImGui.BulletText(this.Settings.HasSyncedOnce
-                ? L($"Estimate: {this.Settings.EstimatedAmount:N0}", $"Schaetzung: {this.Settings.EstimatedAmount:N0}")
-                : L("Not calibrated yet", "Noch nicht kalibriert"));
+                ? $"Estimate: {this.Settings.EstimatedAmount:N0}"
+                : "Not calibrated yet");
             if (this.Settings.LastTreeSyncUtc != DateTime.MinValue)
             {
-                ImGui.BulletText(L(
-                    $"Last tree sync: {this.Settings.LastTreeSyncUtc.ToLocalTime():g}",
-                    $"Letzter Tree-Sync: {this.Settings.LastTreeSyncUtc.ToLocalTime():g}"));
+                ImGui.BulletText(
+                    $"Last tree sync: {this.Settings.LastTreeSyncUtc.ToLocalTime():g}");
             }
 
             if (this.Settings.SessionGainSinceSync > 0)
             {
-                ImGui.BulletText(L(
-                    $"Gains since sync: +{this.Settings.SessionGainSinceSync:N0}",
-                    $"Gewinn seit Sync: +{this.Settings.SessionGainSinceSync:N0}"));
+                ImGui.BulletText(
+                    $"Gains since sync: +{this.Settings.SessionGainSinceSync:N0}");
             }
 
             if (!string.IsNullOrEmpty(this.lastStatus))
@@ -602,8 +592,6 @@ namespace Hiveblood
 
             return basePos + this.Settings.OverlayOffset;
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();

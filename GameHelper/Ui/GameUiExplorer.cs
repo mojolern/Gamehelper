@@ -284,6 +284,17 @@ namespace GameHelper.Ui
                             {
                                 ImGuiHelper.DrawDisabledButton($"Go to parent##{i}");
                             }
+
+                            // --- Recursive child tree ---
+                            if (current.Children.Count > 0)
+                            {
+                                ImGui.Separator();
+                                ImGui.Text("Children (recursive):");
+                                for (var j = 0; j < current.Children.Count; j++)
+                                {
+                                    RenderChildNode($"##child_{i}", current.Children[j], j);
+                                }
+                            }
                         }
 
                         if (!isRequired)
@@ -317,6 +328,53 @@ namespace GameHelper.Ui
             public string CurrentChildPreview;
             public UiElementBase Element;
             public List<UiElementBase> Children;
+        }
+
+        private static void RenderChildNode(string idPrefix, UiElementBase element, int childIndex = -1)
+        {
+            var idxStr = childIndex >= 0 ? $"[{childIndex}] " : string.Empty;
+            var label = $"{idxStr}{element.Address.ToInt64():X} [{element.Position.X:F0},{element.Position.Y:F0} {element.Size.X:F0}x{element.Size.Y:F0}]";
+            if (element.IsVisible)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, VisibleUiElementColor);
+            }
+
+            var opened = ImGui.TreeNode($"{idPrefix}##{element.Address.ToInt64():X}", label);
+            if (element.IsVisible)
+            {
+                ImGui.PopStyleColor();
+            }
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGuiHelper.DrawRect(element.Position, element.Size, 255, 255, 0);
+            }
+
+            if (opened)
+            {
+                if (ImGui.Button($"Explore##{element.Address.ToInt64():X}"))
+                {
+                    AddUiElement(element);
+                }
+
+                ImGui.SameLine();
+                ImGui.Text($"Pos: {element.Position}  Size: {element.Size}");
+                ImGui.Text($"Vis: {element.IsVisible}  Children: {element.TotalChildrens}");
+
+                if (element.TotalChildrens > 0)
+                {
+                    for (var i = 0; i < element.TotalChildrens; i++)
+                    {
+                        var child = element[i];
+                        if (child != null)
+                        {
+                            RenderChildNode($"{idPrefix}_{i}", child, i);
+                        }
+                    }
+                }
+
+                ImGui.TreePop();
+            }
         }
     }
 }

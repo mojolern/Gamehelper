@@ -209,6 +209,14 @@ $migrationMessage = @(
     "Auto-update works up to v$MaxAutoUpdateVersion. From v$MigrationTargetVersion onward, install manually via GameHelperDownloader.exe or the full ZIP from GitHub. || Auto-Update funktioniert bis v$MaxAutoUpdateVersion. Ab v$MigrationTargetVersion bitte manuell per GameHelperDownloader.exe oder ZIP von GitHub installieren."
 ) -join ''
 
+# Ordner, die beim Update aus bestehenden Installationen entfernt werden sollen.
+# Nur Plugins\<Name> erlaubt (wird in UpdateService validiert).
+$RemoveFolders = @(
+    "Plugins\RuneforgeHelper",
+    "Plugins\FarmTracker",
+    "Plugins\MapKillCounter"
+)
+
 if ($LegacyManifest) {
     Write-Host "  Manifest: legacy per-file (+ Migrationshinweis fuer v$MigrationTargetVersion)" -ForegroundColor DarkYellow
     $manifest = [ordered]@{
@@ -216,6 +224,7 @@ if ($LegacyManifest) {
         published = $publishedAt
         changelog = @($Changelog)
         distribution = "legacy"
+        remove = $RemoveFolders
         files = $publishFiles
         migration = [ordered]@{
             manualInstallVersion = $MigrationTargetVersion
@@ -235,6 +244,7 @@ else {
         published = $publishedAt
         changelog = @($Changelog)
         distribution = "zip"
+        remove = $RemoveFolders
         package = [ordered]@{
             name = $zipName
             hash = $zipHash

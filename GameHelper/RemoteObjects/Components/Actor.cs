@@ -6,7 +6,6 @@ namespace GameHelper.RemoteObjects.Components
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
     using GameHelper.Utils;
     using GameOffsets.Objects.Components;
     using GameOffsets.Objects.FilesStructures;
@@ -18,30 +17,79 @@ namespace GameHelper.RemoteObjects.Components
     /// </summary>
     public class Actor : ComponentBase
     {
+        // private Dictionary<IntPtr, VaalSoulStructure> ActiveSkillsVaalSouls { get; } = new();
+
         private Dictionary<uint, ActiveSkillCooldown> ActiveSkillCooldowns { get; } = new();
 
+        /// <summary>
+        ///     Initializes a new instance of the <see cref="Actor" /> class.
+        /// </summary>
+        /// <param name="address">address of the <see cref="Actor" /> component.</param>
         public Actor(IntPtr address)
             : base(address) { }
 
+        /// <summary>
+        ///     Gets a value indicating what the player is doing.
+        /// </summary>
         public Animation Animation { get; private set; }
 
+        /// <summary>
+        ///     Gets the details of all known Active Skills.
+        /// </summary>
         public Dictionary<string, ActiveSkillDetails> ActiveSkills { get; } = new();
 
+        /// <summary>
+        ///     Gets a value indicating if the skill can be used or not.
+        /// </summary>
         public HashSet<string> IsSkillUsable { get; } = new();
 
+        /// <summary>
+        ///     Gets the "command minion" skills available on this player's summoned minions,
+        ///     keyed by skill name (e.g. "KnifeThrow"). The value is <c>true</c> when the command
+        ///     is usable on at least one summoned minion (i.e. that minion has it off cooldown).
+        ///     These commands carry their cooldown on the minion, not the player, so they never
+        ///     appear in <see cref="IsSkillUsable" />. Only populated for the player's own actor.
+        /// </summary>
         public Dictionary<string, bool> MinionCommandSkills { get; } = new();
 
+        /// <summary>
+        ///     Gets the names of <see cref="MinionCommandSkills" /> that are currently usable on at
+        ///     least one summoned minion. Parallels <see cref="IsSkillUsable" /> for minion commands.
+        /// </summary>
         public HashSet<string> UsableMinionCommandSkills { get; } = new();
 
+        /// <summary>
+        ///     Gets the number of entities deployed by this entity, keyed by DeployedObjectType id.
+        ///     Index it with a type id; absent ids read as 0. PoE2 uses large (dat-row) type ids, so
+        ///     this is dictionary-backed rather than a fixed array.
+        /// </summary>
         public DeployedObjectCounter DeployedEntities { get; } = new();
 
+        /// <summary>
+        ///     Converts the <see cref="Actor" /> class data to ImGui.
+        /// </summary>
         internal override void ToImGui()
         {
             base.ToImGui();
             ImGui.Text($"AnimationId: 0x{(int)this.Animation:X}, Animation: {this.Animation}");
+            // if (ImGui.TreeNode("Vaal Souls"))
+            // {
+            //     foreach(var (skillNamePtr, skillDetails) in this.ActiveSkillsVaalSouls)
+            //     {
+            //         if (ImGui.TreeNode($"{skillNamePtr.ToInt64():X}"))
+            //         {
+            //             ImGui.Text($"Required Souls: {skillDetails.RequiredSouls}");
+            //             ImGui.Text($"Current Souls: {skillDetails.CurrentSouls}");
+            //             ImGui.TreePop();
+            //         }
+            //     }
+            //
+            //     ImGui.TreePop();
+            // }
 
             if (ImGui.TreeNode("Cooldowns"))
             {
+                // Map each skill key to its name so cooldown entries can show "Name (key)".
                 var cooldownSkillNames = new Dictionary<uint, string>();
                 foreach (var (skillName, details) in this.ActiveSkills)
                 {
@@ -92,8 +140,15 @@ namespace GameHelper.RemoteObjects.Components
                         ImGuiHelper.IntPtrToImGui("Granted Effects Ptr", skilldetails.GrantedEffectsPerLevelDatRow);
                         ImGuiHelper.IntPtrToImGui($"Active Skills Ptr", skilldetails.ActiveSkillsDatPtr);
                         ImGuiHelper.IntPtrToImGui("Granted Effect Stat Sets Per Level Ptr", skilldetails.GrantedEffectStatSetsPerLevelDatRow);
+                        //ImGui.Text($"Can be used with weapons: {skilldetails.CanBeUsedWithWeapon}");
+                        //ImGui.Text($"Can not be used: {skilldetails.CannotBeUsed}");
+                        //ImGui.Text($"Current Vaal Soul (-1 if not vaal skill): {skilldetails.CurrentVaalSouls}");
+                        //ImGui.Text($"Unknown0: {skilldetails.UnknownByte0}");
+                        //ImGui.Text($"Unknown1: {skilldetails.UnknownByte1}");
                         ImGui.Text($"Total Uses: {skilldetails.TotalUses}");
                         ImGui.Text($"Cooldown Time (ms): {skilldetails.TotalCooldownTimeInMs}");
+                        //ImGui.Text($"Souls per use: {skilldetails.SoulsPerUse}");
+                        //ImGui.Text($"Total Vaal Uses: {skilldetails.TotalVaalUses}");
                         ImGui.TreePop();
                     }
                 }
@@ -122,21 +177,6 @@ namespace GameHelper.RemoteObjects.Components
                 ImGui.TreePop();
             }
 
-            if (ImGui.TreeNode("Minion command skills"))
-            {
-                if (this.MinionCommandSkills.Count == 0)
-                {
-                    ImGui.TextWrapped("Empty — summon minions with command skills while in-game.");
-                }
-
-                foreach (var (name, usable) in this.MinionCommandSkills.OrderBy(static pair => pair.Key))
-                {
-                    ImGui.Text($"{name}: {(usable ? "usable" : "on cooldown")}");
-                }
-
-                ImGui.TreePop();
-            }
-
             if (ImGui.TreeNode("Minion Cooldowns"))
             {
                 ImGui.TextWrapped("Command skills grouped by minion. Each line: skill name, cooldown " +
@@ -157,6 +197,8 @@ namespace GameHelper.RemoteObjects.Components
 
                     if (ImGui.TreeNode($"{entity.Path}##cd{entity.Id}"))
                     {
+                        // Resolve each cooldown's skill name from this minion's active skills (matched
+                        // by the minion's own key, which is internally consistent within one entity).
                         var keyToName = new Dictionary<uint, string>();
                         var minionData = cdReader.ReadMemory<ActorOffset>(minionActor.Address);
                         var minionSkills = cdReader.ReadStdVector<ActiveSkillStructure>(minionData.ActiveSkillsPtr);
@@ -195,6 +237,7 @@ namespace GameHelper.RemoteObjects.Components
             }
         }
 
+        /// <inheritdoc />
         protected override void UpdateData(bool hasAddressChanged)
         {
             var reader = Core.Process.Handle;
@@ -204,6 +247,11 @@ namespace GameHelper.RemoteObjects.Components
             this.IsSkillUsable.Clear();
             this.ActiveSkills.Clear();
             this.ActiveSkillCooldowns.Clear();
+            // var skillsvaalsouls = reader.ReadStdVector<VaalSoulStructure>(data.VaalSoulsPtr);
+            // for (var i = 0; i < skillsvaalsouls.Length; i++)
+            // {
+            //     this.ActiveSkillsVaalSouls[skillsvaalsouls[i].ActiveSkillsDatPtr] = skillsvaalsouls[i];
+            // }
 
             var cooldowns = reader.ReadStdVector<ActiveSkillCooldown>(data.CooldownsPtr);
             for (var i = 0; i < cooldowns.Length; i++)
@@ -218,25 +266,34 @@ namespace GameHelper.RemoteObjects.Components
                 if (skillDetails.GrantedEffectsPerLevelDatRow == IntPtr.Zero ||
                     (skillDetails.UnknownIdAndEquipmentInfo >> 0x10) < 0x8000)
                 {
-                    continue;
+                    // No usecase for these skills.
+                    // this.ActiveSkills[i.ToString()] = skillDetails;
                 }
+                else
+                {
+                    (var name, skillDetails.ActiveSkillsDatPtr) = ((string, IntPtr))Core.GgpkObjectCache.
+                        AddOrGetExisting(skillDetails.GrantedEffectsPerLevelDatRow, (key) =>
+                        {
+                            return (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key);
+                        });
 
-                (var name, skillDetails.ActiveSkillsDatPtr) = ((string, IntPtr))Core.GgpkObjectCache.
-                    AddOrGetExisting(skillDetails.GrantedEffectsPerLevelDatRow, (key) =>
+                    // skillDetails.CurrentVaalSouls = -1;
+                    var cannotbeused = false;
+                    if (this.ActiveSkillCooldowns.TryGetValue(skillDetails.UnknownIdAndEquipmentInfo, out var cooldownInfo))
                     {
-                        return (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key);
-                    });
+                        cannotbeused |= cooldownInfo.CannotBeUsed();
+                    }
+                    // else if (this.ActiveSkillsVaalSouls.TryGetValue(skillDetails.ActiveSkillsDatPtr, out var vaalSoulInfo))
+                    // {
+                    //     skillDetails.CurrentVaalSouls = vaalSoulInfo.CurrentSouls;
+                    //     cannotbeused |= vaalSoulInfo.CannotBeUsed();
+                    // }
 
-                var cannotbeused = false;
-                if (this.ActiveSkillCooldowns.TryGetValue(skillDetails.UnknownIdAndEquipmentInfo, out var cooldownInfo))
-                {
-                    cannotbeused |= cooldownInfo.CannotBeUsed();
-                }
-
-                this.ActiveSkills[name] = skillDetails;
-                if (!cannotbeused)
-                {
-                    this.IsSkillUsable.Add(name);
+                    this.ActiveSkills[name] = skillDetails;
+                    if (!cannotbeused)
+                    {
+                        this.IsSkillUsable.Add(name);
+                    }
                 }
             }
 
@@ -250,6 +307,13 @@ namespace GameHelper.RemoteObjects.Components
             this.UpdateMinionCommandSkills(deployedEntities);
         }
 
+        /// <summary>
+        ///     Aggregates the "command minion" skills off the player's summoned minions into
+        ///     <see cref="MinionCommandSkills" /> / <see cref="UsableMinionCommandSkills" />. Only the
+        ///     player's own actor scans (gated on the owner being the current player); other actors
+        ///     just clear their (empty) collections cheaply.
+        /// </summary>
+        /// <param name="deployedEntities">the deployed-entity array already read for this actor.</param>
         private void UpdateMinionCommandSkills(DeployedEntityStructure[] deployedEntities)
         {
             this.MinionCommandSkills.Clear();
@@ -290,6 +354,12 @@ namespace GameHelper.RemoteObjects.Components
             }
         }
 
+        /// <summary>
+        ///     Reads this (minion) actor's "command minion" skills (keys in the <c>0x40000000</c>
+        ///     range) and folds them into <paramref name="aggregate" /> by name, OR-ing usability so
+        ///     a command counts as usable when any minion has it off cooldown.
+        /// </summary>
+        /// <param name="aggregate">player-level name -> usable map to add to.</param>
         private void CollectCommandSkills(Dictionary<string, bool> aggregate)
         {
             var reader = Core.Process.Handle;
@@ -304,12 +374,23 @@ namespace GameHelper.RemoteObjects.Components
 
                 var skillDetails = reader.ReadMemory<ActiveSkillDetails>(skills[i].ActiveSkillPtr);
 
+                // Command skills sit at sequential keys starting at 0x40000000; everything else
+                // (shared 0x2000xxxx internals, etc.) is not a player-issuable command.
+                // TODO: this still over-includes. A minion can have skills in the 0x40000000 range
+                // that the player has NO command bound for (minion-type-specific abilities without a
+                // player command), so they show up as "usable commands" the player can't actually
+                // issue. To filter to only player-commandable skills we'd need to cross-reference the
+                // player's own command entries (which aren't in the player skill list this session)
+                // or find another ownership/command marker on the skill.
                 if ((skillDetails.UnknownIdAndEquipmentInfo & 0xFFFF0000u) != 0x40000000u ||
                     skillDetails.GrantedEffectsPerLevelDatRow == IntPtr.Zero)
                 {
                     continue;
                 }
 
+                // TODO: this is the internal GGPK skill name (GrantedEffectsPerLevel row). It can
+                // differ noticeably from the in-game command name the player sees. If we want the
+                // friendlier command-skill names, we'd need to map these via another dat table.
                 var (name, _) = ((string, IntPtr))Core.GgpkObjectCache.AddOrGetExisting(
                     skillDetails.GrantedEffectsPerLevelDatRow,
                     key => (reader.ReadUnicodeString(reader.ReadMemory<IntPtr>(key)), key));
@@ -319,5 +400,6 @@ namespace GameHelper.RemoteObjects.Components
                 aggregate[name] = aggregate.TryGetValue(name, out var existing) ? existing || usable : usable;
             }
         }
+
     }
 }

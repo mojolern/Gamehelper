@@ -1,4 +1,4 @@
-namespace PlayerBuffBar
+﻿namespace PlayerBuffBar
 {
     using System;
     using System.Collections.Generic;
@@ -9,7 +9,6 @@ namespace PlayerBuffBar
     using System.Runtime.InteropServices;
     using System.Text;
     using GameHelper;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteObjects.Components;
@@ -24,10 +23,10 @@ namespace PlayerBuffBar
         private readonly BuffIconLoader iconLoader = new();
 
         private string SettingsPath => Path.Join(this.DllDirectory, "config", "settings.txt");
-        private string watchlistBuffer = string.Empty;
+        private readonly string[] watchlistBuffers = new string[PlayerBuffBarSettings.MaxBuffBars];
+        private readonly bool[] watchlistEditorDirtyPerBar = new bool[PlayerBuffBarSettings.MaxBuffBars];
         private string dumpStatusLine = string.Empty;
         private bool iconsQueuedOnEnable;
-        private bool watchlistEditorDirty;
 
         public override void OnEnable(bool isGameOpened)
         {
@@ -45,11 +44,11 @@ namespace PlayerBuffBar
             }
 
             var migrated = this.MigrateSettingsIfNeeded();
-            this.watchlistEditorDirty = false;
+            Array.Clear(this.watchlistEditorDirtyPerBar);
             this.iconLoader.Initialize(this.DllDirectory);
             this.iconsQueuedOnEnable = false;
             this.QueueIconDownloads(force: false);
-            this.SyncWatchlistBufferFromSettings();
+            this.SyncAllWatchlistBuffersFromSettings();
             if (migrated)
             {
                 this.SaveSettings();
@@ -76,140 +75,241 @@ namespace PlayerBuffBar
 
         public override void DrawSettings()
         {
-            ImGui.Checkbox(L("Show overlay", "Overlay anzeigen"), ref this.Settings.ShowOverlay);
+            this.DrawGeneralSettings();
 
-            var displayMode = (int)this.Settings.DisplayMode;
-            if (ImGui.Combo(
-                L("Display mode", "Anzeigemodus"),
-                ref displayMode,
-                $"{L("Icons", "Icons")}\0{L("Text", "Text")}\0{L("Icons + text", "Icons + Text")}\0"))
+            if (this.DrawSettingsSection(
+                "Resource bar (charges / rage)",
+                "resource",
+                ref this.Settings.SettingsResourceBarSectionOpen))
             {
-                this.Settings.DisplayMode = (BuffBarDisplayMode)displayMode;
+                this.DrawResourceBarSettings();
             }
 
-            ImGui.Checkbox(L("Hide in town / hideout", "In Stadt / Hideout ausblenden"), ref this.Settings.HideInTownOrHideout);
-            ImGui.Checkbox(L("Hide when game in background", "Bei Spiel im Hintergrund ausblenden"), ref this.Settings.HideWhenGameInBackground);
-            ImGui.Checkbox(L("Show inactive watchlist buffs", "Inaktive Watchlist-Buffs zeigen"), ref this.Settings.ShowInactiveWatchlist);
-            ImGui.Checkbox(L("Show durations", "Laufzeiten anzeigen"), ref this.Settings.ShowDurations);
-            ImGui.Checkbox(L("Show stacks", "Stacks anzeigen"), ref this.Settings.ShowStacks);
-            ImGui.Checkbox(L("Auto-download poe2db icons", "poe2db-Icons automatisch laden"), ref this.Settings.AutoDownloadWikiIcons);
+            if (this.DrawSettingsSection(
+                "Buff bars (up to 4)",
+                "buffbars",
+                ref this.Settings.SettingsBuffBarsSectionOpen))
+            {
+                this.DrawBuffBarsSettings();
+            }
 
-            ImGui.Separator();
-            ImGui.TextUnformatted(L("Resource bar (charges / rage)", "Ressourcen-Leiste (Charges / Rage)"));
-            ImGui.Checkbox(L("Show charges (P/F/E)", "Charges anzeigen (P/F/E)"), ref this.Settings.ShowCharges);
-            ImGui.Checkbox(L("Show rage", "Rage anzeigen"), ref this.Settings.ShowRage);
-            ImGui.Checkbox(L("Hide empty charges / rage", "Leere Charges / Rage ausblenden"), ref this.Settings.HideEmptyResources);
-            ImGui.Checkbox(L("Count badge background", "Zahlen-Hintergrund"), ref this.Settings.ShowResourceCountBackground);
-            ImGuiHelper.ToolTip(OverlayLocalization.L(
-                "When off, charge/rage counts and buff stack numbers are drawn as text only (no black bar on the icon).",
-                "Wenn aus, werden Charge/Rage-Zahlen und Buff-Stack-Zahlen nur als Text gezeichnet (kein schwarzer Balken auf dem Icon)."));
-            ImGui.Checkbox(L("Anchor resource bar to health bar", "Ressourcen-Leiste an Lebensbalken"), ref this.Settings.ResourceAnchorToHealthBar);
+            if (this.DrawSettingsSection(
+                "Buff display",
+                "buffdisplay",
+                ref this.Settings.SettingsBuffDisplaySectionOpen))
+            {
+                this.DrawBuffDisplaySettings();
+            }
+
+            if (this.DrawSettingsSection(
+                "Icons & tools",
+                "icons",
+                ref this.Settings.SettingsIconsToolsSectionOpen))
+            {
+                this.DrawIconsToolsSettings();
+            }
+        }
+
+        private void DrawResourceBarSettings()
+        {
+            var fieldWidth = ImGui.GetContentRegionAvail().X;
+
+            ImGui.Checkbox("Show charges (P/F/E)", ref this.Settings.ShowCharges);
+            ImGui.Checkbox("Show rage", ref this.Settings.ShowRage);
+            ImGui.Checkbox("Hide empty charges / rage", ref this.Settings.HideEmptyResources);
+            ImGui.Checkbox("Anchor resource bar to health bar", ref this.Settings.ResourceAnchorToHealthBar);
             if (!this.Settings.ResourceAnchorToHealthBar)
             {
-                ImGui.Checkbox(L("Show position dummy (drag, then disable)", "Positions-Dummy anzeigen (ziehen, dann aus)"), ref this.Settings.ResourceShowPositionDummy);
+                ImGui.Checkbox("Show position dummy (drag, then disable)", ref this.Settings.ResourceShowPositionDummy);
             }
             else
             {
                 this.Settings.ResourceShowPositionDummy = false;
             }
-            ImGui.DragFloat(L("Resource icon size", "Ressourcen-Icon-Groesse"), ref this.Settings.ResourceIconSize, 1f, 16f, 72f, "%.0f");
-            ImGui.DragFloat(L("Resource icon spacing", "Ressourcen-Icon-Abstand"), ref this.Settings.ResourceIconSpacing, 0.5f, 0f, 24f, "%.1f");
-            ImGui.DragFloat2(L("Resource offset X / Y", "Ressourcen-Offset X / Y"), ref this.Settings.ResourceScreenOffset, 1f, -400f, 400f, "%.0f");
-            ImGui.DragFloat2(L("Resource fixed position", "Ressourcen-Festposition"), ref this.Settings.ResourceFixedPosition, 1f, 0f, 4000f, "%.0f");
-            ImGui.TextDisabled(L(
-                "P/F/E charge icons load from poe2db. Rage stays numeric. Do not add charges/rage to the watchlist.",
-                "P/F/E-Charge-Icons von poe2db. Rage bleibt numerisch. Charges/Rage nicht in die Watchlist eintragen."));
+
+            ImGui.Text("Resource icon size");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat("##resource_icon_size", ref this.Settings.ResourceIconSize, 1f, 16f, 72f, "%.0f");
+
+            ImGui.Text("Resource icon spacing");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat("##resource_icon_spacing", ref this.Settings.ResourceIconSpacing, 0.5f, 0f, 24f, "%.1f");
+
+            ImGui.Text("Resource offset X / Y");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat2("##resource_screen_offset", ref this.Settings.ResourceScreenOffset, 1f, -400f, 400f, "%.0f");
+
+            ImGui.Text("Resource fixed position");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat2("##resource_fixed_position", ref this.Settings.ResourceFixedPosition, 1f, 0f, 4000f, "%.0f");
 
             ImGui.Separator();
-            ImGui.TextUnformatted(L("Buff watchlist bar", "Buff-Watchlist-Leiste"));
-            ImGui.Checkbox(L("Anchor buff bar to health bar", "Buff-Leiste an Lebensbalken"), ref this.Settings.BuffAnchorToHealthBar);
-            if (!this.Settings.BuffAnchorToHealthBar)
+            ImGui.TextUnformatted("Colors");
+            ImGui.ColorEdit4("Charge text color", ref this.Settings.ChargeTextColor);
+            ImGui.ColorEdit4("Rage text color", ref this.Settings.RageTextColor);
+
+            ImGui.TextDisabled(
+                "P/F/E charge icons load from poe2db. Rage stays numeric. Do not add charges/rage to the watchlist.");
+
+            ImGui.Spacing();
+        }
+
+        private void DrawBuffBarsSettings()
+        {
+            this.Settings.EnsureBuffBarSlots();
+            ImGui.TextWrapped(
+                "Each bar has its own watchlist and position. Resource charges/rage stay on the resource bar.");
+
+            if (ImGui.BeginTabBar("##PlayerBuffBarTabs"))
             {
-                ImGui.Checkbox(L("Show position dummy (drag, then disable)", "Positions-Dummy anzeigen (ziehen, dann aus)"), ref this.Settings.BuffShowPositionDummy);
+                for (var i = 0; i < PlayerBuffBarSettings.MaxBuffBars; i++)
+                {
+                    var bar = this.Settings.BuffBars[i];
+                    var tabLabel = $"Bar {i + 1}";
+                    if (!bar.Enabled)
+                    {
+                        tabLabel += " (off)";
+                    }
+
+                    if (ImGui.BeginTabItem($"{tabLabel}##buff_bar_tab_{i}"))
+                    {
+                        this.Settings.SelectedBuffBarTab = i;
+                        this.DrawSingleBuffBarSettings(i, bar);
+                        ImGui.EndTabItem();
+                    }
+                }
+
+                ImGui.EndTabBar();
+            }
+
+            ImGui.Spacing();
+        }
+
+        private void DrawSingleBuffBarSettings(int barIndex, BuffBarSlotSettings bar)
+        {
+            var fieldWidth = ImGui.GetContentRegionAvail().X;
+
+            ImGui.Checkbox("Enable this bar", ref bar.Enabled);
+            ImGui.Checkbox("Anchor to health bar", ref bar.AnchorToHealthBar);
+            if (!bar.AnchorToHealthBar)
+            {
+                ImGui.Checkbox("Show position dummy (drag, then disable)", ref bar.ShowPositionDummy);
             }
             else
             {
-                this.Settings.BuffShowPositionDummy = false;
+                bar.ShowPositionDummy = false;
             }
-            ImGui.DragFloat(L("Buff icon size", "Buff-Icon-Groesse"), ref this.Settings.BuffIconSize, 1f, 16f, 72f, "%.0f");
-            ImGui.DragFloat(L("Buff icon spacing", "Buff-Icon-Abstand"), ref this.Settings.BuffIconSpacing, 0.5f, 0f, 24f, "%.1f");
-            ImGui.DragFloat2(L("Buff offset X / Y", "Buff-Offset X / Y"), ref this.Settings.BuffScreenOffset, 1f, -400f, 400f, "%.0f");
-            ImGui.TextDisabled(L("Positive Y = below character, negative Y = above.", "Positives Y = unter dem Char, negatives Y = darueber."));
-            ImGui.DragFloat2(L("Buff fixed position", "Buff-Festposition"), ref this.Settings.BuffFixedPosition, 1f, 0f, 4000f, "%.0f");
+
+            ImGui.Text("Icon size");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat($"##buff_bar_{barIndex}_icon_size", ref bar.IconSize, 1f, 16f, 72f, "%.0f");
+
+            ImGui.Text("Icon spacing");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat($"##buff_bar_{barIndex}_icon_spacing", ref bar.IconSpacing, 0.5f, 0f, 24f, "%.1f");
+
+            ImGui.Text("Offset X / Y");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat2($"##buff_bar_{barIndex}_screen_offset", ref bar.ScreenOffset, 1f, -400f, 400f, "%.0f");
+            ImGui.TextDisabled("Positive Y = below character, negative Y = above.");
+
+            ImGui.Text("Fixed position");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat2($"##buff_bar_{barIndex}_fixed_position", ref bar.FixedPosition, 1f, 0f, 4000f, "%.0f");
 
             ImGui.Separator();
-            ImGui.DragFloat(L("Inactive icon alpha", "Inaktive Icon-Transparenz"), ref this.Settings.InactiveIconAlpha, 0.02f, 0.05f, 1f, "%.2f");
-            ImGui.DragFloat(L("Font scale", "Schriftgroesse"), ref this.Settings.FontScale, 0.02f, 0.7f, 1.6f, "%.2f");
-            ImGui.DragFloat(L("Max bar width", "Max. Breite"), ref this.Settings.MaxBarWidth, 2f, 120f, 480f, "%.0f");
+            ImGui.TextUnformatted("Watchlist");
+            ImGui.TextWrapped(
+                "One buff id substring per line. Not for charges/rage. Examples: puppet_master, refutation, archon_undeath.");
 
-            ImGui.Separator();
-            ImGui.ColorEdit4(L("Active buff color", "Aktiver Buff"), ref this.Settings.ActiveColor);
-            ImGui.ColorEdit4(L("Inactive buff color", "Inaktiver Buff"), ref this.Settings.InactiveColor);
-            ImGui.ColorEdit4(L("Charge text color", "Charge-Textfarbe"), ref this.Settings.ChargeTextColor);
-            ImGui.ColorEdit4(L("Rage text color", "Rage-Textfarbe"), ref this.Settings.RageTextColor);
-
-            ImGui.Separator();
-            if (!this.watchlistEditorDirty)
+            if (!this.watchlistEditorDirtyPerBar[barIndex])
             {
-                this.SyncWatchlistBufferFromSettings();
+                this.SyncWatchlistBufferFromSettings(barIndex);
             }
-
-            ImGui.TextWrapped(L(
-                "Watchlist: one buff id substring per line. Not for charges/rage. Examples: puppet_master, archon_undeath.",
-                "Watchlist: ein Buff-ID-Teilstring pro Zeile. Keine Charges/Rage. Beispiele: puppet_master, archon_undeath."));
 
             ImGui.InputTextMultiline(
-                "###PlayerBuffBarWatchlist",
-                ref this.watchlistBuffer,
+                $"###PlayerBuffBarWatchlist_{barIndex}",
+                ref this.watchlistBuffers[barIndex],
                 4096,
-                new Vector2(-1f, 120f));
+                new Vector2(-1f, 100f));
             if (ImGui.IsItemDeactivatedAfterEdit())
             {
-                this.ApplyWatchlistBuffer();
-                this.watchlistEditorDirty = false;
+                this.ApplyWatchlistBuffer(barIndex);
+                this.watchlistEditorDirtyPerBar[barIndex] = false;
                 this.QueueIconDownloads(force: true);
             }
             else if (ImGui.IsItemEdited())
             {
-                this.watchlistEditorDirty = true;
+                this.watchlistEditorDirtyPerBar[barIndex] = true;
             }
 
-            if (ImGui.Button(L("Apply watchlist", "Watchlist uebernehmen")))
+            if (ImGui.Button($"Apply watchlist##bar_{barIndex}"))
             {
-                this.ApplyWatchlistBuffer();
-                this.watchlistEditorDirty = false;
+                this.ApplyWatchlistBuffer(barIndex);
+                this.watchlistEditorDirtyPerBar[barIndex] = false;
                 this.QueueIconDownloads(force: true);
             }
 
-            ImGui.SameLine();
-            if (ImGui.Button(L("Reset defaults", "Standard wiederherstellen")))
+            if (barIndex == 0)
             {
-                this.Settings = new PlayerBuffBarSettings();
-                this.watchlistEditorDirty = false;
-                this.SyncWatchlistBufferFromSettings();
-                this.QueueIconDownloads(force: false);
+                ImGui.SameLine();
+                if (ImGui.Button("Reset defaults"))
+                {
+                    this.Settings = new PlayerBuffBarSettings();
+                    Array.Clear(this.watchlistEditorDirtyPerBar);
+                    this.SyncAllWatchlistBuffersFromSettings();
+                    this.QueueIconDownloads(force: false);
+                }
             }
+        }
 
-            ImGui.SameLine();
-            if (ImGui.Button(L("Dump my buffs", "Meine Buffs speichern")))
+        private void DrawBuffDisplaySettings()
+        {
+            var fieldWidth = ImGui.GetContentRegionAvail().X;
+
+            ImGui.Text("Inactive icon alpha");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat("##inactive_icon_alpha", ref this.Settings.InactiveIconAlpha, 0.02f, 0.05f, 1f, "%.2f");
+
+            ImGui.Text("Font scale");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat("##font_scale", ref this.Settings.FontScale, 0.02f, 0.7f, 1.6f, "%.2f");
+
+            ImGui.Text("Max bar width");
+            ImGui.SetNextItemWidth(fieldWidth);
+            ImGui.DragFloat("##max_bar_width", ref this.Settings.MaxBarWidth, 2f, 120f, 480f, "%.0f");
+
+            ImGui.Separator();
+            ImGui.TextUnformatted("Colors");
+            ImGui.ColorEdit4("Active buff color", ref this.Settings.ActiveColor);
+            ImGui.ColorEdit4("Inactive buff color", ref this.Settings.InactiveColor);
+            ImGui.ColorEdit4("Buff text color", ref this.Settings.BuffTextColor);
+
+            ImGui.Spacing();
+        }
+
+        private void DrawIconsToolsSettings()
+        {
+            if (ImGui.Button("Dump my buffs"))
             {
                 this.DumpPlayerBuffs();
             }
 
-            if (ImGui.Button(L("Download missing icons", "Fehlende Icons laden")))
+            ImGui.SameLine();
+            if (ImGui.Button("Download missing icons"))
             {
                 this.QueueIconDownloads(force: true);
             }
 
             ImGui.SameLine();
-            if (ImGui.Button(L("Reload icons", "Icons neu laden")))
+            if (ImGui.Button("Reload icons"))
             {
                 this.iconLoader.ReloadIconMap(this.DllDirectory);
                 this.iconLoader.ReloadTextures();
                 this.QueueIconDownloads(force: false);
             }
 
-            ImGui.TextDisabled($"{L("Cached icons", "Gecachte Icons")}: {this.iconLoader.CachedIconCount}");
+            ImGui.TextDisabled($"Cached icons: {this.iconLoader.CachedIconCount}");
             if (!string.IsNullOrEmpty(this.iconLoader.LastLogLine))
             {
                 ImGui.TextDisabled(this.iconLoader.LastLogLine);
@@ -220,9 +320,8 @@ namespace PlayerBuffBar
                 ImGui.TextDisabled(this.dumpStatusLine);
             }
 
-            ImGui.TextDisabled(L(
-                "Icons load from poe2db.tw (PoE2). Cache: Plugins/PlayerBuffBar/icons/.",
-                "Icons von poe2db.tw (PoE2). Cache: Plugins/PlayerBuffBar/icons/."));
+            ImGui.TextDisabled(
+                "Icons load from poe2db.tw (PoE2). Cache: Plugins/PlayerBuffBar/icons/.");
         }
 
         public override void DrawUI()
@@ -240,7 +339,17 @@ namespace PlayerBuffBar
                 return;
             }
 
-            var positioningDummyActive = this.Settings.ResourceShowPositionDummy || this.Settings.BuffShowPositionDummy;
+            var positioningDummyActive = this.Settings.ResourceShowPositionDummy || this.AnyBuffBarPositionDummyActive();
+
+            if (Core.IsSettingsMenuOpen && !positioningDummyActive)
+            {
+                return;
+            }
+
+            if (gameState == GameStateTypes.EscapeState && !positioningDummyActive)
+            {
+                return;
+            }
 
             if (this.Settings.HideWhenGameInBackground && !IsGameOrOverlayForeground())
             {
@@ -259,7 +368,7 @@ namespace PlayerBuffBar
                 return;
             }
 
-            if (inGame.GameUi.ShouldHideWorldSpaceBars && !positioningDummyActive)
+            if (WorldSpaceBarVisibility.ShouldHide(inGame.GameUi) && !positioningDummyActive)
             {
                 return;
             }
@@ -285,23 +394,37 @@ namespace PlayerBuffBar
             player.TryGetComponent<Buffs>(out var buffs, true);
             player.TryGetComponent<Stats>(out var stats, true);
 
-            var entries = this.BuildDisplayEntries(buffs);
+            var activeLookup = this.BuildActiveBuffLookup(buffs);
 
             if (this.Settings.DisplayMode != BuffBarDisplayMode.Text)
             {
-                this.DrawIconHud(healthAnchor.Value, entries, stats);
+                this.DrawIconHud(healthAnchor.Value, activeLookup, stats);
             }
 
             if (this.Settings.DisplayMode != BuffBarDisplayMode.Icons)
             {
                 var resourceLine = this.BuildResourceLine(stats);
-                this.DrawTextHud(healthAnchor.Value, resourceLine, entries);
+                this.DrawTextHud(healthAnchor.Value, resourceLine, activeLookup);
             }
+        }
+
+        private bool AnyBuffBarPositionDummyActive()
+        {
+            this.Settings.EnsureBuffBarSlots();
+            foreach (var bar in this.Settings.BuffBars)
+            {
+                if (bar.ShowPositionDummy)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void QueueIconDownloads(bool force)
         {
-            this.iconLoader.RequestDownloads(this.Settings.Watchlist, force);
+            this.iconLoader.RequestDownloads(this.Settings.GetAllWatchIds(), force);
             this.iconLoader.RequestResourceIcons(force);
         }
 
@@ -372,21 +495,87 @@ namespace PlayerBuffBar
                 migrated = true;
             }
 
+            if (this.Settings.SettingsVersion < 6)
+            {
+                this.Settings.SettingsResourceBarSectionOpen = false;
+                this.Settings.SettingsBuffBarSectionOpen = false;
+                this.Settings.SettingsWatchlistSectionOpen = false;
+                this.Settings.SettingsIconsToolsSectionOpen = false;
+                this.Settings.SettingsVersion = 6;
+                migrated = true;
+            }
+
+            if (this.Settings.SettingsVersion < 8)
+            {
+                this.Settings.SettingsResourceBarSectionOpen = false;
+                this.Settings.SettingsBuffBarSectionOpen = false;
+                this.Settings.SettingsWatchlistSectionOpen = false;
+                this.Settings.SettingsIconsToolsSectionOpen = false;
+                this.Settings.SettingsVersion = 8;
+                migrated = true;
+            }
+
+            if (this.Settings.SettingsVersion < 9)
+            {
+                this.MigrateToMultiBuffBars();
+                this.Settings.SettingsResourceBarSectionOpen = false;
+                this.Settings.SettingsBuffBarsSectionOpen = false;
+                this.Settings.SettingsBuffDisplaySectionOpen = false;
+                this.Settings.SettingsIconsToolsSectionOpen = false;
+                this.Settings.SettingsVersion = 9;
+                migrated = true;
+            }
+
+            this.Settings.EnsureBuffBarSlots();
             this.EnsureWatchlistDefaults();
 
             return migrated;
         }
 
+        private void MigrateToMultiBuffBars()
+        {
+            if (this.Settings.BuffBars.Count > 0)
+            {
+                this.Settings.EnsureBuffBarSlots();
+                return;
+            }
+
+            var legacyWatchlist = this.Settings.Watchlist
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id))
+                .ToList();
+
+            this.Settings.BuffBars.Add(new BuffBarSlotSettings
+            {
+                Enabled = true,
+                AnchorToHealthBar = this.Settings.BuffAnchorToHealthBar,
+                ShowPositionDummy = this.Settings.BuffShowPositionDummy,
+                IconSize = this.Settings.BuffIconSize,
+                IconSpacing = this.Settings.BuffIconSpacing,
+                ScreenOffset = this.Settings.BuffScreenOffset,
+                FixedPosition = this.Settings.BuffFixedPosition,
+                Watchlist = legacyWatchlist,
+            });
+
+            for (var i = 1; i < PlayerBuffBarSettings.MaxBuffBars; i++)
+            {
+                this.Settings.BuffBars.Add(PlayerBuffBarSettings.CreateDefaultBuffBarSlot(i));
+                this.Settings.BuffBars[i].Enabled = false;
+            }
+        }
+
         private void EnsureWatchlistDefaults()
         {
+            this.Settings.EnsureBuffBarSlots();
             if (this.Settings.WatchlistUserConfigured)
             {
                 return;
             }
 
-            if (this.Settings.Watchlist.Count == 0)
+            var bar0 = this.Settings.BuffBars[0];
+            if (bar0.Watchlist.Count == 0)
             {
-                this.Settings.Watchlist = PlayerBuffBarSettings.CreateDefaultWatchlist().ToList();
+                bar0.Watchlist = PlayerBuffBarSettings.CreateDefaultWatchlist().ToList();
             }
         }
 
@@ -429,9 +618,9 @@ namespace PlayerBuffBar
             return slots;
         }
 
-        private void DrawIconHud(Vector2 healthAnchor, List<BuffDisplayEntry> entries, Stats? stats)
+        private void DrawIconHud(Vector2 healthAnchor, Dictionary<string, ActiveBuffInfo> activeLookup, Stats? stats)
         {
-            var draw = ImGui.GetForegroundDrawList();
+            var draw = GetHudDrawList();
             var resourceRow = this.BuildChargeIconEntries(stats);
             var resourceSlots = this.GetResourceSlotCount();
 
@@ -460,27 +649,38 @@ namespace PlayerBuffBar
                 }
             }
 
-            var buffRow = entries.Where(e => e.IsActive || this.Settings.ShowInactiveWatchlist).ToList();
-            if (this.Settings.BuffShowPositionDummy && !this.Settings.BuffAnchorToHealthBar)
+            this.Settings.EnsureBuffBarSlots();
+            for (var barIndex = 0; barIndex < this.Settings.BuffBars.Count; barIndex++)
             {
-                this.DrawPositionDummy(
-                    "BuffBarDummy",
-                    ref this.Settings.BuffFixedPosition,
-                    this.Settings.BuffIconSize,
-                    this.Settings.BuffIconSpacing,
-                    buffRow.Count > 0 ? buffRow : this.BuildBuffPreviewEntries(),
-                    resourcePreview: false);
-            }
-            else if (buffRow.Count > 0)
-            {
-                var rowWidth = this.GetRowWidth(buffRow.Count, this.Settings.BuffIconSize, this.Settings.BuffIconSpacing);
-                var topLeft = this.ResolveBarTopLeft(
-                    healthAnchor,
-                    this.Settings.BuffAnchorToHealthBar,
-                    this.Settings.BuffScreenOffset,
-                    this.Settings.BuffFixedPosition,
-                    rowWidth);
-                this.DrawIconRow(draw, buffRow, topLeft, this.Settings.BuffIconSize, this.Settings.BuffIconSpacing, resourceOnly: false);
+                var bar = this.Settings.BuffBars[barIndex];
+                if (!bar.Enabled && !bar.ShowPositionDummy)
+                {
+                    continue;
+                }
+
+                var entries = this.BuildDisplayEntriesForBar(bar.Watchlist, activeLookup);
+                var buffRow = entries.Where(e => e.IsActive || this.Settings.ShowInactiveWatchlist).ToList();
+                if (bar.ShowPositionDummy && !bar.AnchorToHealthBar)
+                {
+                    this.DrawPositionDummy(
+                        $"BuffBarDummy_{barIndex}",
+                        ref bar.FixedPosition,
+                        bar.IconSize,
+                        bar.IconSpacing,
+                        buffRow.Count > 0 ? buffRow : this.BuildBuffPreviewEntries(bar.Watchlist),
+                        resourcePreview: false);
+                }
+                else if (bar.Enabled && buffRow.Count > 0)
+                {
+                    var rowWidth = this.GetRowWidth(buffRow.Count, bar.IconSize, bar.IconSpacing);
+                    var topLeft = this.ResolveBarTopLeft(
+                        healthAnchor,
+                        bar.AnchorToHealthBar,
+                        bar.ScreenOffset,
+                        bar.FixedPosition,
+                        rowWidth);
+                    this.DrawIconRow(draw, buffRow, topLeft, bar.IconSize, bar.IconSpacing, resourceOnly: false);
+                }
             }
         }
 
@@ -531,11 +731,11 @@ namespace PlayerBuffBar
             return row;
         }
 
-        private List<BuffDisplayEntry> BuildBuffPreviewEntries()
+        private List<BuffDisplayEntry> BuildBuffPreviewEntries(IReadOnlyList<string> watchlist)
         {
-            if (this.Settings.Watchlist.Count > 0)
+            if (watchlist.Count > 0)
             {
-                return this.Settings.Watchlist
+                return watchlist
                     .Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id))
                     .Select(id => new BuffDisplayEntry
                     {
@@ -604,7 +804,7 @@ namespace PlayerBuffBar
                 ImDrawFlags.None,
                 1.5f);
 
-            var hint = L("Drag to move. Disable dummy in settings when done.", "Ziehen zum Verschieben. Dummy danach in Einstellungen aus.");
+            var hint = "Drag to move. Disable dummy in settings when done.";
             var hintSize = ImGui.CalcTextSize(hint);
             var hintPos = new Vector2(fixedTopLeft.X, fixedTopLeft.Y - hintSize.Y - 4f);
             draw.AddText(hintPos + Vector2.One, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.9f)), hint);
@@ -756,7 +956,7 @@ namespace PlayerBuffBar
                 var textSize = ImGui.CalcTextSize(label);
                 var textPos = new Vector2(pos.X + (size - textSize.X) * 0.5f, pos.Y + size + 1f);
                 draw.AddText(textPos + Vector2.One, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.9f)), label);
-                draw.AddText(textPos, ImGuiHelper.Color(new Vector4(1f, 1f, 1f, alpha)), label);
+                draw.AddText(textPos, ImGuiHelper.Color(this.GetBuffTextColor(alpha)), label);
             }
         }
 
@@ -783,8 +983,11 @@ namespace PlayerBuffBar
                 draw.AddText(textPos + Vector2.One, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.9f * alpha)), label);
             }
 
-            draw.AddText(textPos, ImGuiHelper.Color(new Vector4(1f, 1f, 1f, alpha)), label);
+            draw.AddText(textPos, ImGuiHelper.Color(this.GetBuffTextColor(alpha)), label);
         }
+
+        private Vector4 GetBuffTextColor(float alpha) =>
+            new(this.Settings.BuffTextColor.X, this.Settings.BuffTextColor.Y, this.Settings.BuffTextColor.Z, alpha);
 
         private List<BuffDisplayEntry> BuildChargeIconEntries(Stats? stats)
         {
@@ -827,9 +1030,9 @@ namespace PlayerBuffBar
             Stacks = count,
         };
 
-        private void DrawTextHud(Vector2 healthAnchor, string resourceLine, List<BuffDisplayEntry> entries)
+        private void DrawTextHud(Vector2 healthAnchor, string resourceLine, Dictionary<string, ActiveBuffInfo> activeLookup)
         {
-            var draw = ImGui.GetForegroundDrawList();
+            var draw = GetHudDrawList();
             var maxWidth = this.Settings.MaxBarWidth;
             var pad = 4f;
 
@@ -849,68 +1052,91 @@ namespace PlayerBuffBar
                 draw.AddText(new Vector2(topLeft.X + pad, topLeft.Y + pad * 0.5f), ImGuiHelper.Color(this.Settings.ChargeTextColor), resourceLine);
             }
 
-            var buffRowWidth = MathF.Max(80f, this.Settings.MaxBarWidth * 0.35f);
-            var buffTopLeft = this.ResolveBarTopLeft(
-                healthAnchor,
-                this.Settings.BuffAnchorToHealthBar,
-                this.Settings.BuffScreenOffset,
-                this.Settings.BuffFixedPosition,
-                buffRowWidth);
-            var x = buffTopLeft.X;
-            var y = buffTopLeft.Y;
-            if (this.Settings.DisplayMode == BuffBarDisplayMode.IconsAndText)
+            this.Settings.EnsureBuffBarSlots();
+            for (var barIndex = 0; barIndex < this.Settings.BuffBars.Count; barIndex++)
             {
-                var iconRows = (this.Settings.ShowCharges || this.Settings.ShowRage ? 1 : 0) + 1;
-                y += iconRows * (this.Settings.BuffIconSize + this.Settings.BuffIconSpacing + 6f);
-            }
+                var bar = this.Settings.BuffBars[barIndex];
+                if (!bar.Enabled)
+                {
+                    continue;
+                }
 
-            foreach (var entry in entries)
-            {
-                var text = entry.Display;
-                var size = ImGui.CalcTextSize(text);
-                var chipWidth = MathF.Min(size.X + pad * 2f, maxWidth);
-                var chipHeight = size.Y + pad;
-                var color = entry.IsActive ? this.Settings.ActiveColor : this.Settings.InactiveColor;
+                var entries = this.BuildDisplayEntriesForBar(bar.Watchlist, activeLookup);
+                if (entries.Count == 0)
+                {
+                    continue;
+                }
 
-                var bgMin = new Vector2(x, y);
-                var bgMax = new Vector2(x + chipWidth, y + chipHeight);
-                draw.AddRectFilled(bgMin, bgMax, ImGuiHelper.Color(color), 4f);
-                draw.AddRect(bgMin, bgMax, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.35f)), 4f);
-                draw.AddText(new Vector2(x + pad, y + pad * 0.5f), ImGuiHelper.Color(new Vector4(1f, 1f, 1f, entry.IsActive ? 1f : 0.75f)), text);
+                var buffRowWidth = MathF.Max(80f, this.Settings.MaxBarWidth * 0.35f);
+                var buffTopLeft = this.ResolveBarTopLeft(
+                    healthAnchor,
+                    bar.AnchorToHealthBar,
+                    bar.ScreenOffset,
+                    bar.FixedPosition,
+                    buffRowWidth);
+                var x = buffTopLeft.X;
+                var y = buffTopLeft.Y;
+                if (this.Settings.DisplayMode == BuffBarDisplayMode.IconsAndText)
+                {
+                    y += bar.IconSize + bar.IconSpacing + 6f;
+                }
 
-                y += chipHeight + 2f;
+                foreach (var entry in entries)
+                {
+                    var text = entry.Display;
+                    var size = ImGui.CalcTextSize(text);
+                    var chipWidth = MathF.Min(size.X + pad * 2f, maxWidth);
+                    var chipHeight = size.Y + pad;
+                    var color = entry.IsActive ? this.Settings.ActiveColor : this.Settings.InactiveColor;
+
+                    var bgMin = new Vector2(x, y);
+                    var bgMax = new Vector2(x + chipWidth, y + chipHeight);
+                    draw.AddRectFilled(bgMin, bgMax, ImGuiHelper.Color(color), 4f);
+                    draw.AddRect(bgMin, bgMax, ImGuiHelper.Color(new Vector4(0f, 0f, 0f, 0.35f)), 4f);
+                    draw.AddText(new Vector2(x + pad, y + pad * 0.5f), ImGuiHelper.Color(this.GetBuffTextColor(entry.IsActive ? 1f : 0.75f)), text);
+
+                    y += chipHeight + 2f;
+                }
             }
         }
 
-        private List<BuffDisplayEntry> BuildDisplayEntries(Buffs? buffs)
+        private Dictionary<string, ActiveBuffInfo> BuildActiveBuffLookup(Buffs? buffs)
         {
-            var result = new List<BuffDisplayEntry>();
             var activeByWatchId = new Dictionary<string, ActiveBuffInfo>(StringComparer.OrdinalIgnoreCase);
-
-            if (buffs != null)
+            var watchIds = this.Settings.GetAllWatchIds().ToList();
+            if (buffs == null || watchIds.Count == 0)
             {
-                foreach (var kv in buffs.StatusEffects)
-                {
-                    foreach (var watchId in this.Settings.Watchlist)
-                    {
-                        if (string.IsNullOrWhiteSpace(watchId) || BuffIconCatalog.IsReservedResourceWatchId(watchId) || !BuffIconCatalog.MatchesBuffKey(kv.Key, watchId))
-                        {
-                            continue;
-                        }
+                return activeByWatchId;
+            }
 
-                        var trimmedWatchId = watchId.Trim();
-                        var info = this.ToActiveBuffInfo(trimmedWatchId, kv.Key, kv.Value);
-                        if (!activeByWatchId.TryGetValue(trimmedWatchId, out var existing) ||
-                            info.Stacks > existing.Stacks ||
-                            (info.Stacks == existing.Stacks && info.TimeLeft > existing.TimeLeft))
-                        {
-                            activeByWatchId[trimmedWatchId] = info;
-                        }
+            foreach (var kv in buffs.StatusEffects)
+            {
+                foreach (var watchId in watchIds)
+                {
+                    if (!BuffIconCatalog.MatchesBuffKey(kv.Key, watchId))
+                    {
+                        continue;
+                    }
+
+                    var info = this.ToActiveBuffInfo(watchId, kv.Key, kv.Value);
+                    if (!activeByWatchId.TryGetValue(watchId, out var existing) ||
+                        info.Stacks > existing.Stacks ||
+                        (info.Stacks == existing.Stacks && info.TimeLeft > existing.TimeLeft))
+                    {
+                        activeByWatchId[watchId] = info;
                     }
                 }
             }
 
-            foreach (var watchId in this.Settings.Watchlist)
+            return activeByWatchId;
+        }
+
+        private List<BuffDisplayEntry> BuildDisplayEntriesForBar(
+            IReadOnlyList<string> watchlist,
+            IReadOnlyDictionary<string, ActiveBuffInfo> activeByWatchId)
+        {
+            var result = new List<BuffDisplayEntry>();
+            foreach (var watchId in watchlist)
             {
                 if (string.IsNullOrWhiteSpace(watchId) || BuffIconCatalog.IsReservedResourceWatchId(watchId))
                 {
@@ -983,7 +1209,7 @@ namespace PlayerBuffBar
             return string.Join(" ", parts);
         }
 
-        private string FormatInactiveLabel(string watchId) => $"{PrettyName(watchId)} — {L("off", "aus")}";
+        private string FormatInactiveLabel(string watchId) => $"{PrettyName(watchId)} — off";
 
         private string BuildResourceLine(Stats? stats)
         {
@@ -1023,7 +1249,7 @@ namespace PlayerBuffBar
                 var rage = GetStat(stats, GameStats.current_rage);
                 if (!this.Settings.HideEmptyResources || rage > 0)
                 {
-                    parts.Add($"{L("Rage", "Rage")}:{rage}");
+                    parts.Add($"Rage:{rage}");
                 }
             }
 
@@ -1037,18 +1263,14 @@ namespace PlayerBuffBar
             {
                 if (Core.States.GameCurrentState is not (GameStateTypes.InGameState or GameStateTypes.EscapeState))
                 {
-                    this.dumpStatusLine = L(
-                        "Dump failed: enter a map or town first.",
-                        "Dump fehlgeschlagen: zuerst in Karte oder Stadt sein.");
+                    this.dumpStatusLine = "Dump failed: enter a map or town first.";
                     return;
                 }
 
                 var player = Core.States.InGameStateObject.CurrentAreaInstance.Player;
                 if (!player.TryGetComponent<Buffs>(out var buffs, true))
                 {
-                    this.dumpStatusLine = L(
-                        "Dump failed: player buffs not readable.",
-                        "Dump fehlgeschlagen: Spieler-Buffs nicht lesbar.");
+                    this.dumpStatusLine = "Dump failed: player buffs not readable.";
                     return;
                 }
 
@@ -1061,49 +1283,60 @@ namespace PlayerBuffBar
 
                 File.WriteAllText(dumpPath, sb.ToString());
                 var count = buffs.StatusEffects.Count;
-                this.dumpStatusLine = L(
-                    $"Dump saved ({count} buffs): Plugins/PlayerBuffBar/player_buff_dump.txt",
-                    $"Dump gespeichert ({count} Buffs): Plugins/PlayerBuffBar/player_buff_dump.txt");
+                this.dumpStatusLine =
+                    $"Dump saved ({count} buffs): Plugins/PlayerBuffBar/player_buff_dump.txt";
                 Console.WriteLine($"[PlayerBuffBar] Wrote {count} buffs to {dumpPath}");
             }
             catch (Exception ex)
             {
-                this.dumpStatusLine = L(
-                    $"Dump failed: {ex.Message}",
-                    $"Dump fehlgeschlagen: {ex.Message}");
+                this.dumpStatusLine = $"Dump failed: {ex.Message}";
                 Console.WriteLine($"[PlayerBuffBar] Buff dump failed: {ex}");
             }
         }
 
-        private void SyncWatchlistBufferFromSettings()
+        private void SyncAllWatchlistBuffersFromSettings()
         {
-            this.watchlistBuffer = string.Join(
+            this.Settings.EnsureBuffBarSlots();
+            for (var i = 0; i < PlayerBuffBarSettings.MaxBuffBars; i++)
+            {
+                this.SyncWatchlistBufferFromSettings(i);
+            }
+        }
+
+        private void SyncWatchlistBufferFromSettings(int barIndex)
+        {
+            this.Settings.EnsureBuffBarSlots();
+            this.watchlistBuffers[barIndex] = string.Join(
                 Environment.NewLine,
-                this.Settings.Watchlist.Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id)));
+                this.Settings.BuffBars[barIndex].Watchlist.Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id)));
         }
 
         private void ApplyWatchlistBufferIfNeeded()
         {
-            if (!this.watchlistEditorDirty && !this.WatchlistBufferDiffersFromSettings())
+            for (var i = 0; i < PlayerBuffBarSettings.MaxBuffBars; i++)
             {
-                return;
-            }
+                if (!this.watchlistEditorDirtyPerBar[i] && !this.WatchlistBufferDiffersFromSettings(i))
+                {
+                    continue;
+                }
 
-            this.ApplyWatchlistBuffer();
-            this.watchlistEditorDirty = false;
+                this.ApplyWatchlistBuffer(i);
+                this.watchlistEditorDirtyPerBar[i] = false;
+            }
         }
 
-        private bool WatchlistBufferDiffersFromSettings()
+        private bool WatchlistBufferDiffersFromSettings(int barIndex)
         {
-            var parsed = this.ParseWatchlistBuffer();
-            if (parsed.Count != this.Settings.Watchlist.Count)
+            var parsed = this.ParseWatchlistBuffer(barIndex);
+            var barWatchlist = this.Settings.BuffBars[barIndex].Watchlist;
+            if (parsed.Count != barWatchlist.Count)
             {
                 return true;
             }
 
             for (var i = 0; i < parsed.Count; i++)
             {
-                if (!string.Equals(parsed[i], this.Settings.Watchlist[i], StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(parsed[i], barWatchlist[i], StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -1112,7 +1345,7 @@ namespace PlayerBuffBar
             return false;
         }
 
-        private List<string> ParseWatchlistBuffer() => this.watchlistBuffer
+        private List<string> ParseWatchlistBuffer(int barIndex) => this.watchlistBuffers[barIndex]
             .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())
             .Where(s => !string.IsNullOrWhiteSpace(s))
@@ -1120,16 +1353,17 @@ namespace PlayerBuffBar
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        private void ApplyWatchlistBuffer()
+        private void ApplyWatchlistBuffer(int barIndex)
         {
-            if (!this.watchlistEditorDirty &&
-                string.IsNullOrWhiteSpace(this.watchlistBuffer) &&
-                this.Settings.Watchlist.Count > 0)
+            this.Settings.EnsureBuffBarSlots();
+            if (!this.watchlistEditorDirtyPerBar[barIndex] &&
+                string.IsNullOrWhiteSpace(this.watchlistBuffers[barIndex]) &&
+                this.Settings.BuffBars[barIndex].Watchlist.Count > 0)
             {
                 return;
             }
 
-            this.Settings.Watchlist = this.ParseWatchlistBuffer();
+            this.Settings.BuffBars[barIndex].Watchlist = this.ParseWatchlistBuffer(barIndex);
             this.Settings.WatchlistUserConfigured = true;
         }
 
@@ -1155,9 +1389,78 @@ namespace PlayerBuffBar
             string.Join(' ', raw.Split('_', StringSplitOptions.RemoveEmptyEntries)
                 .Select(w => char.ToUpperInvariant(w[0]) + w[1..]));
 
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
+        private void DrawGeneralSettings()
+        {
+            ImGui.SeparatorText("General");
 
-        /// <summary>PoE or GameHelper overlay/settings focused — not e.g. Discord.</summary>
+            var fieldWidth = ImGui.GetContentRegionAvail().X;
+
+            ImGui.Checkbox("Show overlay", ref this.Settings.ShowOverlay);
+
+            ImGui.Text("Display mode");
+            ImGui.SetNextItemWidth(fieldWidth);
+            var displayMode = (int)this.Settings.DisplayMode;
+            var displayModePreview = displayMode switch
+            {
+                0 => "Icons",
+                1 => "Text",
+                _ => "Icons + text",
+            };
+            if (ImGui.BeginCombo("##display_mode", displayModePreview))
+            {
+                if (ImGui.Selectable("Icons", displayMode == 0))
+                {
+                    displayMode = 0;
+                }
+
+                if (ImGui.Selectable("Text", displayMode == 1))
+                {
+                    displayMode = 1;
+                }
+
+                if (ImGui.Selectable("Icons + text", displayMode == 2))
+                {
+                    displayMode = 2;
+                }
+
+                ImGui.EndCombo();
+            }
+
+            if (displayMode != (int)this.Settings.DisplayMode)
+            {
+                this.Settings.DisplayMode = (BuffBarDisplayMode)displayMode;
+            }
+
+            ImGui.Checkbox("Hide in town / hideout", ref this.Settings.HideInTownOrHideout);
+            ImGui.Checkbox("Hide when game in background", ref this.Settings.HideWhenGameInBackground);
+            ImGui.Checkbox("Show inactive watchlist buffs", ref this.Settings.ShowInactiveWatchlist);
+            ImGui.Checkbox("Show durations", ref this.Settings.ShowDurations);
+            ImGui.Checkbox("Show stacks", ref this.Settings.ShowStacks);
+            ImGui.Checkbox("Auto-download poe2db icons", ref this.Settings.AutoDownloadWikiIcons);
+            ImGui.Checkbox("Count badge background", ref this.Settings.ShowResourceCountBackground);
+            ImGuiHelper.ToolTip(
+                "When off, charge/rage counts and buff stack numbers are drawn as text only (no black bar on the icon).");
+
+            ImGui.Spacing();
+        }
+
+        private bool DrawSettingsSection(string english, string id, ref bool isOpen)
+        {
+            var flags = ImGuiTreeNodeFlags.CollapsingHeader | ImGuiTreeNodeFlags.SpanFullWidth;
+            if (isOpen)
+            {
+                flags |= ImGuiTreeNodeFlags.DefaultOpen;
+            }
+
+            var opened = ImGui.TreeNodeEx($"{english}##PlayerBuffBar_{id}", flags);
+            isOpen = opened;
+            return opened;
+        }
+
+        /// <summary>Above map overlays (e.g. Wraedar); hidden while GameHelper settings are open.</summary>
+        private static ImDrawListPtr GetHudDrawList() => ImGui.GetForegroundDrawList();
+
+        /// <summary>PoE or GameHelper overlay/settings focused â€” not e.g. Discord.</summary>
         private static bool IsGameOrOverlayForeground() =>
             Core.Process.Foreground ||
             Process.GetCurrentProcess().MainWindowHandle == GetForegroundWindow();

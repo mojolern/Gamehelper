@@ -17,7 +17,7 @@ namespace AuraTracker
 {
     public sealed class AuraTracker : PCore<AuraTrackerSettings>
     {
-        private const string PluginVersion = "1.3.8.2";
+        private const string PluginVersion = "1.0.1";
 
         private readonly DpsTracker dpsTracker = new();
         private readonly MonsterCollector monsterCollector = new();

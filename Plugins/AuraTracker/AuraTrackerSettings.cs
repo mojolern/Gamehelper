@@ -12,6 +12,12 @@ namespace AuraTracker
         public float ScreenRangePx = 1800;    // “nearby” in screen space
         public int MaxEnemies = 5;
 
+        // Optional filters (e.g. tamable beasts + specific auras for Spirit Walker builds)
+        public bool OnlyBeasts = false;
+        public bool EnableAuraFilter = false;
+        public bool AuraFilterMatchAll = false; // false = match any listed aura; true = require all
+        public List<string> AuraFilters = new();
+
         public int ChipColorSeed = 0;
 
         // Show this rarity and above

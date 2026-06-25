@@ -6,7 +6,6 @@ namespace Autopot
     using System.Numerics;
     using ClickableTransparentOverlay.Win32;
     using GameHelper;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteObjects.Components;
@@ -90,35 +89,35 @@ namespace Autopot
 
         private void DrawVitalsColumn()
         {
-            ImGui.SeparatorText(L("Current Vitals", "Aktuelle Vitalwerte"));
-            DrawVitalBar(L("Life", "Leben"), lastVitals.HpPercent, new Vector4(0.85f, 0.15f, 0.15f, 1f));
-            DrawVitalBar(L("Energy Shield", "Energy Shield"), lastVitals.EsPercent, new Vector4(0.92f, 0.92f, 0.92f, 1f));
-            DrawVitalBar(L("Mana", "Mana"), lastVitals.MpPercent, new Vector4(0.2f, 0.45f, 0.95f, 1f));
+            ImGui.SeparatorText("Current Vitals");
+            DrawVitalBar("Life", lastVitals.HpPercent, new Vector4(0.85f, 0.15f, 0.15f, 1f));
+            DrawVitalBar("Energy Shield", lastVitals.EsPercent, new Vector4(0.92f, 0.92f, 0.92f, 1f));
+            DrawVitalBar("Mana", lastVitals.MpPercent, new Vector4(0.2f, 0.45f, 0.95f, 1f));
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Vitals Overlay", "Vitalwerte-Overlay"));
-            ImGui.Checkbox(L("Show in game", "Im Spiel anzeigen"), ref Settings.ShowVitalsOverlay);
+            ImGui.SeparatorText("Vitals Overlay");
+            ImGui.Checkbox("Show in game", ref Settings.ShowVitalsOverlay);
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Input Device", "Eingabegeraet"));
+            ImGui.SeparatorText("Input Device");
             DrawDeviceStatus();
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Bound Keys", "Belegte Tasten"));
-            ImGui.Text($"{L("Key 1", "Taste 1")}: {Settings.Key1}");
-            ImGui.Text($"{L("Key 2", "Taste 2")}: {Settings.Key2}");
+            ImGui.SeparatorText("Bound Keys");
+            ImGui.Text($"Key 1: {Settings.Key1}");
+            ImGui.Text($"Key 2: {Settings.Key2}");
         }
 
         private void DrawConfigurationColumn()
         {
-            ImGui.SeparatorText(L("Configuration", "Konfiguration"));
-            ImGui.Checkbox(L("Enable AutoPot", "AutoPot aktivieren"), ref Settings.EnableAutoPot);
+            ImGui.SeparatorText("Configuration");
+            ImGui.Checkbox("Enable AutoPot", ref Settings.EnableAutoPot);
             ImGui.SameLine();
             var statusColor = Settings.EnableAutoPot && serviceStatus == "Running"
                 ? new Vector4(0.3f, 1f, 0.3f, 1f)
                 : new Vector4(0.7f, 0.7f, 0.7f, 1f);
             ImGui.TextColored(statusColor,
-                $"{L("Service Status", "Dienststatus")}: {LocalizeServiceStatus(serviceStatus)}");
+                $"Service Status: {LocalizeServiceStatus(serviceStatus)}");
             if (!string.IsNullOrEmpty(statusDetail))
                 ImGuiHelper.ToolTip(LocalizeReason(statusDetail));
 
@@ -129,55 +128,52 @@ namespace Autopot
             DrawThresholdSliders();
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Safety (Auto-Logout)", "Sicherheit (Auto-Logout)"));
-            ImGui.TextDisabled(L(
-                "Returns to character select via connection drop.",
-                "Verbindungsabbruch bringt zur Charakterauswahl zurueck."));
+            ImGui.SeparatorText("Safety (Auto-Logout)");
+            ImGui.TextDisabled(
+                "Returns to character select via connection drop.");
             DrawSafetyLogoutRow(ref Settings.HpDisconnectEnabled, ref Settings.HpDisconnectPercent, "##hpdc", "HP");
             DrawSafetyLogoutRow(ref Settings.EsDisconnectEnabled, ref Settings.EsDisconnectPercent, "##esdc", "ES");
             DrawSafetyLogoutRow(ref Settings.MpDisconnectEnabled, ref Settings.MpDisconnectPercent, "##mpdc", "MP");
             ImGui.SetNextItemWidth(220);
             ImGui.SliderInt(
-                L("Cooldown after logout", "Abklingzeit nach Logout"),
+                "Cooldown after logout",
                 ref Settings.SafetyLogoutCooldownSeconds,
                 0,
                 600,
                 Settings.SafetyLogoutCooldownSeconds <= 0
-                    ? L("Off", "Aus")
+                    ? "Off"
                     : $"{Settings.SafetyLogoutCooldownSeconds} s");
-            ImGuiHelper.ToolTip(L(
-                "Prevents instant re-logout after reconnecting with low life/mana. 0 disables the timer.",
-                "Verhindert sofortigen erneuten Logout nach Wiedereinloggen bei niedrigen Werten. 0 = Timer aus."));
+            ImGuiHelper.ToolTip(
+                "Prevents instant re-logout after reconnecting with low life/mana. 0 disables the timer.");
             ImGui.Checkbox(
-                L("Re-arm only after vitals recover", "Erst wieder scharf wenn Werte erholt"),
+                "Re-arm only after vitals recover",
                 ref Settings.SafetyLogoutRequireRecovery);
-            ImGuiHelper.ToolTip(L(
-                "After a logout, auto-logout stays disabled until each enabled vital is above its threshold again.",
-                "Nach einem Logout bleibt Auto-Logout aus, bis jeder aktive Wert wieder ueber seinem Schwellenwert liegt."));
+            ImGuiHelper.ToolTip(
+                "After a logout, auto-logout stays disabled until each enabled vital is above its threshold again.");
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Hotkeys", "Hotkeys"));
-            DrawHotkeyRow("key1", L("Key 1 (Life/Hybrid)", "Taste 1 (Leben/Hybrid)"),
+            ImGui.SeparatorText("Hotkeys");
+            DrawHotkeyRow("key1", "Key 1 (Life/Hybrid)",
                 ref Settings.Key1Enabled, ref Settings.Key1);
-            DrawHotkeyRow("key2", L("Key 2 (Mana/Utility)", "Taste 2 (Mana/Utility)"),
+            DrawHotkeyRow("key2", "Key 2 (Mana/Utility)",
                 ref Settings.Key2Enabled, ref Settings.Key2);
 
             ImGui.Spacing();
-            ImGui.SeparatorText(L("Input Delays", "Eingabeverzoegerung"));
+            ImGui.SeparatorText("Input Delays");
             ImGui.SetNextItemWidth(220);
-            ImGui.SliderInt(L("Key1 Delay", "Taste-1-Verzoegerung"), ref Settings.Key1DelayMs, 100, 10000,
+            ImGui.SliderInt("Key1 Delay", ref Settings.Key1DelayMs, 100, 10000,
                 $"{Settings.Key1DelayMs} ms");
             ImGui.SetNextItemWidth(220);
-            ImGui.SliderInt(L("Key2 Delay", "Taste-2-Verzoegerung"), ref Settings.Key2DelayMs, 100, 10000,
+            ImGui.SliderInt("Key2 Delay", ref Settings.Key2DelayMs, 100, 10000,
                 $"{Settings.Key2DelayMs} ms");
 
             ImGui.Spacing();
-            ImGui.Checkbox(L("Run in hideout", "Im Versteck aktiv"), ref Settings.RunInHideout);
+            ImGui.Checkbox("Run in hideout", ref Settings.RunInHideout);
         }
 
         private void DrawLogicModeCombo()
         {
-            if (ImGui.BeginCombo(L("Logic Mode", "Logik-Modus"), LogicModeLabels.Display(Settings.LogicMode)))
+            if (ImGui.BeginCombo("Logic Mode", LogicModeLabels.Display(Settings.LogicMode)))
             {
                 foreach (var mode in LogicModeLabels.All)
                 {
@@ -205,7 +201,7 @@ namespace Autopot
                 {
                     LogicMode.EnergyShield => "ES",
                     LogicMode.ManaAndEs => "ES",
-                    LogicMode.HybridLifeEs => L("Life+ES", "Leben+ES"),
+                    LogicMode.HybridLifeEs => "Life+ES",
                     _ => "HP",
                 };
                 ImGui.SetNextItemWidth(220);
@@ -227,7 +223,7 @@ namespace Autopot
         {
             ImGui.Checkbox($"##en{sliderId}", ref enabled);
             ImGui.SameLine();
-            ImGui.Text(L("Logout at", "Logout bei"));
+            ImGui.Text("Logout at");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(180);
             ImGui.SliderInt(sliderId, ref thresholdPercent, 1, 99, $"%d%% {vitalLabel}");
@@ -248,28 +244,26 @@ namespace Autopot
         {
             bool vigem = InputDeviceStatus.IsViGEmBusInstalled();
             if (vigem)
-                ImGui.TextColored(new Vector4(0.3f, 1f, 0.3f, 1f), L("ViGEmBus: Installed", "ViGEmBus: Installiert"));
+                ImGui.TextColored(new Vector4(0.3f, 1f, 0.3f, 1f), "ViGEmBus: Installed");
             else
             {
                 ImGui.TextColored(new Vector4(1f, 0.35f, 0.35f, 1f),
-                    L("ViGEmBus: Not installed", "ViGEmBus: Nicht installiert"));
+                    "ViGEmBus: Not installed");
                 ImGui.SameLine();
-                if (ImGui.SmallButton(L("[Download]", "[Download]")))
+                if (ImGui.SmallButton("[Download]"))
                     System.Diagnostics.Process.Start(new ProcessStartInfo(InputDeviceStatus.ViGEmDownloadLink) { UseShellExecute = true });
             }
 
             bool controller = InputDeviceStatus.IsControllerConnected();
             if (controller)
-                ImGui.TextColored(new Vector4(0.3f, 1f, 0.3f, 1f), L("Controller: Detected", "Controller: Erkannt"));
+                ImGui.TextColored(new Vector4(0.3f, 1f, 0.3f, 1f), "Controller: Detected");
             else
                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1f),
-                    L("Controller: Not detected", "Controller: Nicht erkannt"));
+                    "Controller: Not detected");
 
-            ImGuiHelper.ToolTip(L(
+            ImGuiHelper.ToolTip(
                 "Keyboard autopot uses GameHelper key simulation (like AutoHotKey Trigger). " +
-                "ViGEmBus is optional and only needed for virtual-controller setups.",
-                "Tastatur-Autopot nutzt GameHelper-Tastensimulation (wie AutoHotKey Trigger). " +
-                "ViGEmBus ist optional und nur fuer virtuelle Controller noetig."));
+                "ViGEmBus is optional and only needed for virtual-controller setups.");
         }
 
         private static void DrawVitalBar(string label, int percent, Vector4 fillColor)
@@ -296,16 +290,16 @@ namespace Autopot
         {
             ImGui.SetNextWindowBgAlpha(0.55f);
             ImGui.SetNextWindowSize(new Vector2(220, 0), ImGuiCond.FirstUseEver);
-            if (!ImGui.Begin($"{L("AutoPot Vitals", "AutoPot Vitalwerte")}###AutopotVitals",
+            if (!ImGui.Begin($"AutoPot Vitals###AutopotVitals",
                     ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.AlwaysAutoResize))
             {
                 ImGui.End();
                 return;
             }
 
-            DrawVitalBar(L("Life", "Leben"), lastVitals.HpPercent, new Vector4(0.85f, 0.15f, 0.15f, 1f));
+            DrawVitalBar("Life", lastVitals.HpPercent, new Vector4(0.85f, 0.15f, 0.15f, 1f));
             DrawVitalBar("ES", lastVitals.EsPercent, new Vector4(0.92f, 0.92f, 0.92f, 1f));
-            DrawVitalBar(L("Mana", "Mana"), lastVitals.MpPercent, new Vector4(0.2f, 0.45f, 0.95f, 1f));
+            DrawVitalBar("Mana", lastVitals.MpPercent, new Vector4(0.2f, 0.45f, 0.95f, 1f));
             ImGui.End();
         }
 
@@ -316,13 +310,13 @@ namespace Autopot
 
             if (key1Trigger && key1Cooldown.ElapsedMilliseconds >= Settings.Key1DelayMs)
             {
-                if (MiscHelper.KeyUp(Settings.Key1, "Autopot/Key1"))
+                if (MiscHelper.KeyUp(Settings.Key1))
                     key1Cooldown.Restart();
             }
 
             if (key2Trigger && key2Cooldown.ElapsedMilliseconds >= Settings.Key2DelayMs)
             {
-                if (MiscHelper.KeyUp(Settings.Key2, "Autopot/Key2"))
+                if (MiscHelper.KeyUp(Settings.Key2))
                     key2Cooldown.Restart();
             }
         }
@@ -395,7 +389,7 @@ namespace Autopot
             safetyLogoutTriggered = true;
             safetyLogoutCooldown.Restart();
             safetyLogoutWaitingRecovery = Settings.SafetyLogoutRequireRecovery;
-            MiscHelper.KillTCPConnectionForProcess(Core.Process.Pid, "Autopot/SafetyLogout");
+            MiscHelper.KillTCPConnectionForProcess(Core.Process.Pid);
             statusDetail = $"Auto-logout triggered ({vital}).";
         }
 
@@ -569,12 +563,10 @@ namespace Autopot
             return true;
         }
 
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
-
         private static string LocalizeServiceStatus(string status) => status switch
         {
-            "Running" => L("Running", "Aktiv"),
-            "Stopped" => L("Stopped", "Gestoppt"),
+            "Running" => "Running",
+            "Stopped" => "Stopped",
             _ => status,
         };
 
@@ -585,56 +577,17 @@ namespace Autopot
 
             return reason switch
             {
-                "Enable AutoPot to start monitoring." => L(
-                    "Enable AutoPot to start monitoring.",
-                    "AutoPot aktivieren, um die Ueberwachung zu starten."),
-                "Monitoring vitals and pressing configured keys." => L(
-                    "Monitoring vitals and pressing configured keys.",
-                    "Vitalwerte werden ueberwacht und konfigurierte Tasten gedrueckt."),
-                "Game window is not in the foreground." => L(
-                    "Game window is not in the foreground.",
-                    "Spielfenster ist nicht im Vordergrund."),
-                "Player is in town." => L("Player is in town.", "Spieler ist in der Stadt."),
-                "Cannot read player Life component." => L(
-                    "Cannot read player Life component.",
-                    "Life-Komponente des Spielers nicht lesbar."),
-                "Player is dead." => L("Player is dead.", "Spieler ist tot."),
-                "Player has grace period." => L("Player has grace period.", "Spieler hat Gnadenfrist."),
-                "Player is in hideout (enable 'Run in hideout' to allow)." => L(
+                "Enable AutoPot to start monitoring." => "Enable AutoPot to start monitoring.",
+                "Monitoring vitals and pressing configured keys." => "Monitoring vitals and pressing configured keys.",
+                "Game window is not in the foreground." => "Game window is not in the foreground.",
+                "Player is in town." => "Player is in town.",
+                "Cannot read player Life component." => "Cannot read player Life component.",
+                "Player is dead." => "Player is dead.",
+                "Player has grace period." => "Player has grace period.",
+                "Player is in hideout (enable 'Run in hideout' to allow)." =>
                     "Player is in hideout (enable 'Run in hideout' to allow).",
-                    "Spieler ist im Versteck (\"Im Versteck aktiv\" erlauben)."),
-                _ when reason.StartsWith("Game state is ", StringComparison.Ordinal) => LocalizeGameStateReason(reason),
-                _ when reason.StartsWith("Auto-logout triggered (", StringComparison.Ordinal) => LocalizeAutoLogoutReason(reason),
                 _ => reason,
             };
-        }
-
-        private static string LocalizeGameStateReason(string reason)
-        {
-            if (!OverlayLocalization.IsGerman)
-                return reason;
-
-            const string prefix = "Game state is ";
-            var comma = reason.IndexOf(',', StringComparison.Ordinal);
-            if (comma < prefix.Length)
-                return reason;
-
-            var state = reason.Substring(prefix.Length, comma - prefix.Length);
-            return $"Spielstatus ist {state}, nicht InGameState.";
-        }
-
-        private static string LocalizeAutoLogoutReason(string reason)
-        {
-            if (!OverlayLocalization.IsGerman)
-                return reason;
-
-            const string prefix = "Auto-logout triggered (";
-            var end = reason.LastIndexOf(')');
-            if (end <= prefix.Length)
-                return L("Auto-logout triggered.", "Auto-Logout ausgeloest.");
-
-            var vital = reason.Substring(prefix.Length, end - prefix.Length);
-            return $"Auto-Logout ausgeloest ({vital}).";
         }
     }
 }

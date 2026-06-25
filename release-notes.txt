@@ -1,1 +1,6 @@
-﻿
+Core is now a 1:1 Gordin fork — cleaner merges and better plugin compatibility
+Distributed as a prebuilt binary with auto-update (no manual builds needed)
+New plugins: RunecraftHelper, LootTracker, LootValue
+Removed plugins: RuneforgeHelper, FarmTracker, MapKillCounter
+Old plugin folders are automatically cleaned up on update
+Updated game Offsets Big thx to Chunn

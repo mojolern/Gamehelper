@@ -63,6 +63,8 @@ namespace PlayerBuffBar
             ["herald_of_ash"] = "Herald_of_Ash",
             ["herald_of_ice"] = "Herald_of_Ice",
             ["herald_of_thunder"] = "Herald_of_Thunder",
+            ["refutation"] = "Refutation",
+            ["runic_fortress"] = "Refutation",
         };
 
         private static readonly Dictionary<string, string> DefaultDirectIcons = new(StringComparer.OrdinalIgnoreCase)
@@ -91,6 +93,14 @@ namespace PlayerBuffBar
             ["power_charge"] = "BuffIcons/chargeint.webp",
             ["frenzy_charge"] = "BuffIcons/chargedex.webp",
             ["endurance_charge"] = "BuffIcons/chargestr.webp",
+            ["refutation"] = "SkillIcons/Refutation.webp",
+            ["runic_fortress"] = "SkillIcons/Refutation.webp",
+        };
+
+        // Skill gem / display names whose in-game StatusEffects key differs from the watch id.
+        private static readonly Dictionary<string, string[]> SkillBuffKeyAliases = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["refutation"] = ["runic_fortress"],
         };
 
         internal static readonly string[] ResourceIconIds =
@@ -334,6 +344,14 @@ namespace PlayerBuffBar
             if (!string.Equals(withoutOf, underscored, StringComparison.OrdinalIgnoreCase))
             {
                 yield return withoutOf;
+            }
+
+            if (SkillBuffKeyAliases.TryGetValue(watchId, out var aliases))
+            {
+                foreach (var alias in aliases)
+                {
+                    yield return alias;
+                }
             }
         }
 

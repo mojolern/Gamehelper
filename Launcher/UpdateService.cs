@@ -383,17 +383,26 @@ namespace Launcher
             var updateRoot = Path.Combine(Path.GetTempPath(), "GameHelperUpdate");
             var scriptPath = Path.Combine(Path.GetTempPath(), $"GameHelperUpdate-install-{pid}.bat");
 
-            var script = string.Join(
-                Environment.NewLine,
+            var removeDirs = ReadRemoveFolders(tempDir, stagedInstallDir!);
+            var removeLines = removeDirs
+                .Select(dir => $"if exist {QuoteBatchPath(dir)} rd /s /q {QuoteBatchPath(dir)}")
+                .ToList();
+
+            var scriptLines = new List<string>
+            {
                 "@echo off",
                 ":wait",
                 $"tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL",
                 "if %ERRORLEVEL%==0 (timeout /t 1 /nobreak >nul & goto wait)",
                 "timeout /t 1 /nobreak >nul",
-                $"robocopy {QuoteBatchPath(tempDir)} {QuoteBatchPath(stagedInstallDir!)} /E /COPY:DAT /R:5 /W:2 /NFL /NDL /NJH /NJS /NC /NS /NP /XF _staging.json",
-                $"start \"\" /D {QuoteBatchPath(stagedInstallDir!)} {QuoteBatchPath(launcherPath)}",
-                $"rd /s /q {QuoteBatchPath(updateRoot)}",
-                "del \"%~f0\"");
+            };
+            scriptLines.AddRange(removeLines);
+            scriptLines.Add($"robocopy {QuoteBatchPath(tempDir)} {QuoteBatchPath(stagedInstallDir!)} /E /COPY:DAT /R:5 /W:2 /NFL /NDL /NJH /NJS /NC /NS /NP /XF _staging.json");
+            scriptLines.Add($"start \"\" /D {QuoteBatchPath(stagedInstallDir!)} {QuoteBatchPath(launcherPath)}");
+            scriptLines.Add($"rd /s /q {QuoteBatchPath(updateRoot)}");
+            scriptLines.Add("del \"%~f0\"");
+
+            var script = string.Join(Environment.NewLine, scriptLines);
             File.WriteAllText(scriptPath, script);
 
             var started = Process.Start(new ProcessStartInfo
@@ -415,6 +424,63 @@ namespace Launcher
             }
 
             LauncherLog.Write($"Update install gestartet (PID {started.Id}) fuer {launcherName}");
+        }
+
+        private static IEnumerable<string> ReadRemoveFolders(string tempDir, string installDir)
+        {
+            var stagingJson = Path.Combine(tempDir, "_staging.json");
+            if (!File.Exists(stagingJson))
+            {
+                yield break;
+            }
+
+            JArray? remove;
+            try
+            {
+                var manifest = JObject.Parse(File.ReadAllText(stagingJson));
+                remove = manifest["remove"] as JArray;
+            }
+            catch
+            {
+                yield break;
+            }
+
+            if (remove == null)
+            {
+                yield break;
+            }
+
+            var pluginsRoot = Path.Combine(installDir, "Plugins");
+            foreach (var token in remove)
+            {
+                var rel = token?.ToString()?.Trim().Replace('/', Path.DirectorySeparatorChar);
+                if (string.IsNullOrWhiteSpace(rel))
+                {
+                    continue;
+                }
+
+                if (!UpdatePathSecurity.TryResolvePath(installDir, rel, out var fullPath))
+                {
+                    LauncherLog.Write($"Update remove: unsafe path skipped: {rel}");
+                    continue;
+                }
+
+                // Only allow direct subdirectories of Plugins\
+                if (!fullPath.StartsWith(pluginsRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    LauncherLog.Write($"Update remove: non-Plugins path rejected: {rel}");
+                    continue;
+                }
+
+                var nameOnly = fullPath.Substring(pluginsRoot.Length + 1);
+                if (nameOnly.Contains(Path.DirectorySeparatorChar))
+                {
+                    LauncherLog.Write($"Update remove: nested path rejected: {rel}");
+                    continue;
+                }
+
+                yield return fullPath;
+            }
         }
 
         private static string GetStagingDirectory(string version) =>

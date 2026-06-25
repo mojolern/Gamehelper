@@ -10,6 +10,10 @@ runtime-backup/
 *.user
 *.suo
 
+# Wartungs-Tool (maintain.ps1)
+.version-override
+.gordin-last-sync
+
 # Runtime / lokale Daten
 imgui.ini
 tempFileLocations.dat
@@ -28,11 +32,12 @@ Plugins/AuraTracker/bin/
 Plugins/AuraTracker/obj/
 Plugins/SimpleBars/bin/
 Plugins/SimpleBars/obj/
-Plugins/MapKillCounter/bin/
-Plugins/MapKillCounter/obj/
-Plugins/FarmTracker/bin/
-Plugins/FarmTracker/obj/
-Plugins/RunecraftHelper/
+Plugins/RunecraftHelper/bin/
+Plugins/RunecraftHelper/obj/
+Plugins/LootTracker/bin/
+Plugins/LootTracker/obj/
+Plugins/LootValue/bin/
+Plugins/LootValue/obj/
 
 # Alte Deployment-Binaerdateien im Root
 /*.exe

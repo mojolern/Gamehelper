@@ -1,4 +1,4 @@
-// <copyright file="PManager.cs" company="None">
+﻿// <copyright file="PManager.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -9,12 +9,9 @@ namespace GameHelper.Plugin
     using System.IO;
     using System.Linq;
     using System.Reflection;
-    using System.Security.Cryptography;
     using System.Threading.Tasks;
-    using Shared.UpdateSecurity;
     using Coroutine;
     using CoroutineEvents;
-    using Newtonsoft.Json.Linq;
     using CTOUtils = ClickableTransparentOverlay.Win32.Utils;
     using Settings;
     using Ui;
@@ -180,14 +177,6 @@ namespace GameHelper.Plugin
         {
             try
             {
-                var pluginsRoot = Path.GetFullPath(State.PluginsDirectory.FullName);
-                var pluginRoot = Path.GetFullPath(pluginDirectory.FullName);
-                if (!UpdatePathSecurity.IsPathInsideRoot(pluginsRoot, pluginRoot))
-                {
-                    Console.WriteLine($"Rejected plugin directory outside Plugins root: {pluginDirectory.FullName}");
-                    return null;
-                }
-
                 var dllFile = pluginDirectory.GetFiles(
                     $"{pluginDirectory.Name}*.dll",
                     SearchOption.TopDirectoryOnly).FirstOrDefault();
@@ -196,18 +185,6 @@ namespace GameHelper.Plugin
                     Console.WriteLine($"Couldn't find plugin dll with name {pluginDirectory.Name}" +
                                       $" in directory {pluginDirectory.FullName}." +
                                       " Please make sure DLL & the plugin got same name.");
-                    return null;
-                }
-
-                if (!UpdatePathSecurity.IsPathInsideRoot(pluginRoot, dllFile.FullName))
-                {
-                    Console.WriteLine($"Rejected plugin dll outside plugin folder: {dllFile.FullName}");
-                    return null;
-                }
-
-                if (!VerifyPluginDllHash(dllFile.FullName))
-                {
-                    Console.WriteLine($"Rejected plugin dll due to hash mismatch: {dllFile.FullName}");
                     return null;
                 }
 
@@ -220,22 +197,6 @@ namespace GameHelper.Plugin
                 Console.WriteLine($"Failed to load plugin {pluginDirectory.FullName} due to {e}");
                 return null;
             }
-        }
-
-        private static bool VerifyPluginDllHash(string dllPath)
-        {
-            var installRoot = AppContext.BaseDirectory;
-            var relativePath = Path.GetRelativePath(installRoot, dllPath).Replace('\\', '/');
-            // No catalog entry: allow (legacy installs / dev). Entries come from signed ZIP manifests.
-            if (!UpdateFileHashesCatalog.TryGetExpectedHash(installRoot, relativePath, out var expectedHash))
-            {
-                return true;
-            }
-
-            using var sha = SHA256.Create();
-            using var stream = File.OpenRead(dllPath);
-            var actualHash = Convert.ToHexString(sha.ComputeHash(stream));
-            return actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase);
         }
 
 
@@ -292,57 +253,9 @@ namespace GameHelper.Plugin
             }
         }
 
-        internal static void RequestSaveAllSettings()
-        {
-            CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
-        }
-
-        private static Dictionary<string, PluginMetadata> LoadPluginsMetadataDictionary()
-        {
-            var file = State.PluginsMetadataFile;
-            file.Directory?.Create();
-            if (!file.Exists)
-            {
-                return new Dictionary<string, PluginMetadata>();
-            }
-
-            try
-            {
-                var root = JObject.Parse(File.ReadAllText(file.FullName));
-                var result = new Dictionary<string, PluginMetadata>(StringComparer.Ordinal);
-                foreach (var prop in root.Properties())
-                {
-                    var enable = prop.Value["Enable"]?.Value<bool>() ?? false;
-                    var autoStart = prop.Value["AutoStart"]?.Value<bool>() ?? enable;
-                    result[prop.Name] = new PluginMetadata
-                    {
-                        Enable = autoStart,
-                        AutoStart = autoStart,
-                    };
-                }
-
-                if (result.Remove("RunecraftHelper", out var legacyRunecraft) && !result.ContainsKey("RuneforgeHelper"))
-                {
-                    result["RuneforgeHelper"] = legacyRunecraft;
-                }
-
-                if (result.Remove("Autopot", out var legacyAutopot) && !result.ContainsKey("AutoPot"))
-                {
-                    result["AutoPot"] = legacyAutopot;
-                }
-
-                return result;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[PManager] plugins.json load failed: {ex.Message}");
-                return new Dictionary<string, PluginMetadata>();
-            }
-        }
-
         private static void LoadPluginMetadata(IEnumerable<PluginWithName> plugins)
         {
-            var metadata = LoadPluginsMetadataDictionary();
+            var metadata = JsonHelper.CreateOrLoadJsonFile<Dictionary<string, PluginMetadata>>(State.PluginsMetadataFile);
             var newContainers = plugins.Select(
                 x => new PluginContainer(
                     x.Name,
@@ -362,24 +275,9 @@ namespace GameHelper.Plugin
 
         private static void EnablePluginIfRequired(PluginContainer container)
         {
-            if (!container.Metadata.AutoStart)
-            {
-                container.Metadata.Enable = false;
-                return;
-            }
-
-            container.Metadata.Enable = true;
-
-            try
+            if (container.Metadata.Enable)
             {
                 container.Plugin.OnEnable(Core.Process.Address != IntPtr.Zero);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Plugin '{container.Name}' konnte nicht gestartet werden: {ex.Message}");
-                container.Metadata.Enable = false;
-                container.Metadata.AutoStart = false;
-                SavePluginMetadata();
             }
         }
 
@@ -389,11 +287,6 @@ namespace GameHelper.Plugin
             lock (Plugins)
             {
                 snapshot = Plugins.ToDictionary(x => x.Name, x => x.Metadata);
-            }
-
-            foreach (var meta in snapshot.Values)
-            {
-                meta.Enable = meta.AutoStart;
             }
 
             JsonHelper.SafeToFile(snapshot, State.PluginsMetadataFile);
@@ -421,6 +314,15 @@ namespace GameHelper.Plugin
 
                 foreach (var container in snapshot)
                 {
+                    // Only save enabled plugins. Disabled plugins never had OnEnable
+                    // called, so they never loaded their settings file from disk - their
+                    // in-memory Settings is still the empty `new TSettings()` default.
+                    // Saving that would overwrite (wipe) the user's saved config on disk.
+                    if (!container.Metadata.Enable)
+                    {
+                        continue;
+                    }
+
                     try
                     {
                         container.Plugin.SaveSettings();

@@ -13,9 +13,30 @@ namespace PlayerBuffBar
         IconsAndText,
     }
 
+    public sealed class BuffBarSlotSettings
+    {
+        public bool Enabled = true;
+
+        public bool AnchorToHealthBar = true;
+
+        public bool ShowPositionDummy;
+
+        public float IconSize = 28f;
+
+        public float IconSpacing = 4f;
+
+        public Vector2 ScreenOffset = new(0f, 36f);
+
+        public Vector2 FixedPosition = new(40f, 520f);
+
+        public List<string> Watchlist = new();
+    }
+
     public sealed class PlayerBuffBarSettings : IPSettings
     {
-        public int SettingsVersion = 5;
+        public const int MaxBuffBars = 4;
+
+        public int SettingsVersion = 9;
 
         public bool ShowOverlay = true;
 
@@ -53,7 +74,21 @@ namespace PlayerBuffBar
 
         public Vector4 ChargeTextColor = new(1f, 0.92f, 0.35f, 1f);
 
+        public Vector4 BuffTextColor = new(1f, 1f, 1f, 1f);
+
         public Vector4 RageTextColor = new(1f, 0.45f, 0.2f, 1f);
+
+        public bool SettingsResourceBarSectionOpen;
+
+        public bool SettingsBuffBarsSectionOpen;
+
+        public bool SettingsBuffDisplaySectionOpen;
+
+        public bool SettingsIconsToolsSectionOpen;
+
+        public int SelectedBuffBarTab;
+
+        public List<BuffBarSlotSettings> BuffBars = new();
 
         // Resource row (power / frenzy / endurance charges + rage stat)
         public bool ResourceAnchorToHealthBar = true;
@@ -68,7 +103,11 @@ namespace PlayerBuffBar
 
         public Vector2 ResourceFixedPosition = new(40f, 480f);
 
-        // Buff watchlist row
+        // Legacy (migrated into BuffBars[0] on load)
+        public bool SettingsBuffBarSectionOpen;
+
+        public bool SettingsWatchlistSectionOpen;
+
         public bool BuffAnchorToHealthBar = true;
 
         public bool BuffShowPositionDummy;
@@ -81,7 +120,6 @@ namespace PlayerBuffBar
 
         public Vector2 BuffFixedPosition = new(40f, 520f);
 
-        // Legacy fields (migrated into resource/buff settings on load)
         public bool AnchorToHealthBar = true;
 
         public float IconSize = 28f;
@@ -95,6 +133,39 @@ namespace PlayerBuffBar
         public bool WatchlistUserConfigured;
 
         public List<string> Watchlist = new();
+
+        public void EnsureBuffBarSlots()
+        {
+            while (this.BuffBars.Count < MaxBuffBars)
+            {
+                var index = this.BuffBars.Count;
+                this.BuffBars.Add(CreateDefaultBuffBarSlot(index));
+            }
+
+            if (this.BuffBars.Count > MaxBuffBars)
+            {
+                this.BuffBars = this.BuffBars.Take(MaxBuffBars).ToList();
+            }
+        }
+
+        public IEnumerable<string> GetAllWatchIds() =>
+            this.BuffBars
+                .SelectMany(bar => bar.Watchlist)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .Where(id => !BuffIconCatalog.IsReservedResourceWatchId(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        public static BuffBarSlotSettings CreateDefaultBuffBarSlot(int index) => new()
+        {
+            Enabled = index == 0,
+            AnchorToHealthBar = true,
+            IconSize = 28f,
+            IconSpacing = 4f,
+            ScreenOffset = new Vector2(0f, 36f + index * 36f),
+            FixedPosition = new Vector2(40f, 520f + index * 36f),
+            Watchlist = index == 0 ? CreateDefaultWatchlist().ToList() : new List<string>(),
+        };
 
         public static IReadOnlyList<string> CreateDefaultWatchlist() => DefaultWatchlist;
 

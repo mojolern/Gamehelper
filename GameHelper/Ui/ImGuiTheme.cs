@@ -1,10 +1,14 @@
+// <copyright file="ImGuiTheme.cs" company="None">
+// Copyright (c) None. All rights reserved.
+// </copyright>
+
 namespace GameHelper.Ui
 {
     using System.Numerics;
     using ImGuiNET;
 
     /// <summary>
-    ///     Zentrales dunkles Theme fuer alle GameHelper-Fenster.
+    ///     Central dark theme for all GameHelper windows.
     /// </summary>
     internal static class ImGuiTheme
     {

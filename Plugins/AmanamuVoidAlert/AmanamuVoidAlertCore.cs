@@ -9,7 +9,6 @@ namespace AmanamuVoidAlert
     using Coroutine;
     using GameHelper;
     using GameHelper.CoroutineEvents;
-    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using GameHelper.RemoteEnums.Entity;
@@ -74,43 +73,40 @@ namespace AmanamuVoidAlert
 
         public override void DrawSettings()
         {
-            ImGui.Checkbox(L("Enable overlay", "Overlay aktivieren"), ref this.Settings.EnableOverlay);
-            ImGui.Checkbox(L("Show debug window", "Debug-Fenster anzeigen"), ref this.Settings.ShowDebugWindow);
-            ImGui.Checkbox(L("Draw on-screen labels", "Labels auf dem Bildschirm"), ref this.Settings.DrawOnScreenLabels);
-            ImGui.Checkbox(L("Draw off-screen / edge arrows", "Pfeile am Bildschirmrand"), ref this.Settings.DrawOffscreenArrows);
+            ImGui.Checkbox("Enable overlay", ref this.Settings.EnableOverlay);
+            ImGui.Checkbox("Show debug window", ref this.Settings.ShowDebugWindow);
+            ImGui.Checkbox("Draw on-screen labels", ref this.Settings.DrawOnScreenLabels);
+            ImGui.Checkbox("Draw off-screen / edge arrows", ref this.Settings.DrawOffscreenArrows);
             ImGui.Checkbox(
-                L("Draw edge arrow even when monster is on screen", "Rand-Pfeil auch bei sichtbarem Monster"),
+                "Draw edge arrow even when monster is on screen",
                 ref this.Settings.DrawEdgeArrowForOnScreenMonsters);
-            ImGui.Checkbox(L("Draw circle around monster", "Kreis um Monster"), ref this.Settings.DrawCircle);
-            ImGui.Checkbox(L("Only rare / unique monsters", "Nur selten / einzigartig"), ref this.Settings.OnlyRareOrUnique);
-            ImGui.Checkbox(L("Log newly detected monsters", "Neue Monster in Konsole loggen"), ref this.Settings.LogNewDetections);
+            ImGui.Checkbox("Draw circle around monster", ref this.Settings.DrawCircle);
+            ImGui.Checkbox("Only rare / unique monsters", ref this.Settings.OnlyRareOrUnique);
+            ImGui.Checkbox("Log newly detected monsters", ref this.Settings.LogNewDetections);
 
             ImGui.Separator();
-            ImGui.SliderFloat(L("Max tracking distance", "Max. Tracking-Distanz"), ref this.Settings.MaxDistance, 500f, 8000f, "%.0f");
-            ImGui.SliderFloat(L("Forget after seconds", "Vergessen nach Sekunden"), ref this.Settings.ForgetAfterSeconds, 1f, 30f, "%.1f");
+            ImGui.SliderFloat("Max tracking distance", ref this.Settings.MaxDistance, 500f, 8000f, "%.0f");
+            ImGui.SliderFloat("Forget after seconds", ref this.Settings.ForgetAfterSeconds, 1f, 30f, "%.1f");
             ImGui.SliderFloat(
-                L("Forget missing live entity after seconds", "Lebendes Entity fehlt nach Sek."),
+                "Forget missing live entity after seconds",
                 ref this.Settings.MissingEntityForgetSeconds,
                 0.2f,
                 5f,
                 "%.2f");
-            ImGui.SliderFloat(L("Label Y offset", "Label Y-Offset"), ref this.Settings.LabelYOffset, 20f, 140f, "%.0f");
-            ImGui.SliderFloat(L("Circle radius", "Kreisradius"), ref this.Settings.CircleRadius, 12f, 80f, "%.0f");
-            ImGui.SliderFloat(L("Arrow edge margin", "Pfeil Randabstand"), ref this.Settings.ArrowEdgeMargin, 30f, 160f, "%.0f");
-            ImGui.SliderFloat(L("Proxy distance", "Proxy-Distanz"), ref this.Settings.ProxyDistance, 200f, 2000f, "%.0f");
+            ImGui.SliderFloat("Label Y offset", ref this.Settings.LabelYOffset, 20f, 140f, "%.0f");
+            ImGui.SliderFloat("Circle radius", ref this.Settings.CircleRadius, 12f, 80f, "%.0f");
+            ImGui.SliderFloat("Arrow edge margin", ref this.Settings.ArrowEdgeMargin, 30f, 160f, "%.0f");
+            ImGui.SliderFloat("Proxy distance", ref this.Settings.ProxyDistance, 200f, 2000f, "%.0f");
 
             ImGui.Separator();
-            ImGui.TextWrapped(L(
-                $"Primary detection: MonsterMod {ExpectedMonsterModId} or path contains LightlessWells.",
-                $"Primaer-Erkennung: MonsterMod {ExpectedMonsterModId} oder Pfad enthaelt LightlessWells."));
-            ImGui.TextWrapped(L(
-                $"Inside cloud: buff contains '{BuffInsideCloud}'.",
-                $"In der Cloud: Buff enthaelt '{BuffInsideCloud}'."));
-            ImGui.TextWrapped(L(
-                $"Fallback: any buff containing '{BuffPrefixAbyssLightlessWell}'.",
-                $"Fallback: Buff mit '{BuffPrefixAbyssLightlessWell}'."));
+            ImGui.TextWrapped(
+                $"Primary detection: MonsterMod {ExpectedMonsterModId} or path contains LightlessWells.");
+            ImGui.TextWrapped(
+                $"Inside cloud: buff contains '{BuffInsideCloud}'.");
+            ImGui.TextWrapped(
+                $"Fallback: any buff containing '{BuffPrefixAbyssLightlessWell}'.");
 
-            if (ImGui.Button(L("Clear tracked monsters", "Getrackte Monster loeschen")))
+            if (ImGui.Button("Clear tracked monsters"))
             {
                 this.tracked.Clear();
             }
@@ -374,8 +370,8 @@ namespace AmanamuVoidAlert
                     if (this.Settings.DrawOnScreenLabels)
                     {
                         var state = tracked.InsideCloud
-                            ? L("INSIDE CLOUD", "IN DER CLOUD")
-                            : L("OUTSIDE CLOUD", "AUSSERHALB CLOUD");
+                            ? "INSIDE CLOUD"
+                            : "OUTSIDE CLOUD";
                         var label = $"AMANAMU VOID\n{state}\n{tracked.Distance:0}";
                         var textSize = ImGui.CalcTextSize(label);
                         var textPos = new Vector2(
@@ -428,27 +424,27 @@ namespace AmanamuVoidAlert
         private void DrawDebugWindow(AreaInstance area)
         {
             ImGui.SetNextWindowSize(new Vector2(820f, 460f), ImGuiCond.FirstUseEver);
-            if (!ImGui.Begin(L("Amanamu Void Alert Debug", "Amanamu Void Alert Debug") + "###AmanamuVoidAlertDebug", ref this.Settings.ShowDebugWindow))
+            if (!ImGui.Begin("Amanamu Void Alert Debug###AmanamuVoidAlertDebug", ref this.Settings.ShowDebugWindow))
             {
                 ImGui.End();
                 return;
             }
 
             var areaName = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.Name;
-            ImGui.Text($"{L("Area", "Area")}: {areaName}");
-            ImGui.Text($"{L("Tracked monsters", "Getrackte Monster")}: {this.tracked.Count}");
+            ImGui.Text($"Area: {areaName}");
+            ImGui.Text($"Tracked monsters: {this.tracked.Count}");
             ImGui.Text($"MonsterMod: {ExpectedMonsterModId}");
             ImGui.Text($"Metadata: {ExpectedMonsterModMetadata}");
-            ImGui.Text($"{L("Inside-cloud buff", "In-Cloud-Buff")}: {BuffInsideCloud}");
+            ImGui.Text($"Inside-cloud buff: {BuffInsideCloud}");
 
             ImGui.Separator();
-            if (ImGui.Button(L("Clear tracked", "Tracking loeschen")))
+            if (ImGui.Button("Clear tracked"))
             {
                 this.tracked.Clear();
             }
 
             ImGui.SameLine();
-            if (ImGui.Button(L("Save settings", "Einstellungen speichern")))
+            if (ImGui.Button("Save settings"))
             {
                 this.SaveSettings();
             }
@@ -457,11 +453,11 @@ namespace AmanamuVoidAlert
             if (ImGui.BeginTable("##tracked_amanamu", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.RowBg | ImGuiTableFlags.Resizable | ImGuiTableFlags.ScrollY, new Vector2(0f, 300f)))
             {
                 ImGui.TableSetupColumn("ID");
-                ImGui.TableSetupColumn(L("Path", "Pfad"));
-                ImGui.TableSetupColumn(L("Dist", "Dist"));
-                ImGui.TableSetupColumn(L("Cloud", "Cloud"));
-                ImGui.TableSetupColumn(L("Mod", "Mod"));
-                ImGui.TableSetupColumn(L("Buffs", "Buffs"));
+                ImGui.TableSetupColumn("Path");
+                ImGui.TableSetupColumn("Dist");
+                ImGui.TableSetupColumn("Cloud");
+                ImGui.TableSetupColumn("Mod");
+                ImGui.TableSetupColumn("Buffs");
                 ImGui.TableHeadersRow();
 
                 foreach (var tracked in this.tracked.Values.OrderBy(t => t.Distance))
@@ -751,8 +747,6 @@ namespace AmanamuVoidAlert
                 this.tracked.Clear();
             }
         }
-
-        private static string L(string english, string german) => OverlayLocalization.L(english, german);
 
         private sealed class BuffScanResult
         {

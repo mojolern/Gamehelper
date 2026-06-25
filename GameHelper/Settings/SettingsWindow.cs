@@ -18,7 +18,6 @@ namespace GameHelper.Settings
     using GameOffsets.Objects.States.InGameState;
     using GameHelper.RemoteEnums.Entity;
     using GameHelper.RemoteEnums;
-    using GameHelper.Localization;
     using GameHelper.Ui;
 
     /// <summary>
@@ -26,21 +25,9 @@ namespace GameHelper.Settings
     /// </summary>
     internal static class SettingsWindow
     {
+        private static Vector4 color = new(1f, 1f, 0f, 1f);
         private static bool isOverlayRunningLocal = true;
         private static bool isSettingsWindowVisible = true;
-        private static bool isGeneralWindowVisible;
-        private static bool isPluginsWindowVisible;
-        private static Vector2 mainWindowPos;
-        private static Vector2 mainWindowSize;
-
-        internal static Vector2 MainWindowPos => mainWindowPos;
-
-        internal static Vector2 MainWindowSize => mainWindowSize;
-
-        internal static bool IsSettingsWindowVisible => isSettingsWindowVisible;
-
-        private const float GeneralDockWidth = 520f;
-        private const float PluginsDockWidth = 460f;
 
         private static EntityFilterType efilterType = EntityFilterType.PATH;
         private static string filterText = string.Empty;
@@ -86,10 +73,10 @@ namespace GameHelper.Settings
             ImGui.SameLine();
             ImGui.TextDisabled("|");
             ImGui.SameLine();
-            ImGui.TextDisabled($"{OverlayLocalization.L("Hide/show menu", "Menue ein/aus")}: {Core.GHSettings.MainMenuHotKey}");
+            ImGui.TextDisabled($"Hide/show menu: {Core.GHSettings.MainMenuHotKey}");
 
 #if DEBUG
-            ImGui.SameLine(ImGui.GetWindowWidth() - 280f);
+            ImGui.SameLine();
             ImGui.Checkbox("ImGui Demo", ref showImGuiDemo);
             if (showImGuiDemo)
             {
@@ -97,122 +84,53 @@ namespace GameHelper.Settings
             }
 #endif
 
-            const string forkCredit = "Fork by MordWraith · basis Lafko / Gordin";
-            var forkWidth = ImGui.CalcTextSize(forkCredit).X;
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + Math.Max(0f, ImGui.GetContentRegionAvail().X - forkWidth));
-            ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.TextMuted);
-            ImGui.Text(forkCredit);
-            ImGui.PopStyleColor();
-
             ImGui.EndMenuBar();
         }
 
-        private static void DrawHubToolbar()
+        private static void DrawTabs()
         {
-            if (ImGui.Button(OverlayLocalization.L("General", "Allgemein"), new Vector2(130, 28)))
+            if (ImGui.BeginTabBar("settingsTabBar", ImGuiTabBarFlags.AutoSelectNewTabs | ImGuiTabBarFlags.Reorderable))
             {
-                isGeneralWindowVisible = !isGeneralWindowVisible;
+                if (ImGui.BeginTabItem("General"))
+                {
+                    if (ImGui.BeginChild("GeneralChildSetting"))
+                    {
+                        DrawCoreSettings();
+                    }
+
+                    ImGui.EndChild();
+                    ImGui.EndTabItem();
+                }
+
+                if (ImGui.BeginTabItem("Plugins"))
+                {
+                    if (ImGui.BeginChild("PluginsChildSetting"))
+                    {
+                        DrawPluginManager();
+                    }
+
+                    ImGui.EndChild();
+                    ImGui.EndTabItem();
+                }
+
+                DrawPluginSettingsTabs();
+
+                ImGui.EndTabBar();
             }
-
-            ImGui.SameLine();
-            if (ImGui.Button(OverlayLocalization.L("Plugins", "Plugins"), new Vector2(130, 28)))
-            {
-                isPluginsWindowVisible = !isPluginsWindowVisible;
-            }
-
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.TextMuted);
-            ImGui.Text(OverlayLocalization.L("Docked left of this window.", "Links an dieses Fenster angedockt."));
-            ImGui.PopStyleColor();
-
-            var logLabel = OverlayLocalization.L("Log", "Log");
-            var logButtonWidth = 130f;
-            var logWasVisible = ActivityLogWindow.IsVisible;
-            ImGui.SameLine();
-            ImGui.SetCursorPosX(ImGui.GetWindowWidth() - ImGui.GetStyle().WindowPadding.X - logButtonWidth);
-            if (logWasVisible)
-            {
-                ImGui.PushStyleColor(ImGuiCol.Button, ImGuiTheme.AccentMuted);
-                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, ImGuiTheme.Accent);
-            }
-
-            if (ImGui.Button(logLabel, new Vector2(logButtonWidth, 28)))
-            {
-                ActivityLogWindow.ToggleVisible();
-            }
-
-            if (logWasVisible)
-            {
-                ImGui.PopStyleColor(2);
-            }
-
-            ImGui.Spacing();
         }
 
-        private static void DrawDockedSideWindow(ref bool visible, string title, float width, float offsetFromMainRight, Action drawBody)
+        /// <summary>
+        ///     Draws the per-plugin settings tabs for every enabled plugin.
+        /// </summary>
+        private static void DrawPluginSettingsTabs()
         {
-            if (!visible)
+            foreach (var container in PManager.Plugins)
             {
-                return;
-            }
+                if (!container.Metadata.Enable)
+                {
+                    continue;
+                }
 
-            var pos = new Vector2(mainWindowPos.X - offsetFromMainRight, mainWindowPos.Y);
-            var size = new Vector2(width, Math.Max(mainWindowSize.Y, 300f));
-
-            ImGui.SetNextWindowPos(pos, ImGuiCond.Always);
-            ImGui.SetNextWindowSize(size, ImGuiCond.Always);
-
-            if (!ImGui.Begin(title, ref visible, ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse))
-            {
-                ImGui.End();
-                return;
-            }
-
-            drawBody();
-            ImGui.End();
-        }
-
-        private static float GetPluginsDockOffset()
-        {
-            return PluginsDockWidth;
-        }
-
-        private static float GetGeneralDockOffset()
-        {
-            var offset = GeneralDockWidth;
-            if (isPluginsWindowVisible)
-            {
-                offset += PluginsDockWidth;
-            }
-
-            return offset;
-        }
-
-        private static void DrawPluginTabs()
-        {
-            ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Plugin settings", "Plugin-Einstellungen"),
-                OverlayLocalization.L(
-                    "Configure active plugins here. Use the buttons above for global options.",
-                    "Aktive Plugins hier konfigurieren. Buttons oben fuer globale Optionen."));
-
-            var enabledPlugins = PManager.Plugins.Where(p => p.Metadata.Enable).ToList();
-            if (enabledPlugins.Count == 0)
-            {
-                ImGui.TextDisabled(OverlayLocalization.L(
-                    "No active plugins. Open Plugins to enable some.",
-                    "Keine aktiven Plugins. Unter Plugins welche aktivieren."));
-                return;
-            }
-
-            if (!ImGui.BeginTabBar("pluginSettingsBar", ImGuiTabBarFlags.AutoSelectNewTabs | ImGuiTabBarFlags.Reorderable))
-            {
-                return;
-            }
-
-            foreach (var container in enabledPlugins)
-            {
                 ImGui.PushStyleColor(ImGuiCol.Tab, new Vector4(0.16f, 0.20f, 0.30f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.TabHovered, new Vector4(0.28f, 0.38f, 0.55f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.TabSelected, ImGuiTheme.Accent);
@@ -228,108 +146,45 @@ namespace GameHelper.Settings
 
                 ImGui.PopStyleColor(4);
             }
-
-            ImGui.EndTabBar();
         }
 
-        private static void DrawGeneralWindow()
-        {
-            var title = $"{OverlayLocalization.L("General", "Allgemein")} | GameHelper###GameHelperGeneralPanel";
-            DrawDockedSideWindow(
-                ref isGeneralWindowVisible,
-                title,
-                GeneralDockWidth,
-                GetGeneralDockOffset(),
-                () =>
-                {
-                    ImGuiTheme.BeginPanel("GeneralContentPanel");
-                    DrawCoreSettings();
-                    ImGuiTheme.EndPanel();
-                });
-        }
-
-        private static void DrawPluginsWindow()
-        {
-            var title = $"{OverlayLocalization.L("Plugins", "Plugins")} | GameHelper###GameHelperPluginsPanel";
-            DrawDockedSideWindow(
-                ref isPluginsWindowVisible,
-                title,
-                PluginsDockWidth,
-                GetPluginsDockOffset(),
-                () =>
-                {
-                    ImGuiTheme.BeginPanel("PluginsContentPanel");
-                    DrawPluginsPanel();
-                    ImGuiTheme.EndPanel();
-                });
-        }
-
-        private static void DrawLanguageWidget()
+        /// <summary>
+        ///     Draws the plugin manager table (enable/disable plugins).
+        /// </summary>
+        private static void DrawPluginManager()
         {
             ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Language", "Sprache"),
-                OverlayLocalization.L(
-                    "Applies to the settings window and all plugins.",
-                    "Gilt fuer das Einstellungsfenster und alle Plugins."));
-
-            var lang = Core.GHSettings.OverlayLanguage;
-            var preview = lang == OverlayLanguage.German
-                ? OverlayLocalization.L("German", "Deutsch")
-                : OverlayLocalization.L("English", "Englisch");
-            ImGui.SetNextItemWidth(200f);
-            if (ImGui.BeginCombo("##overlay_language", preview))
-            {
-                if (ImGui.Selectable(OverlayLocalization.L("English", "Englisch"), lang == OverlayLanguage.English) &&
-                    lang != OverlayLanguage.English)
-                {
-                    Core.GHSettings.OverlayLanguage = OverlayLanguage.English;
-                    PManager.RequestSaveAllSettings();
-                }
-
-                if (ImGui.Selectable(OverlayLocalization.L("German", "Deutsch"), lang == OverlayLanguage.German) &&
-                    lang != OverlayLanguage.German)
-                {
-                    Core.GHSettings.OverlayLanguage = OverlayLanguage.German;
-                    PManager.RequestSaveAllSettings();
-                }
-
-                ImGui.EndCombo();
-            }
-        }
-
-        private static void DrawPluginsPanel()
-        {
-            ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Plugin management", "Plugin-Verwaltung"),
-                OverlayLocalization.L(
-                    "Auto-start plugins load on GameHelper launch. Settings are saved immediately.",
-                    "Autostart-Plugins werden beim Start geladen. Einstellungen werden sofort gespeichert."));
+                "Plugin Management",
+                "Enable or disable plugins. Enabled plugins get their own settings tab. Changes are saved automatically.");
 
             var enabledCount = PManager.Plugins.Count(p => p.Metadata.Enable);
-            ImGui.TextDisabled($"{OverlayLocalization.L("Active", "Aktiv")}: {enabledCount} / {PManager.Plugins.Count}");
+            ImGui.TextDisabled($"Active: {enabledCount} / {PManager.Plugins.Count}");
             ImGui.SameLine();
-            if (ImGui.SmallButton(OverlayLocalization.L("Enable all", "Alle an")))
+            if (ImGui.SmallButton("Enable all"))
             {
                 SetAllPlugins(true);
             }
 
             ImGui.SameLine();
-            if (ImGui.SmallButton(OverlayLocalization.L("Disable all", "Alle aus")))
+            if (ImGui.SmallButton("Disable all"))
             {
                 SetAllPlugins(false);
             }
 
             ImGui.Spacing();
 
-            if (!ImGui.BeginTable("pluginTable", 4, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY, new Vector2(0, 0)))
+            if (!ImGui.BeginTable(
+                "pluginTable",
+                3,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY,
+                new Vector2(0, 0)))
             {
                 return;
             }
 
-            ImGui.TableSetupColumn(OverlayLocalization.L("Plugin", "Plugin"), ImGuiTableColumnFlags.WidthStretch, 0.52f);
-            ImGui.TableSetupColumn(OverlayLocalization.L("Author", "Ersteller"), ImGuiTableColumnFlags.WidthFixed, 96f);
-            ImGui.TableSetupColumn(OverlayLocalization.L("Status", "Status"), ImGuiTableColumnFlags.WidthFixed, 64f);
-            ImGui.TableSetupColumn(OverlayLocalization.L("Enable", "Aktivieren"), ImGuiTableColumnFlags.WidthFixed, 52f);
+            ImGui.TableSetupColumn("Plugin", ImGuiTableColumnFlags.WidthStretch, 0.7f);
+            ImGui.TableSetupColumn("Status", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("Enable", ImGuiTableColumnFlags.WidthFixed, 60f);
             ImGui.TableHeadersRow();
 
             foreach (var container in PManager.Plugins)
@@ -341,31 +196,25 @@ namespace GameHelper.Settings
 
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
-                ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.TextMuted);
-                ImGui.Text(PluginCredits.GetOriginalAuthor(container.Name));
-                ImGui.PopStyleColor();
-
-                ImGui.TableNextColumn();
-                ImGui.AlignTextToFramePadding();
                 if (container.Metadata.Enable)
                 {
                     ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.Success);
-                    ImGui.Text(OverlayLocalization.L("Active", "Aktiv"));
+                    ImGui.Text("Active");
                     ImGui.PopStyleColor();
                 }
                 else
                 {
                     ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.TextMuted);
-                    ImGui.Text(OverlayLocalization.L("Off", "Aus"));
+                    ImGui.Text("Off");
                     ImGui.PopStyleColor();
                 }
 
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
-                var autoStart = container.Metadata.AutoStart;
-                if (ImGui.Checkbox($"##enable_{container.Name}", ref autoStart))
+                var enabled = container.Metadata.Enable;
+                if (ImGui.Checkbox($"##enable_{container.Name}", ref enabled))
                 {
-                    SetPluginAutoStart(container, autoStart);
+                    SetPluginEnabled(container, enabled);
                 }
             }
 
@@ -376,47 +225,29 @@ namespace GameHelper.Settings
         {
             foreach (var container in PManager.Plugins)
             {
-                if (container.Metadata.AutoStart != enabled)
-                {
-                    SetPluginAutoStart(container, enabled);
-                }
+                SetPluginEnabled(container, enabled);
             }
         }
 
-        private static void SetPluginAutoStart(PluginContainer container, bool autoStart)
+        private static void SetPluginEnabled(PluginContainer container, bool enabled)
         {
-            if (container.Metadata.AutoStart == autoStart)
+            if (container.Metadata.Enable == enabled)
             {
                 return;
             }
 
-            container.Metadata.AutoStart = autoStart;
-
-            if (autoStart)
+            container.Metadata.Enable = enabled;
+            if (enabled)
             {
-                if (!container.Metadata.Enable)
-                {
-                    container.Metadata.Enable = true;
-                    try
-                    {
-                        container.Plugin.OnEnable(Core.Process.Address != IntPtr.Zero);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Plugin '{container.Name}' konnte nicht gestartet werden: {ex.Message}");
-                        container.Metadata.Enable = false;
-                        container.Metadata.AutoStart = false;
-                    }
-                }
+                container.Plugin.OnEnable(Core.Process.Address != IntPtr.Zero);
             }
-            else if (container.Metadata.Enable)
+            else
             {
-                container.Metadata.Enable = false;
                 container.Plugin.SaveSettings();
                 container.Plugin.OnDisable();
             }
 
-            PManager.RequestSaveAllSettings();
+            CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
         }
 
         /// <summary>
@@ -424,83 +255,61 @@ namespace GameHelper.Settings
         /// </summary>
         private static void DrawCoreSettings()
         {
-            ImGui.PushItemWidth(-1);
-            DrawLanguageWidget();
-
             ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Status", "Status"),
-                OverlayLocalization.L(
-                    $"Settings are saved when you close the menu ({Core.GHSettings.MainMenuHotKey}) and when plugins change.",
-                    $"Einstellungen werden beim Schliessen des Menues ({Core.GHSettings.MainMenuHotKey}) und bei Plugin-Aenderungen gespeichert."));
-
-            ImGui.Text(OverlayLocalization.L("Game state", "Spielzustand"));
+                "Status",
+                $"All settings (including plugins) are saved automatically when you close the overlay or hide it via {Core.GHSettings.MainMenuHotKey}.");
+            ImGui.Text("Current Game State:");
             ImGui.SameLine();
             ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.Accent);
             ImGui.Text($"{Core.States.GameCurrentState}");
             ImGui.PopStyleColor();
-            InputTextTooltip(
-                "##PartyLeaderName",
-                ref Core.GHSettings.LeaderName,
-                200,
-                "Party leader name for party-related features.",
-                "Name des Party-Leaders fuer Party-Funktionen.");
+            ImGui.InputText("Party Leader Name", ref Core.GHSettings.LeaderName, 200);
 
-            ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Controls & display", "Steuerung & Anzeige"));
+            ImGuiTheme.SectionHeader("Controls & Display");
             DrawInputConfigWidget();
             DrawNearbyWidget();
             DrawToolsConfig();
 
             ImGuiTheme.SectionHeader(
-                OverlayLocalization.L("Filters & tracking", "Filter & Tracking"),
-                OverlayLocalization.L(
-                    "Advanced entity filters. Change zone or restart after edits.",
-                    "Erweiterte Entity-Filter. Nach Aenderungen Zone wechseln oder neu starten."));
+                "Filters & Tracking",
+                "Advanced entity filters. Change zone or restart after edits.");
             DrawPoiWidget();
             DrawMonstersToIgnore();
             DrawNPCWidget();
             DrawMiscObjWidget();
 
-            ImGuiTheme.SectionHeader(OverlayLocalization.L("Advanced", "Erweitert"));
+            ImGuiTheme.SectionHeader("Advanced");
             DrawMiscConfig();
             ChangeFontWidget();
             DrawReloadPluginWidget();
-            ImGui.PopItemWidth();
+
+            ImGuiTheme.SectionHeader("About");
+            ImGui.PushTextWrapPos(ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(color, "This is free software, if you purchased a copy you have been scammed");
+            ImGui.TextColored(color, "For PoE2 0.5.2");
+            ImGui.TextColored(color, "Zero Day developer is Kronos");
+            ImGui.TextColored(color, "Offset updater is Arsenic, Nabeora, Lafko");
+            ImGui.TextColored(color, "Official GameHelper2 Discord is https://discord.gg/864GyuM5S");
+            ImGui.NewLine();
+            ImGui.TextColored(Vector4.One, "Developer of this software is not responsible for " +
+                              "any loss that may happen due to the usage of this software. Use this " +
+                              "software at your own risk.");
+            ImGui.PopTextWrapPos();
         }
 
         private static void DrawNearbyWidget()
         {
-            if (ImGui.CollapsingHeader(
-                OverlayLocalization.L("Monster range", "Monster-Reichweite"),
-                ImGuiTreeNodeFlags.DefaultOpen))
+            if (ImGui.CollapsingHeader("Nearby Monster Config"))
             {
-                DragIntTooltip(
-                    "##SmallMonsterRange",
-                    ref Core.GHSettings.InnerCircle.Meaning,
-                    1f,
-                    0,
-                    Core.GHSettings.OuterCircle.Meaning,
-                    "Small monster range radius. Hover for details.",
-                    "Kleine Monster-Reichweite. Fuer Details Maus darueber halten.");
-                CheckboxLabeled(
-                    OverlayLocalization.L("Visible##smallRange", "Sichtbar##smallRange"),
-                    ref Core.GHSettings.InnerCircle.IsVisible,
-                    "Show the small monster range circle on the overlay.",
-                    "Kleinen Monster-Radius im Overlay anzeigen.");
+                ImGui.DragInt($"Small Range", ref Core.GHSettings.InnerCircle.Meaning,
+                    1f, 0, Core.GHSettings.OuterCircle.Meaning);
+                ImGui.SameLine();
+                ImGui.Checkbox($"Visible##small", ref Core.GHSettings.InnerCircle.IsVisible);
 
-                DragIntTooltip(
-                    "##LargeMonsterRange",
-                    ref Core.GHSettings.OuterCircle.Meaning,
-                    1f,
-                    Core.GHSettings.InnerCircle.Meaning,
-                    AreaInstanceConstants.NETWORK_BUBBLE_RADIUS,
-                    "Large monster range radius (network bubble limit). Hover for details.",
-                    "Grosse Monster-Reichweite (Netzwerk-Grenze). Fuer Details Maus darueber halten.");
-                CheckboxLabeled(
-                    OverlayLocalization.L("Visible##largeRange", "Sichtbar##largeRange"),
-                    ref Core.GHSettings.OuterCircle.IsVisible,
-                    "Show the large monster range circle on the overlay.",
-                    "Grossen Monster-Radius im Overlay anzeigen.");
+                ImGui.DragInt($"Large Range", ref Core.GHSettings.OuterCircle.Meaning,
+                    1f, Core.GHSettings.InnerCircle.Meaning, AreaInstanceConstants.NETWORK_BUBBLE_RADIUS);
+                ImGui.SameLine();
+                ImGui.Checkbox($"Visible##large", ref Core.GHSettings.OuterCircle.IsVisible);
 
                 // ImGui.SameLine(0f, 30f);
                 // ImGui.Checkbox($"Follow Mouse##{name}", ref value.FollowMouse);
@@ -514,6 +323,11 @@ namespace GameHelper.Settings
         {
             if (ImGui.CollapsingHeader("Change Fonts"))
             {
+                ImGui.Checkbox("Universal Font (render any language across the whole overlay)", ref Core.GHSettings.UniversalFont);
+                ImGuiHelper.ToolTip("Loads a bundled merged font (DejaVuSans + the font below + GNU Unifont over the whole " +
+                    "Unicode BMP) so text in any language renders everywhere. The font below is still merged in as the " +
+                    "priority for its language. Building the full atlas is heavier, so this is off by default.");
+
                 ImGui.InputText("Pathname", ref Core.GHSettings.FontPathName, 300);
                 ImGui.DragInt("Size", ref Core.GHSettings.FontSize, 0.1f, 13, 40);
                 var languageChanged = ImGuiHelper.EnumComboBox("Language", ref Core.GHSettings.FontLanguage);
@@ -534,20 +348,7 @@ namespace GameHelper.Settings
 
                 if (ImGui.Button("Apply Changes"))
                 {
-                    if (MiscHelper.TryConvertStringToImGuiGlyphRanges(Core.GHSettings.FontCustomGlyphRange, out var glyphranges))
-                    {
-                        Core.Overlay.ReplaceFont(
-                            Core.GHSettings.FontPathName,
-                            Core.GHSettings.FontSize,
-                            glyphranges);
-                    }
-                    else
-                    {
-                        Core.Overlay.ReplaceFont(
-                            Core.GHSettings.FontPathName,
-                            Core.GHSettings.FontSize,
-                            Core.GHSettings.FontLanguage);
-                    }
+                    UniversalFont.ApplyFromSettings();
                 }
             }
         }
@@ -790,52 +591,18 @@ namespace GameHelper.Settings
         /// </summary>
         private static void DrawInputConfigWidget()
         {
-            if (ImGui.CollapsingHeader(
-                OverlayLocalization.L("Keys & input", "Tasten & Eingabe"),
-                ImGuiTreeNodeFlags.DefaultOpen))
+            if (ImGui.CollapsingHeader("Input Config"))
             {
-                var fieldWidth = ImGui.GetContentRegionAvail().X;
-
-                ImGui.Text(OverlayLocalization.L("Timeout", "Timeout"));
-                ImGui.SetNextItemWidth(fieldWidth);
-                DragIntTooltip(
-                    "##KeyPressTimeout",
-                    ref Core.GHSettings.KeyPressTimeout,
-                    0.2f,
-                    60,
-                    300,
-                    "Key timeout (ms). When GameHelper sends a key press, the server needs time (about latency x 3). " +
-                    "Set this to latency x 3 (e.g. 90 for 30 ms). Do not go below 60.",
-                    "Tasten-Timeout (ms). Wenn GameHelper eine Taste sendet, braucht der Server Zeit (ca. Latenz x 3). " +
-                    "Wert auf Latenz x 3 setzen (z. B. 90 bei 30 ms). Nicht unter 60.");
-
-                ImGui.Text(OverlayLocalization.L("Menu", "Menue"));
-                ImGui.SetNextItemWidth(fieldWidth);
-                ImGuiHelper.NonContinuousEnumComboBox("##MainMenuHotKey", ref Core.GHSettings.MainMenuHotKey);
-                ImGuiHelper.ToolTip(OverlayLocalization.L(
-                    "Hide/show settings menu — press this key to show or hide GameHelper (default: F11).",
-                    "Einstellungsmenue ein/aus — mit dieser Taste GameHelper ein- oder ausblenden (Standard: F11)."));
-
-                ImGui.Text(OverlayLocalization.L("Overlay", "Overlay"));
-                ImGui.SetNextItemWidth(fieldWidth);
-                ImGuiHelper.NonContinuousEnumComboBox("##DisableRenderingKey", ref Core.GHSettings.DisableAllRenderingKey);
-                ImGuiHelper.ToolTip(OverlayLocalization.L(
-                    "Toggle overlay rendering — enable or disable all overlay drawing (default: F9).",
-                    "Overlay-Darstellung ein/aus — gesamtes Overlay ein- oder ausschalten (Standard: F9)."));
-
-                ImGui.Spacing();
-                ImGui.Text(OverlayLocalization.L("Hideout", "Hideout"));
-                ImGui.Checkbox("##HideoutAutomationEnabled", ref Core.GHSettings.HideoutAutomationEnabled);
-                ImGui.SameLine();
-                ImGui.Text(OverlayLocalization.L("Auto /hideout", "Auto /hideout"));
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(Math.Max(120f, fieldWidth - ImGui.CalcTextSize("Auto /hideout").X - 40f));
-                ImGuiHelper.NonContinuousEnumComboBox("##HideoutAutomationKey", ref Core.GHSettings.HideoutAutomationKey);
-                ImGuiHelper.ToolTip(OverlayLocalization.L(
-                    "When enabled, the hotkey opens chat and sends /hideout (paste if possible, otherwise types it). " +
-                    "Works only while the game window is focused and chat is closed.",
-                    "Wenn aktiv, oeffnet die Taste den Chat und sendet /hideout (einfuegen wenn moeglich, sonst tippen). " +
-                    "Funktioniert nur bei fokussiertem Spielfenster und geschlossenem Chat."));
+                ImGui.DragInt("Key Timeout", ref Core.GHSettings.KeyPressTimeout, 0.2f, 60, 300);
+                ImGuiHelper.ToolTip("When GameOverlay press a key in the game, the key " +
+                    "has to go to the GGG server for it to work. This process takes " +
+                    "time equal to your latency x 3. During this time GameOverlay might " +
+                    "press that key again. Set the key timeout value to latency x 3 so " +
+                    "this doesn't happen. e.g. for 30ms latency, set it to 90ms. Also, " +
+                    "do not go below 60 (due to server ticks), no matter how good your latency is.");
+                ImGuiHelper.NonContinuousEnumComboBox("Settings Window Key", ref Core.GHSettings.MainMenuHotKey);
+                ImGuiHelper.NonContinuousEnumComboBox("Disable Rendering Key", ref Core.GHSettings.DisableAllRenderingKey);
+                ImGuiHelper.NonContinuousEnumComboBox("Element Finder Key", ref Core.GHSettings.ElementFinderHotKey);
             }
         }
 
@@ -844,34 +611,28 @@ namespace GameHelper.Settings
         /// </summary>
         private static void DrawToolsConfig()
         {
-            if (ImGui.CollapsingHeader(
-                OverlayLocalization.L("Developer tools", "Entwickler-Tools"),
-                ImGuiTreeNodeFlags.DefaultOpen))
+            if (ImGui.CollapsingHeader("Misc Tools"))
             {
-                CheckboxLabeled(
-                    OverlayLocalization.L("Performance stats", "Performance-Statistik"),
-                    ref Core.GHSettings.ShowPerfStats,
-                    "Show FPS and frame timing overlay.",
-                    "FPS und Frame-Zeiten anzeigen.");
+                ImGui.Checkbox("Performance Stats", ref Core.GHSettings.ShowPerfStats);
                 if (Core.GHSettings.ShowPerfStats)
                 {
-                    CheckboxLabeled(
-                        OverlayLocalization.L("Hide when game is in background", "Ausblenden wenn Spiel im Hintergrund"),
-                        ref Core.GHSettings.HidePerfStatsWhenBg);
-                    CheckboxLabeled(
-                        OverlayLocalization.L("Show minimum stats", "Nur Mindest-Statistik"),
-                        ref Core.GHSettings.MinimumPerfStats);
+                    ImGui.Spacing();
+                    ImGui.SameLine();
+                    ImGui.Spacing();
+                    ImGui.SameLine();
+                    ImGui.Checkbox("Hide when game is in background", ref Core.GHSettings.HidePerfStatsWhenBg);
+                    ImGui.Spacing();
+                    ImGui.SameLine();
+                    ImGui.Spacing();
+                    ImGui.SameLine();
+                    ImGui.Checkbox("Show minimum stats", ref Core.GHSettings.MinimumPerfStats);
                 }
 
-                CheckboxLabeled(
-                    OverlayLocalization.L("Game UI explorer (GE)", "Game-UI-Explorer (GE)"),
-                    ref Core.GHSettings.ShowGameUiExplorer);
-                CheckboxLabeled(
-                    OverlayLocalization.L("Data visualization (DV)", "Daten-Visualisierung (DV)"),
-                    ref Core.GHSettings.ShowDataVisualization);
-                CheckboxLabeled(
-                    OverlayLocalization.L("Performance profiler", "Performance-Profiler"),
-                    ref Core.GHSettings.ShowPerfProfiler);
+                ImGui.Checkbox("Game UiExplorer (GE)", ref Core.GHSettings.ShowGameUiExplorer);
+                ImGui.Checkbox("Element Finder", ref Core.GHSettings.ShowElementFinder);
+                ImGui.Checkbox("Data Visualization (DV)", ref Core.GHSettings.ShowDataVisualization);
+                ImGui.Checkbox("Performance Profiler", ref Core.GHSettings.ShowPerfProfiler);
+                ImGui.Checkbox("Memory Read Diagnostics", ref Core.GHSettings.ShowMemoryDiagnostics);
 #if DEBUG
                 ImGui.Checkbox("Krangled Passive Detector", ref Core.GHSettings.ShowKrangledPassiveDetector);
 #endif
@@ -896,13 +657,6 @@ namespace GameHelper.Settings
                 ImGui.Checkbox("Disable entity processing when in town or hideout",
                     ref Core.GHSettings.DisableEntityProcessingInTownOrHideout);
                 ImGui.Checkbox("Hide overlay settings upon start", ref Core.GHSettings.HideSettingWindowOnStart);
-                CheckboxLabeled(
-                    OverlayLocalization.L(
-                        "Hide overlay when game is in background",
-                        "Overlay ausblenden wenn Spiel im Hintergrund"),
-                    ref Core.GHSettings.HideOverlayWhenGameInBackground,
-                    "Hide the entire GameHelper overlay while Path of Exile is not the active window.",
-                    "Blendet das gesamte GameHelper-Overlay aus, solange Path of Exile nicht das aktive Fenster ist.");
                 ImGui.Checkbox("Close GameHelper when Game Exit", ref Core.GHSettings.CloseWhenGameExit);
                 if (ImGui.Checkbox("V-Sync", ref Core.Overlay.VSync))
                 {
@@ -1044,7 +798,6 @@ namespace GameHelper.Settings
             if (Core.GHSettings.HideSettingWindowOnStart)
             {
                 isSettingsWindowVisible = false;
-                Core.IsSettingsMenuOpen = false;
             }
         }
 
@@ -1060,27 +813,22 @@ namespace GameHelper.Settings
                 if (Utils.IsKeyPressedAndNotTimeout(Core.GHSettings.MainMenuHotKey))
                 {
                     isSettingsWindowVisible = !isSettingsWindowVisible;
-                    Core.IsSettingsMenuOpen = isSettingsWindowVisible;
                     ImGui.GetIO().WantCaptureMouse = true;
                     if (!isSettingsWindowVisible)
                     {
-                        isGeneralWindowVisible = false;
-                        isPluginsWindowVisible = false;
                         CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
                     }
                 }
 
+                Core.IsSettingsMenuOpen = isSettingsWindowVisible;
                 if (!isSettingsWindowVisible)
                 {
-                    Core.IsSettingsMenuOpen = false;
                     continue;
                 }
 
-                Core.IsSettingsMenuOpen = true;
-
-                ImGui.SetNextWindowSizeConstraints(new Vector2(860, 620), Vector2.One * float.MaxValue);
+                ImGui.SetNextWindowSizeConstraints(new Vector2(800, 600), Vector2.One * float.MaxValue);
                 var isMainMenuExpanded = ImGui.Begin(
-                    $"{OverlayLocalization.L("GameHelper Settings", "GameHelper Einstellungen")}  |  {Core.GetVersion()}###GameHelperMainSettings",
+                    $"Game Overlay Settings [ {Core.GetVersion()} ]",
                     ref isOverlayRunningLocal,
                     ImGuiWindowFlags.MenuBar);
 
@@ -1097,43 +845,14 @@ namespace GameHelper.Settings
 
                 if (!isMainMenuExpanded)
                 {
-                    isGeneralWindowVisible = false;
-                    isPluginsWindowVisible = false;
                     ImGui.End();
                     continue;
                 }
 
                 DrawManuBar();
-                DrawHubToolbar();
-                DrawPluginTabs();
-                mainWindowPos = ImGui.GetWindowPos();
-                mainWindowSize = ImGui.GetWindowSize();
+                DrawTabs();
                 ImGui.End();
-
-                DrawPluginsWindow();
-                DrawGeneralWindow();
             }
-        }
-
-        private static void DragIntTooltip(string id, ref int value, float speed, int min, int max, string english, string german)
-        {
-            ImGui.DragInt(id, ref value, speed, min, max);
-            ImGuiHelper.ToolTip(OverlayLocalization.L(english, german));
-        }
-
-        private static void CheckboxLabeled(string label, ref bool value, string? english = null, string? german = null)
-        {
-            ImGui.Checkbox(label, ref value);
-            if (english != null && german != null)
-            {
-                ImGuiHelper.ToolTip(OverlayLocalization.L(english, german));
-            }
-        }
-
-        private static void InputTextTooltip(string id, ref string value, uint maxLength, string english, string german)
-        {
-            ImGui.InputText(id, ref value, maxLength);
-            ImGuiHelper.ToolTip(OverlayLocalization.L(english, german));
         }
 
         /// <summary>

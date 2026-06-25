@@ -1,4 +1,4 @@
-// <copyright file="Core.cs" company="None">
+﻿// <copyright file="Core.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -60,7 +60,7 @@ namespace GameHelper
         public static State GHSettings { get; } = JsonHelper.CreateOrLoadJsonFile<State>(State.CoreSettingFile);
 
         /// <summary>
-        ///     True while the main GameHelper settings window is open.
+        ///     Gets a value indicating whether the GameHelper settings window is currently open.
         /// </summary>
         public static bool IsSettingsMenuOpen { get; internal set; }
 

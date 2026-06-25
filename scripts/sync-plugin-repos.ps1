@@ -1,0 +1,90 @@
+# Klont Plugin-Repos in Temp und kopiert Quelldateien nach Plugins\ (kein .git im Haupt-Repo).
+# Gordin-Plugins (Radar, HealthBars, ...) werden NICHT hier beruehrt - die kommen via sync-gordin.ps1.
+param(
+    [string]$TargetRoot = (Split-Path $PSScriptRoot -Parent),
+    [ValidateSet("MordWraith", "Upstream", "All")]
+    [string]$Set = "All",
+    # Nur ein einzelnes Plugin syncen (Name = Ordnername in Plugins\)
+    [string]$Only = ""
+)
+
+$ErrorActionPreference = "Stop"
+$SourcesPath = Join-Path $PSScriptRoot "plugins-sources.json"
+if (-not (Test-Path $SourcesPath)) { throw "Fehlend: $SourcesPath" }
+
+$sources     = Get-Content $SourcesPath -Raw | ConvertFrom-Json
+$pluginsRoot = Join-Path $TargetRoot "Plugins"
+New-Item -ItemType Directory -Force -Path $pluginsRoot | Out-Null
+
+function Invoke-RobocopySource {
+    param([string]$Source, [string]$Destination)
+    & robocopy $Source $Destination /MIR /XD bin obj .git .vs /XF "*.dll" "*.pdb" "*.deps.json" /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
+    $rc = $LASTEXITCODE
+    $global:LASTEXITCODE = 0
+    if ($rc -ge 8) { throw "robocopy failed ($rc): $Source -> $Destination" }
+}
+
+function Sync-Plugin {
+    param([string]$Folder, [string]$GithubRepo)
+
+    $repoUrl = "https://github.com/$GithubRepo.git"
+    $tempDir = Join-Path $env:TEMP "gh-plugin-sync-$Folder"
+    $dst     = Join-Path $pluginsRoot $Folder
+
+    Write-Host "Sync $Folder <- $GithubRepo ..." -ForegroundColor Cyan
+
+    if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+    & git clone --depth 1 $repoUrl $tempDir
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed: $GithubRepo" }
+
+    # Wenn das Repo eine Plugins\<Name>\ Unterstruktur hat (Gordin-Stil), dort rein
+    $repoName = ($GithubRepo -split '/')[-1]
+    $subDir   = Join-Path $tempDir "Plugins\$Folder"
+    $srcDir   = if (Test-Path $subDir) { $subDir } else { $tempDir }
+
+    Invoke-RobocopySource -Source $srcDir -Destination $dst
+
+    # csproj umbenennen wenn Repo-Name != Ordner-Name (z.B. RunecraftHelper -> RuneforgeHelper)
+    if ($repoName -ne $Folder) {
+        $oldCsproj = Join-Path $dst "$repoName.csproj"
+        $newCsproj = Join-Path $dst "$Folder.csproj"
+        if ((Test-Path $oldCsproj) -and -not (Test-Path $newCsproj)) {
+            Rename-Item $oldCsproj $newCsproj
+            Write-Host "  csproj umbenannt: $repoName.csproj -> $Folder.csproj" -ForegroundColor DarkGray
+        }
+    }
+
+    if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+    Write-Host "  OK $Folder" -ForegroundColor Green
+}
+
+# Alle zutreffenden Eintraege sammeln
+$map = [ordered]@{}
+if ($Set -eq "MordWraith" -or $Set -eq "All") {
+    foreach ($p in $sources.mordWraith.PSObject.Properties) { $map[$p.Name] = $p.Value }
+}
+if ($Set -eq "Upstream" -or $Set -eq "All") {
+    foreach ($p in $sources.upstream.PSObject.Properties) { $map[$p.Name] = $p.Value }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($Only)) {
+    if (-not $map.Contains($Only)) {
+        # Suche in allen Gruppen
+        $allMap = [ordered]@{}
+        foreach ($p in $sources.mordWraith.PSObject.Properties)  { $allMap[$p.Name] = $p.Value }
+        foreach ($p in $sources.upstream.PSObject.Properties)    { $allMap[$p.Name] = $p.Value }
+        if (-not $allMap.ContainsKey($Only)) { throw "Plugin '$Only' nicht in plugins-sources.json gefunden." }
+        $map = [ordered]@{ $Only = $allMap[$Only] }
+    } else {
+        $map = [ordered]@{ $Only = $map[$Only] }
+    }
+}
+
+$count = 0
+foreach ($entry in ($map.GetEnumerator() | Sort-Object Name)) {
+    Sync-Plugin -Folder $entry.Key -GithubRepo $entry.Value
+    $count++
+}
+
+Write-Host ""
+Write-Host "sync-plugin-repos complete: $count Plugin(s) synchronisiert ($Set)." -ForegroundColor Green

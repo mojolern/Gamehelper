@@ -1,3 +1,7 @@
+// <copyright file="PluginUiElementReflection.cs" company="None">
+// Copyright (c) None. All rights reserved.
+// </copyright>
+
 namespace GameHelper.Plugin
 {
     using System;
@@ -16,6 +20,12 @@ namespace GameHelper.Plugin
 
         public static Type? UiElementBaseType { get; } =
             GameHelperAssembly.GetType("GameHelper.RemoteObjects.UiElement.UiElementBase");
+
+        public static PropertyInfo? UiElementPositionProperty =>
+            UiElementBaseType?.GetProperty("Position");
+
+        public static PropertyInfo? UiElementSizeProperty =>
+            UiElementBaseType?.GetProperty("Size");
 
         public static object? CreateParents(string name = "fake") =>
             UiElementParentsType == null
@@ -36,11 +46,5 @@ namespace GameHelper.Plugin
                     null,
                     new object?[] { address, parents },
                     null);
-
-        public static PropertyInfo? UiElementPositionProperty =>
-            UiElementBaseType?.GetProperty("Position");
-
-        public static PropertyInfo? UiElementSizeProperty =>
-            UiElementBaseType?.GetProperty("Size");
     }
 }

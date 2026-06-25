@@ -25,6 +25,7 @@ namespace Launcher
             }
 
             LauncherLog.Write($"InstallDir={installDir}");
+            LegacyPluginCleanup.Apply(installDir);
 
             using var updateForm = new UpdateForm(installDir, appExePath);
             updateForm.ShowDialog();

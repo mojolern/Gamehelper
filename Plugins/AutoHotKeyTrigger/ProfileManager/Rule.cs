@@ -130,7 +130,7 @@ namespace AutoHotKeyTrigger.ProfileManager
         {
             if (this.Enabled && this.Evaluate())
             {
-                if (MiscHelper.KeyUp(this.Key, $"AHK/{this.Name}"))
+                if (MiscHelper.KeyUp(this.Key))
                 {
                     logger($"{this.Key} is pressed.");
                     this.cooldownStopwatch.Restart();

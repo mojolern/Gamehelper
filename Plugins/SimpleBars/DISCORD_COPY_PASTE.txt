@@ -1,0 +1,11 @@
+https://github.com/MordWraith/SimpleBars
+
+GameHelper2 lightweight on-screen health bars: textured HP bars (gradient / circle-dot), POI monster configs, town/hideout toggles. Fork of Reynbow/simplebars; GameHelper2 port by MordWraith. Disable the built-in HealthBars plugin when using this. Bar textures are included in the repo. Read-only overlay — no input automation.
+
+Build from source only (no prebuilt DLL). Clone into Plugins/SimpleBars inside your GameHelper2 tree, then dotnet build GameHelper and the plugin. Enable it under GameHelper -> Plugins.
+
+Compatible with Gordin GameHelper2 main, .NET 10 (net10.0-windows, x64). Tested on upstream main @ 4f6fd2a (June 2026); should work on community forks using the same API.
+
+Feedback / feature requests: this thread. Crashes or install issues: #help with tag plugin.
+
+Community third-party plugin, not affiliated with GGG. Use at your own risk; only build from the linked source.

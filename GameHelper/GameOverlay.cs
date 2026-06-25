@@ -1,4 +1,4 @@
-// <copyright file="GameOverlay.cs" company="None">
+﻿// <copyright file="GameOverlay.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -27,16 +27,15 @@ namespace GameHelper
         {
             CoroutineHandler.Start(this.UpdateOverlayBounds(), priority: int.MaxValue);
             SettingsWindow.InitializeCoroutines();
-            ActivityLogWindow.InitializeCoroutines();
             PerformanceStats.InitializeCoroutines();
             DataVisualization.InitializeCoroutines();
             GameUiExplorer.InitializeCoroutines();
+            ElementFinder.InitializeCoroutines();
             PerformanceProfiler.InitializeCoroutines();
+            MemoryReadDiagnostics.InitializeCoroutines();
             OverlayKiller.InitializeCoroutines();
-            OverlayForegroundVisibility.InitializeCoroutines();
             NearbyVisualization.InitializeCoroutines();
             KrangledPassiveDetector.InitializeCoroutines();
-            InputAutomation.InitializeCoroutines();
         }
 
         /// <summary>
@@ -67,22 +66,9 @@ namespace GameHelper
         /// <inheritdoc />
         protected override Task PostInitialized()
         {
-            ImGuiTheme.Apply();
+            Ui.ImGuiTheme.Apply();
 
-            if (MiscHelper.TryConvertStringToImGuiGlyphRanges(Core.GHSettings.FontCustomGlyphRange, out var glyphRanges))
-            {
-                Core.Overlay.ReplaceFont(
-                    Core.GHSettings.FontPathName,
-                    Core.GHSettings.FontSize,
-                    glyphRanges);
-            }
-            else
-            {
-                Core.Overlay.ReplaceFont(
-                    Core.GHSettings.FontPathName,
-                    Core.GHSettings.FontSize,
-                    Core.GHSettings.FontLanguage);
-            }
+            UniversalFont.ApplyFromSettings();
 
             PManager.InitializePlugins();
             return Task.CompletedTask;
