@@ -312,13 +312,14 @@ $script:PluginProjectType = "{9A19103F-16F7-4668-BE54-9A1E7A4F7556}"
 $script:PluginsVirtualFolder = "{9FA3D6BD-1EC1-3BA5-80CB-CE02773A58D5}"
 
 function Add-PluginToSln {
-    param([string]$SlnPath, [string]$Folder)
+    param([string]$SlnPath, [string]$Folder, [string]$CsprojName = "")
+    if (-not $CsprojName) { $CsprojName = $Folder }
     $guid        = "{$([System.Guid]::NewGuid().ToString().ToUpper())}"
     $projType    = $script:PluginProjectType
     $pluginsDir  = $script:PluginsVirtualFolder
     $content     = [System.IO.File]::ReadAllText($SlnPath)
 
-    $projectBlock = "Project(`"$projType`") = `"$Folder`", `"Plugins\$Folder\$Folder.csproj`", `"$guid`"`r`nEndProject`r`n"
+    $projectBlock = "Project(`"$projType`") = `"$CsprojName`", `"Plugins\$Folder\$CsprojName.csproj`", `"$guid`"`r`nEndProject`r`n"
     $content = $content -replace '(Project\("\{2150E333-8FDC-42A3-9474-1A3956D46DE8\}"\) = "Plugins")', "$projectBlock`$1"
 
     $configBlock = "`t`t$guid.Debug|Any CPU.ActiveCfg = Debug|Any CPU`r`n" +
@@ -547,6 +548,84 @@ function Show-RemovePluginDialog {
 }
 
 # ---------------------------------------------------------------------------
+# GUI: Dialog "Plugin zur Solution hinzufuegen" (vorhandene Ordner, nicht in SLN)
+# ---------------------------------------------------------------------------
+function Show-AddExistingToSlnDialog {
+    $g       = $script:MaintainGui
+    $slnPath = Join-Path $g.Root "GameOverlay.sln"
+
+    $slnContent  = [System.IO.File]::ReadAllText($slnPath)
+    $pluginsBase = Join-Path $g.Root "Plugins"
+    $candidates  = [System.Collections.Generic.List[hashtable]]@()
+
+    foreach ($dir in (Get-ChildItem $pluginsBase -Directory -ErrorAction SilentlyContinue)) {
+        $csprojFiles = @(Get-ChildItem $dir.FullName -Filter "*.csproj" -ErrorAction SilentlyContinue)
+        if ($csprojFiles.Count -eq 0) { continue }
+        $csprojName = [System.IO.Path]::GetFileNameWithoutExtension($csprojFiles[0].Name)
+        $relPath    = "Plugins\$($dir.Name)\$csprojName.csproj"
+        if ($slnContent -match [regex]::Escape($relPath)) { continue }
+        $candidates.Add(@{ Folder = $dir.Name; CsprojName = $csprojName; RelPath = $relPath })
+    }
+
+    if ($candidates.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Alle Plugin-Ordner sind bereits in der Solution.", "Nichts zu tun",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+        return
+    }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = "Plugin zur Solution hinzufuegen"
+    $dlg.Size            = New-Object System.Drawing.Size(420, 360)
+    $dlg.FormBorderStyle = "FixedDialog"
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.StartPosition   = "CenterParent"
+    $dlg.BackColor       = [System.Drawing.Color]::FromArgb(28, 30, 38)
+    $dlg.ForeColor       = [System.Drawing.Color]::FromArgb(235, 237, 245)
+    $dlg.Font            = New-Object System.Drawing.Font("Segoe UI", 9.5)
+
+    $cBg = [System.Drawing.Color]::FromArgb(22, 25, 32)
+    $cTxt = [System.Drawing.Color]::FromArgb(235, 237, 245)
+
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text     = "Plugin-Ordner auswaehlen (noch nicht in GameOverlay.sln):"
+    $lbl.AutoSize = $false
+    $lbl.Location = New-Object System.Drawing.Point(14, 14)
+    $lbl.Size     = New-Object System.Drawing.Size(380, 34)
+    $dlg.Controls.Add($lbl)
+
+    $list = New-Object System.Windows.Forms.ListBox
+    $list.Location        = New-Object System.Drawing.Point(14, 54)
+    $list.Size            = New-Object System.Drawing.Size(380, 220)
+    $list.BackColor       = $cBg; $list.ForeColor = $cTxt
+    $list.BorderStyle     = "FixedSingle"
+    $list.SelectionMode   = "MultiExtended"
+    foreach ($c in $candidates) { [void]$list.Items.Add("$($c.Folder)  [$($c.CsprojName).csproj]") }
+    $dlg.Controls.Add($list)
+
+    $btnOk = New-Object System.Windows.Forms.Button
+    $btnOk.Text         = "Zur Solution hinzufuegen"
+    $btnOk.Location     = New-Object System.Drawing.Point(150, 288)
+    $btnOk.Size         = New-Object System.Drawing.Size(244, 32)
+    $btnOk.FlatStyle    = "Flat"
+    $btnOk.FlatAppearance.BorderSize = 0
+    $btnOk.BackColor    = [System.Drawing.Color]::FromArgb(92, 140, 240)
+    $btnOk.ForeColor    = $cTxt
+    $btnOk.DialogResult = [System.Windows.Forms.DialogResult]::OK
+    $dlg.Controls.Add($btnOk); $dlg.AcceptButton = $btnOk
+
+    if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    if ($list.SelectedIndices.Count -eq 0) { return }
+
+    foreach ($idx in $list.SelectedIndices) {
+        $c = $candidates[$idx]
+        Add-PluginToSln -SlnPath $slnPath -Folder $c.Folder -CsprojName $c.CsprojName
+        $g.Log.AppendText("SLN: $($c.Folder) hinzugefuegt ($($c.RelPath))`r`n")
+    }
+}
+
+# ---------------------------------------------------------------------------
 # GUI
 # ---------------------------------------------------------------------------
 function Show-Gui {
@@ -746,21 +825,23 @@ public class Win32ConsoleStable {
     $gordinPanel.Controls.AddRange(@($btnGCore, $btnGPlugins, $btnGAll, $btnGCheck))
 
     # --- Abschnitt: Plugin-Repos sync ---
-    $pluginsPanel = New-SectionPanel 100
+    $pluginsPanel = New-SectionPanel 136
     $plbl = New-SectionLabel "1b  Plugin-Repos syncen (MordWraith + Upstream aus GitHub)"
     $plbl.Location = New-Object System.Drawing.Point(14, 8)
     $pluginsPanel.Controls.Add($plbl)
-    $btnPAll      = New-Btn "Alle holen"       $false 150
-    $btnPMord     = New-Btn "MordWraith"        $false 140
-    $btnPUp       = New-Btn "Upstream"          $false 130
-    $btnPAdd      = New-Btn "+ Plugin hinzu..." $false 160
-    $btnPRem      = New-Btn "- Plugin entfernen" $false 170
+    $btnPAll      = New-Btn "Alle holen"           $false 150
+    $btnPMord     = New-Btn "MordWraith"            $false 140
+    $btnPUp       = New-Btn "Upstream"              $false 130
+    $btnPAdd      = New-Btn "+ Plugin hinzu..."     $false 160
+    $btnPRem      = New-Btn "- Plugin entfernen"   $false 170
+    $btnPSln      = New-Btn "SLN: Plugin eintragen" $false 200
     $btnPAll.Location  = New-Object System.Drawing.Point(14, 32)
     $btnPMord.Location = New-Object System.Drawing.Point(174, 32)
     $btnPUp.Location   = New-Object System.Drawing.Point(324, 32)
     $btnPAdd.Location  = New-Object System.Drawing.Point(14, 70)
     $btnPRem.Location  = New-Object System.Drawing.Point(194, 70)
-    $pluginsPanel.Controls.AddRange(@($btnPAll, $btnPMord, $btnPUp, $btnPAdd, $btnPRem))
+    $btnPSln.Location  = New-Object System.Drawing.Point(14, 106)
+    $pluginsPanel.Controls.AddRange(@($btnPAll, $btnPMord, $btnPUp, $btnPAdd, $btnPRem, $btnPSln))
 
     # --- Abschnitt: Push + Publish ---
     $pushPanel = New-SectionPanel 72
@@ -869,6 +950,12 @@ public class Win32ConsoleStable {
         try {
             if ($script:MaintainGui -and $script:MaintainGui['ActionRunning']) { return }
             Show-RemovePluginDialog
+        } catch { $log.AppendText("Fehler: $($_.Exception.Message)") }
+    })
+    $btnPSln.Add_Click({
+        try {
+            if ($script:MaintainGui -and $script:MaintainGui['ActionRunning']) { return }
+            Show-AddExistingToSlnDialog
         } catch { $log.AppendText("Fehler: $($_.Exception.Message)") }
     })
 

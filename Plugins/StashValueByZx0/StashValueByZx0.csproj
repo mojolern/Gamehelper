@@ -34,36 +34,29 @@
     </When>
     <Otherwise>
       <ItemGroup>
-        <Reference Include="GameHelper">
-          <HintPath>..\..\sources\GameHelper-Gordin\GameHelper\bin\Release\net10.0-windows\win-x64\GameHelper.dll</HintPath>
+        <ProjectReference Include="..\..\GameHelper\GameHelper.csproj">
           <Private>false</Private>
-        </Reference>
-        <Reference Include="GameOffsets">
-          <HintPath>..\..\sources\GameHelper-Gordin\GameOffsets\bin\Release\net10.0-windows\win-x64\GameOffsets.dll</HintPath>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
+        <ProjectReference Include="..\..\GameOffsets\GameOffsets.csproj">
           <Private>false</Private>
-        </Reference>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
       </ItemGroup>
     </Otherwise>
   </Choose>
 
-  <Target Name="CopyFiles" AfterTargets="Build">
+  <Target Name="CopyFiles" AfterTargets="Build" Condition="'$(Fork)' != 'Legacy'">
     <ItemGroup>
       <_StashValueDeployFiles Include="$(OutDir)$(TargetName)$(TargetExt)" />
     </ItemGroup>
     <Copy SourceFiles="@(_StashValueDeployFiles)"
-          DestinationFolder="..\..\sources\GameHelper-Gordin\GameHelper\$(OutDir)Plugins\$(ProjectName)"
-          Condition="'$(Fork)' != 'Legacy'"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_StashValueDeployFiles)"
-          DestinationFolder="..\..\sources\GameHelper-MordWraith\GameHelper\$(OutDir)Plugins\$(ProjectName)"
-          Condition="'$(Fork)' == 'Legacy' And Exists('..\..\sources\GameHelper-MordWraith')"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_StashValueDeployFiles)"
-          DestinationFolder="$(MSBuildProjectDirectory)"
+          DestinationFolder="..\..\GameHelper\$(OutDir)Plugins\$(AssemblyName)"
+          Condition="Exists('..\..\GameHelper\$(OutDir)')"
           SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="BuildLegacyFork" AfterTargets="Build" Condition="'$(Fork)' != 'Legacy'">
+  <Target Name="BuildLegacyFork" AfterTargets="Build" Condition="'$(Fork)' != 'Legacy' And Exists('..\..\sources\GameHelper-MordWraith')">
     <MSBuild Projects="$(MSBuildProjectFile)" Properties="Fork=Legacy;Configuration=$(Configuration);Platform=$(Platform)" />
   </Target>
 
