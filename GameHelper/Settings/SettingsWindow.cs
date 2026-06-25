@@ -286,7 +286,7 @@ namespace GameHelper.Settings
             ImGuiTheme.SectionHeader("About");
             ImGui.PushTextWrapPos(ImGui.GetContentRegionAvail().X);
             ImGui.TextColored(color, "This is free software, if you purchased a copy you have been scammed");
-            ImGui.TextColored(color, "For PoE2 0.5.2");
+            ImGui.TextColored(color, "For PoE2 0.5.4");
             ImGui.TextColored(color, "Zero Day developer is Kronos");
             ImGui.TextColored(color, "Offset updater is Arsenic, Nabeora, Lafko");
             ImGui.TextColored(color, "Official GameHelper2 Discord is https://discord.gg/864GyuM5S");

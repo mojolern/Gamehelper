@@ -139,7 +139,7 @@ function Invoke-MaintainAction {
             Write-Host "Veroeffentliche Version $($script:Version) ..." -ForegroundColor Cyan
             $pubArgs = @{ Version = $script:Version; Configuration = $Configuration }
             if (-not [string]::IsNullOrWhiteSpace($CommitMessage)) {
-                $pubArgs.Changelog = @($CommitMessage)
+                $pubArgs.Changelog = @($CommitMessage -split "`r?`n" | Where-Object { $_.Trim() })
             }
             Invoke-Script (Join-Path $Scripts "publish.ps1") $pubArgs
             return
@@ -693,24 +693,27 @@ public class Win32ConsoleStable {
     } catch {}
 
     # --- Abschnitt: Commit-Nachricht + Version ---
-    $commitPanel = New-SectionPanel 98
-    $cLabel = New-SectionLabel "Commit-Nachricht / Changelog:"
+    $commitPanel = New-SectionPanel 160
+    $cLabel = New-SectionLabel "Changelog (eine Zeile pro Eintrag, leer = release-notes.txt):"
     $cLabel.Location = New-Object System.Drawing.Point(14, 8)
     $commitPanel.Controls.Add($cLabel)
     $commitBox = New-Object System.Windows.Forms.TextBox
     $commitBox.Location    = New-Object System.Drawing.Point(14, 26)
-    $commitBox.Size        = New-Object System.Drawing.Size(530, 22)
+    $commitBox.Size        = New-Object System.Drawing.Size(530, 88)
     $commitBox.BackColor   = [System.Drawing.Color]::FromArgb(22,25,32)
     $commitBox.ForeColor   = $cText
     $commitBox.Font        = $fUI
     $commitBox.BorderStyle = "FixedSingle"
+    $commitBox.Multiline   = $true
+    $commitBox.ScrollBars  = "Vertical"
+    $commitBox.AcceptsReturn = $true
     $commitPanel.Controls.Add($commitBox)
 
     $vLabel = New-SectionLabel "Version:"
-    $vLabel.Location = New-Object System.Drawing.Point(14, 56)
+    $vLabel.Location = New-Object System.Drawing.Point(14, 122)
     $commitPanel.Controls.Add($vLabel)
     $versionBox = New-Object System.Windows.Forms.TextBox
-    $versionBox.Location    = New-Object System.Drawing.Point(80, 54)
+    $versionBox.Location    = New-Object System.Drawing.Point(80, 120)
     $versionBox.Size        = New-Object System.Drawing.Size(100, 22)
     $versionBox.BackColor   = [System.Drawing.Color]::FromArgb(22,25,32)
     $versionBox.ForeColor   = $cText
@@ -721,7 +724,7 @@ public class Win32ConsoleStable {
 
     $vHint = New-Object System.Windows.Forms.Label
     $vHint.Text      = "(leer = behalten, Timestamp triggert trotzdem Update)"
-    $vHint.Location  = New-Object System.Drawing.Point(190, 57)
+    $vHint.Location  = New-Object System.Drawing.Point(190, 123)
     $vHint.AutoSize  = $true
     $vHint.ForeColor = [System.Drawing.Color]::FromArgb(120,125,140)
     $vHint.Font      = New-Object System.Drawing.Font("Segoe UI", 8.5)
@@ -875,13 +878,6 @@ public class Win32ConsoleStable {
         try {
             if ($script:MaintainGui -and $script:MaintainGui['ActionRunning']) { return }
             $msg = $commitBox.Text.Trim()
-            if (-not $msg) {
-                [System.Windows.Forms.MessageBox]::Show(
-                    "Bitte eine Commit-Nachricht eingeben (wird als Changelog verwendet).",
-                    "Commit-Nachricht fehlt", [System.Windows.Forms.MessageBoxButtons]::OK,
-                    [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null
-                return
-            }
             $ver   = $versionBox.Text.Trim()
             $extra = if ($ver) { "-Version `"$ver`"" } else { "" }
             Invoke-MaintainGuiAction -ActionName "Publish" -ExtraArgs $extra -CommitMessage $msg

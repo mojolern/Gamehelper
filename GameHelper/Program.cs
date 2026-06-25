@@ -17,18 +17,6 @@ namespace GameHelper
         /// <summary>
         ///     function executed when the application starts.
         /// </summary>
-        private static void RemoveLegacyPluginFolders()
-        {
-            var pluginsRoot = Path.Combine(AppContext.BaseDirectory, "Plugins");
-            foreach (var name in new[] { "RuneforgeHelper", "FarmTracker", "MapKillCounter" })
-            {
-                var path = Path.Combine(pluginsRoot, name);
-                if (!Directory.Exists(path)) { continue; }
-                try { Directory.Delete(path, recursive: true); }
-                catch { }
-            }
-        }
-
         // Returns true if the launcher (GameHelper.App.exe) started us.
         // The launcher renames the exe before starting it, so our process name
         // differs from "GameHelper.exe" when we were launched via GameHelper.App.exe.
@@ -67,8 +55,6 @@ namespace GameHelper
                 // the process naturally because IsTerminating == true for unhandled
                 // exceptions on the main thread.
             };
-
-            RemoveLegacyPluginFolders();
 
             using (Core.Overlay = new GameOverlay(MiscHelper.GenerateRandomString()))
             {
