@@ -20,9 +20,11 @@ namespace RunecraftHelper
     //
     // device→station path (no heap scan, persists out of the network bubble — docs/re-findings.md §6.10):
     //   device → StateMachine component (SM) → listener vector at SM+0x20 (begin/end)
-    //          → for each node ptr N: station = *(N) − 0x98, verified by *(station+0x10) == device addr
+    //          → for each node ptr N: station = *(N) − 0xA0, verified by *(station+0x10) == device addr
+    //            (the sub-offset was 0x98 before the 2026-06-25 patch — see StationListenerSubOffset)
     // anchor (docs §6.8/6.10):
-    //   station+0x28 = rune row ptr; index = (rowPtr − runeTableBase)/0x6c (runeTableBase = *(*(station+0x30+0x28)))
+    //   station+0x28 = rune row ptr; index = (rowPtr − runeTableBase)/0x68 (runeTableBase = *(*(station+0x30+0x28)))
+    //   (rune stride was 0x6c before the 2026-06-25 patch — see ExpeditionRuneStride)
     //   station+0x3c = anchor hole index (0-based)
     public sealed partial class RunecraftHelperCore
     {
@@ -31,9 +33,30 @@ namespace RunecraftHelper
         private const int StationAnchorHolderOffset = 0x30;
         private const int StationHoleCountOffset = 0x38;   // → N (recipe hole count)
         private const int StationAnchorPosOffset = 0x3c;   // → anchor hole index (0..5)
+        // → selected/locked recipe ROW pointer (in-memory Expedition2Recipes row). On a sealed
+        // (rerolled) monolith this is the locked recipe; on a choosable one it tracks the current
+        // highlight. Set by the station net-packet deserializer (Ghidra FUN_1417bb930, 2026-06-25:
+        // opcode 0 full-state and opcode 2 selection both write +0x60). The row's language-independent
+        // Id (UTF-16 at row+0x00, e.g. "4SlotArchaicRuneofControl1") matches the offline catalog id,
+        // so we resolve it by Id and never need the per-area recipe table base.
+        private const int StationSelectedRecipeOffset = 0x60;
+        // → listener registered by the open Runeshape Combinations panel (an in-module vtable ptr). Set
+        // only while THIS station's panel is open, null otherwise — the direct "which monolith is the
+        // player browsing" signal (distance/SM-range don't discriminate; several monoliths cluster and
+        // any can be opened from one spot). Verified 2026-06-25: open station +0xB8 = module ptr, the two
+        // closed neighbours = 0. Used to pin the locked-recipe panel highlight to the right monolith.
+        private const int StationPanelOpenOffset = 0xB8;
         private const int StateMachineListenerVecOffset = 0x20;
-        private const int StationListenerSubOffset = 0x98; // node[0] = station + 0x98
-        private const int ExpeditionRuneStride = 0x6c;
+        // node[0] = station + 0xA0. Was 0x98 until the 2026-06-25 patch inserted an 8-byte field into
+        // RuneStation between +0x48 and the listener sub-object (all earlier fields — owner +0x10,
+        // anchor +0x28, holder +0x30, sockets +0x38, anchor-pos +0x3c — kept their offsets). Re-verified
+        // live: sub − station == 0xA0, station+0x00 = in-module RuneStation vtable, station+0x10 = device.
+        private const int StationListenerSubOffset = 0xA0;
+        // Expedition2Runes row stride. Was 0x6c (108) until the 2026-06-25 patch shrank the .dat row to
+        // 104 bytes (dump logs "Expedition2Runes ROWLEN 104!=schema 108"); the in-memory rune table
+        // mirrors the .dat layout, so the live stride is now 0x68. Re-verified live: (rowPtr−tableBase)
+        // = 0x9C0 = 24 × 0x68 exactly (0x6c would be misaligned).
+        private const int ExpeditionRuneStride = 0x68;
         private const int RuneCount = 34;                  // Expedition2Runes rows 0..33
 
         private List<MonoRecipe> monolithRecipes = new();
@@ -86,7 +109,7 @@ namespace RunecraftHelper
         // Entry point: loads the catalog, rescans nearby monoliths on a timer, then draws whichever of
         // the two windows are enabled — the rewards list (ShowMonolithRewards) and/or the per-monolith
         // debug dump (ShowWindow, repurposed). Both read the same scanned this.monolithViews.
-        private void DrawMonolithRewards()
+        private void DrawMonolithRewards(bool combinationsPanelOpen)
         {
             if (!this.LoadMonolithData()) return;
 
@@ -97,7 +120,11 @@ namespace RunecraftHelper
                 this.nextMonolithScanUtc = now.AddMilliseconds(750);
             }
 
-            if (this.Settings.DrawMonolithValueOnMap) this.DrawMonolithMapLabels();
+            // Map value labels: optionally suppressed while the Runeshape Combinations panel is open so
+            // they don't clutter the map on top of the panel's own per-recipe overlay.
+            bool drawMapValues = this.Settings.DrawMonolithValueOnMap &&
+                !(this.Settings.HideMapValueWhenPanelOpen && combinationsPanelOpen);
+            if (drawMapValues) this.DrawMonolithMapLabels();
             if (this.Settings.ShowMonolithRewards) this.DrawMonolithRewardsWindow();
             if (this.Settings.ShowWindow) this.DrawMonolithDebugWindow();
         }
@@ -154,6 +181,13 @@ namespace RunecraftHelper
             foreach (var mv in this.monolithViews)
                 if (mv.Best > maxBest) maxBest = mv.Best;
 
+            // Plate behind the price: match the LootTracker map/hideout bars — the active theme's
+            // WindowBg colour with its alpha overridden to 0.55 (LootTracker's SetNextWindowBgAlpha
+            // default). Computed from the live style so it follows the theme like those bars do.
+            var bgCol = ImGui.GetStyle().Colors[(int)ImGuiCol.WindowBg];
+            bgCol.W = MonolithMapBgAlpha;
+            uint monoBg = ImGui.GetColorU32(bgCol);
+
             foreach (var v in this.monolithViews)
             {
                 if (!v.HasPos || v.Best <= 0) continue;
@@ -171,7 +205,7 @@ namespace RunecraftHelper
                 var ts = ImGui.CalcTextSize(text) * k;
                 var at = new Vector2(screen.X - (ts.X * 0.5f), screen.Y + 6f);
                 var pad = new Vector2(3f, 1f);
-                dl.AddRectFilled(at - pad, at + ts + pad, ColorMonolithMapBg, 2f);
+                dl.AddRectFilled(at - pad, at + ts + pad, monoBg, 2f);
                 dl.AddText(font, fontPx, at + new Vector2(1f, 1f), ColorShadow, text);
                 dl.AddText(font, fontPx, at, col, text);
             }
@@ -223,12 +257,19 @@ namespace RunecraftHelper
                         if (c.Priced) best = Math.Max(best, c.UnitEx * c.Count);
 
                     string hdr;
-                    if (v.IsUnique)
-                        hdr = $"Unique Monolith  ·  {v.HoleCount} holes  ·  {v.Distance:F0}  ·  best {best:F0} ex###m{v.EntityId}";
+                    // Diagnostic marker: ▶ flags the monolith whose Combinations panel the plugin
+                    // currently detects as open (station+0xB8). This is the gate for the in-panel gold
+                    // price-box highlight, so it lets the user confirm detection at a glance.
+                    string panelMark = v.PanelOpen ? "▶ " : string.Empty;
+                    if (v.IsRerolled && v.Candidates.Count > 0)
+                        // Sealed: recipe locked — show the one reward + its value, not "best of N".
+                        hdr = $"{panelMark}[locked] {v.Candidates[0].Reward}  ·  {v.Distance:F0}  ·  {best:F0} ex###m{v.EntityId}";
+                    else if (v.IsUnique)
+                        hdr = $"{panelMark}Unique Monolith  ·  {v.HoleCount} holes  ·  {v.Distance:F0}  ·  best {best:F0} ex###m{v.EntityId}";
                     else if (v.AnchorIdx >= 0)
-                        hdr = $"{v.AnchorName}  ·  hole {v.AnchorPos + 1}/{v.HoleCount}  ·  {v.Distance:F0}  ·  best {best:F0} ex###m{v.EntityId}";
+                        hdr = $"{panelMark}{v.AnchorName}  ·  hole {v.AnchorPos + 1}/{v.HoleCount}  ·  {v.Distance:F0}  ·  best {best:F0} ex###m{v.EntityId}";
                     else
-                        hdr = $"(anchor ?)  ·  {v.HoleCount} holes  ·  {v.Distance:F0}###m{v.EntityId}";
+                        hdr = $"{panelMark}(anchor ?)  ·  {v.HoleCount} holes  ·  {v.Distance:F0}###m{v.EntityId}";
 
                     // Header tint via the shared helper so it matches the map-overlay label exactly.
                     uint hdrColor = this.MonolithValueColor(best, maxBest, out bool colorHdr);
@@ -238,7 +279,7 @@ namespace RunecraftHelper
                     if (!open)
                         continue;
 
-                    if (v.AnchorIdx < 0 && !v.IsUnique)
+                    if (v.AnchorIdx < 0 && !v.IsUnique && !(v.IsRerolled && v.Candidates.Count > 0))
                     {
                         ImGui.TextDisabled("  anchor not resolved (station unavailable)");
                         continue;
@@ -490,6 +531,8 @@ namespace RunecraftHelper
                     }
                     else if (string.Equals(s.Name, "activated", StringComparison.OrdinalIgnoreCase))
                         collected = s.Value >= 7;
+                    else if (string.Equals(s.Name, "is_rerolled", StringComparison.OrdinalIgnoreCase))
+                        v.IsRerolled = s.Value != 0;
                 }
                 v.SmStates = smDump.ToString();
                 if (collected) continue;
@@ -516,6 +559,11 @@ namespace RunecraftHelper
                     if (this.TryReadI32(station + 0x40, out var f40)) v.Field40 = f40;
                     if (this.TryReadI32(station + 0x44, out var f44)) v.Field44 = f44;
 
+                    // Panel-open listener: an in-module vtable ptr only while THIS monolith's Combinations
+                    // panel is open (null on the others). Direct signal of which monolith the player is
+                    // browsing — used to anchor the locked-recipe highlight to the right one.
+                    v.PanelOpen = IsExeAddr(this.ReadPtr(station + StationPanelOpenOffset));
+
                     // Anchor-less "unique" monolith: no pre-placed rune at station +0x28. Normal monoliths
                     // always carry one (docs §6.6), so a null anchor is the discriminator under which the
                     // game's offer builder runs its skip-anchor branch (offers all size<=N; docs §6.12).
@@ -534,6 +582,25 @@ namespace RunecraftHelper
                     else
                     {
                         v.StationDiag = $"station resolved, anchor read failed: {adiag}";
+                    }
+
+                    // Sealed (rerolled) monolith: the reward is locked in — the player can no longer
+                    // pick. Show ONLY the selected reward's value, not the max over the anchor
+                    // candidates (which would over-report). The selection is the recipe row pointer at
+                    // station+0x60; resolve it by language-independent Id against the offline catalog.
+                    // Runs independent of the anchor read (it can fail on odd stations) — +0x60 alone
+                    // identifies the locked recipe.
+                    if (v.IsRerolled && this.TryReadSelectedRecipeId(station, out var selId))
+                    {
+                        v.SelectedRecipeId = selId;
+                        var sel = this.monolithRecipes.Find(
+                            r => string.Equals(r.id, selId, StringComparison.Ordinal));
+                        if (sel != null)
+                        {
+                            v.Candidates.Clear();
+                            this.AddCandidate(v, sel);
+                            if (v.AnchorIdx < 0) v.StationDiag = string.Empty; // locked recipe is enough
+                        }
                     }
                 }
                 else
@@ -775,6 +842,47 @@ namespace RunecraftHelper
             return n % 2 == 1 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) * 0.5;
         }
 
+        // Read the selected/locked recipe's language-independent Id off station+0x60 (see that const).
+        // station+0x60 → in-memory Expedition2Recipes row → row+0x00 → UTF-16 Id ("4Slot…"). Returns
+        // false if no recipe is selected (null ptr) or the Id can't be read. ReadPtr/ReadUtf16Z live in
+        // the other partial of this class.
+        private bool TryReadSelectedRecipeId(IntPtr station, out string id)
+        {
+            id = string.Empty;
+            if (station == IntPtr.Zero) return false;
+            var rowPtr = this.ReadPtr(station + StationSelectedRecipeOffset);
+            if (rowPtr == IntPtr.Zero) return false;
+            var idPtr = this.ReadPtr(rowPtr);
+            if (idPtr == IntPtr.Zero) return false;
+            var s = this.ReadUtf16Z(idPtr, 64);
+            if (s.Length < 3) return false;
+            id = s;
+            return true;
+        }
+
+        // Reward metaId of the locked recipe for the monolith whose Runeshape Combinations panel is
+        // currently OPEN and which is SEALED — or empty otherwise. The open monolith is identified
+        // directly by its station's panel-open listener (StationPanelOpenOffset, read during the scan),
+        // NOT by distance/BFS: several monoliths can cluster and any be opened from one spot.
+        // Identify the locked recipe of the monolith whose panel is open + sealed, and publish its
+        // reward identity to the overlay matcher: metaId (primary) and name (fallback for runes whose
+        // live MetaId reads blank). Clears both when no such monolith is found.
+        private void ResolveLockedPanelReward()
+        {
+            this.lockedPanelMetaId = string.Empty;
+            this.lockedPanelName = string.Empty;
+            foreach (var v in this.monolithViews)
+            {
+                if (!v.PanelOpen || !v.IsRerolled || string.IsNullOrEmpty(v.SelectedRecipeId)) continue;
+                var rec = this.monolithRecipes.Find(
+                    r => string.Equals(r.id, v.SelectedRecipeId, StringComparison.Ordinal));
+                var id = rec?.reward?.id;
+                this.lockedPanelMetaId = string.IsNullOrEmpty(id) ? string.Empty : LastMetaSegment(id);
+                this.lockedPanelName = rec?.reward?.name ?? string.Empty;
+                return;
+            }
+        }
+
         private bool TryReadI32(IntPtr addr, out int val)
         {
             val = 0;
@@ -841,6 +949,9 @@ namespace RunecraftHelper
             public int AnchorPos = -1;
             public string AnchorName = "?";
             public bool IsUnique;          // anchor-less "unique" monolith: offers all size<=N (docs §6.12)
+            public bool IsRerolled;        // sealed: SM "is_rerolled"=1 → recipe locked, show only selection
+            public bool PanelOpen;         // this monolith's Combinations panel is open (station+0xB8 set)
+            public string SelectedRecipeId = string.Empty; // locked recipe Id (station+0x60), when sealed
             public string StationDiag = string.Empty; // why station/anchor failed to resolve (debug)
             public string SmStates = string.Empty;     // all StateMachine states "name=value" (debug)
             public List<MonoCand> Candidates = new();

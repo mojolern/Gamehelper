@@ -1,1 +1,2 @@
-﻿
+﻿Fixed game offsets for current patch
+RunecraftHelper updated to v0.1.3

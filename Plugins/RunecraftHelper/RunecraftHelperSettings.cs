@@ -34,6 +34,11 @@ namespace RunecraftHelper
         // to clear long reward names or sit it wherever reads best. Negative = left, positive = right.
         public float OverlayXOffset = 0f;
 
+        // When the Runeshape Combinations panel is open at a SEALED (rerolled) monolith, draw a gold
+        // border around the row of the locked-in recipe (the one the monolith will produce) so it's
+        // obvious which of the listed combinations is fixed. On by default.
+        public bool HighlightLockedRecipeInPanel = true;
+
         // Show the per-monolith debug window: pick a nearby monolith and dump everything the offer
         // rule uses (anchor/p/N, sockets-vs-station N, area level, addresses, and the full offered
         // recipe list). Used to report game-vs-plugin recipe mismatches. Off by default.
@@ -56,6 +61,11 @@ namespace RunecraftHelper
         // Draw each monolith's best reward value (ex) on the in-game large-map overlay, at the monolith's
         // map position (the same place Radar shows the socket count). Tinted by MonolithHighlightThreshold.
         public bool DrawMonolithValueOnMap = false;
+
+        // Hide the on-map value labels while the in-game Runeshape Combinations panel is open (the same
+        // panel the recipe overlay reads). Avoids cluttering the map with summary prices while the player
+        // is reading the panel + its per-recipe overlay. On by default.
+        public bool HideMapValueWhenPanelOpen = true;
 
         // Large-map projection tuning (mirrors Radar's calibration so the label lines up with the monolith).
         // Defaults match Radar's defaults; nudge these if your Radar large-map zoom/offsets are non-default.
