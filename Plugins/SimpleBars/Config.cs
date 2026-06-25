@@ -1,4 +1,4 @@
-namespace SimpleBars
+﻿namespace SimpleBars
 {
     using System;
     using System.Numerics;
@@ -182,6 +182,21 @@ namespace SimpleBars
         public Vector2 GraduationsLocationEnd;
 
         /// <summary>
+        ///     Show HP Gradation Marks on the health bar.
+        /// </summary>
+        public bool ShowHPGraduations;
+
+        /// <summary>
+        ///     Show ES Gradation Marks on the ES bar (self only).
+        /// </summary>
+        public bool ShowESGraduations;
+
+        /// <summary>
+        ///     Total number of Graduations on the ES bar (self only).
+        /// </summary>
+        public int ESGraduations;
+
+        /// <summary>
         ///     Initializes a new instance of the <see cref="Config" /> class.
         /// </summary>
         /// <param name="healthbarcolor">color of the healthbar</param>
@@ -223,6 +238,9 @@ namespace SimpleBars
             this.Graduations = graduations;
             this.GraduationsLocationStart = 0f;
             this.GraduationsLocationEnd = Vector2.Zero;
+            this.ShowHPGraduations = true;
+            this.ShowESGraduations = false;
+            this.ESGraduations = 0;
             this.UpdateGrauationsLocationData();
         }
 
@@ -362,15 +380,38 @@ namespace SimpleBars
                 ImGui.TableNextColumn(); ImGui.Text("");
                 ImGui.TableNextColumn(); ImGui.ColorEdit4("Text background", ref this.TextBackgroundColor);
 
-                // Left column: Gradation Marks
+                // HP Gradation Marks
                 ImGui.TableNextColumn();
-                if (ImGui.DragInt("Gradation Marks", ref this.Graduations, 0.05f, 0, 9))
-                {
-                    this.UpdateGrauationsLocationData();
-                }
+                ImGui.Checkbox("HP Gradation Marks", ref this.ShowHPGraduations);
                 ImGuiHelper.ToolTip("Graduation thickness depends on Font size. Also, Gradation marks are expensive to draw.");
                 ImGui.TableNextColumn();
-                ImGui.Text("");
+                if (this.ShowHPGraduations)
+                {
+                    if (ImGui.DragInt("HP Marks##hpgrad", ref this.Graduations, 0.05f, 0, 9))
+                    {
+                        this.UpdateGrauationsLocationData();
+                    }
+                }
+                else
+                {
+                    ImGui.Text("");
+                }
+
+                // ES Gradation Marks (self only)
+                if (isSelf)
+                {
+                    ImGui.TableNextColumn();
+                    ImGui.Checkbox("ES Gradation Marks", ref this.ShowESGraduations);
+                    ImGui.TableNextColumn();
+                    if (this.ShowESGraduations)
+                    {
+                        ImGui.DragInt("ES Marks##esgrad", ref this.ESGraduations, 0.05f, 0, 9);
+                    }
+                    else
+                    {
+                        ImGui.Text("");
+                    }
+                }
 
                 // Left column: Bar Gap
                 ImGui.TableNextColumn();
@@ -532,32 +573,47 @@ namespace SimpleBars
                 dl.AddRect(hStart - new Vector2(pad, pad), hEnd + new Vector2(pad, pad), 0xFF000000, 0f, ImDrawFlags.None, borderThickness);
             }
 
-            // Graduations
+            // HP Graduations
             var tmp = hStart - Vector2.UnitY;
             float gradStep = (this.UseIndividualBarScale && isSelf) ? (baseScale.X / (this.Graduations + 1f)) : this.GraduationsLocationStart;
             Vector2 gradEnd = (this.UseIndividualBarScale && isSelf) ? (Vector2.UnitY * baseScale.Y) : this.GraduationsLocationEnd;
-            for (int i = 0; i < this.Graduations; i++)
+            if (this.ShowHPGraduations)
             {
-                tmp.X += gradStep;
-                dl.AddLine(tmp, tmp + gradEnd, 0xFF000000, gradThickness);
+                for (int i = 0; i < this.Graduations; i++)
+                {
+                    tmp.X += gradStep;
+                    dl.AddLine(tmp, tmp + gradEnd, 0xFF000000, gradThickness);
+                }
             }
 
             // ES (above)
+            Vector2 esPreviewStart = origin - new Vector2(0f, showHealth ? (esScale.Y + this.BarGap) : (showMana ? esScale.Y : (esScale.Y / 2f)));
             if (showES)
             {
-                var esTopLeft = showHealth ? (origin - new Vector2(0f, esScale.Y + this.BarGap)) : (origin - new Vector2(0f, showMana ? esScale.Y : (esScale.Y / 2f)));
-                var esStart = esTopLeft;
-                var esEnd2 = esStart + esScale;
+                var esEnd2 = esPreviewStart + esScale;
                 if (useGradient && textures != null)
                 {
                     var (esTex, _, _) = textures.GetTexture("full_bar.png");
-                    dl.AddImage(esTex, esStart, esStart + new Vector2(esScale.X * (esPct / 100f), esScale.Y), Vector2.Zero, Vector2.One, ImGuiHelper.Color(this.ESColor));
+                    dl.AddImage(esTex, esPreviewStart, esPreviewStart + new Vector2(esScale.X * (esPct / 100f), esScale.Y), Vector2.Zero, Vector2.One, ImGuiHelper.Color(this.ESColor));
                 }
                 else
                 {
-                    dl.AddRectFilled(esStart, esStart + new Vector2(esScale.X * (esPct / 100f), esScale.Y), ImGuiHelper.Color(this.ESColor));
+                    dl.AddRectFilled(esPreviewStart, esPreviewStart + new Vector2(esScale.X * (esPct / 100f), esScale.Y), ImGuiHelper.Color(this.ESColor));
                 }
-                dl.AddRect(esStart - new Vector2(pad, pad), esEnd2 + new Vector2(pad, pad), 0xFF000000, 0f, ImDrawFlags.None, borderThickness);
+                dl.AddRect(esPreviewStart - new Vector2(pad, pad), esEnd2 + new Vector2(pad, pad), 0xFF000000, 0f, ImDrawFlags.None, borderThickness);
+            }
+
+            // ES Graduations (self only preview)
+            if (isSelf && showES && this.ShowESGraduations && this.ESGraduations > 0)
+            {
+                float esGradStep = esScale.X / (this.ESGraduations + 1f);
+                Vector2 esGradEnd = Vector2.UnitY * esScale.Y;
+                var esGradTmp = esPreviewStart - Vector2.UnitY;
+                for (int i = 0; i < this.ESGraduations; i++)
+                {
+                    esGradTmp.X += esGradStep;
+                    dl.AddLine(esGradTmp, esGradTmp + esGradEnd, 0xFF000000, gradThickness);
+                }
             }
 
             // Mana (below)

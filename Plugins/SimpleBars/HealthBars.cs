@@ -1,4 +1,4 @@
-// <copyright file="HealthBars.cs" company="PlaceholderCompany">
+﻿// <copyright file="HealthBars.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -44,7 +44,7 @@ namespace SimpleBars
 
         private readonly Dictionary<uint, Vector2> bPositions = new();
 
-        private ActiveCoroutine? onAreaChange = null;
+        private ActiveCoroutine? onAreaChange;
 
         /// <inheritdoc />
         public override void DrawSettings()
@@ -340,7 +340,7 @@ namespace SimpleBars
                 this.bPositions[entity.Id] = location;
             }
 
-            var ptr = ImGui.GetForegroundDrawList();
+            var ptr = ImGui.GetBackgroundDrawList();
             // Determine per-bar scales (self can override)
             var baseScale = (isSelf && healthbarConfig.UseIndividualBarScale) ? healthbarConfig.HealthScale : healthbarConfig.Scale;
             var baseHalf = baseScale / 2f;
@@ -363,7 +363,7 @@ namespace SimpleBars
             // Circle Dot Rendering Mode
             if (healthbarConfig.UseCircleDot)
             {
-                var dlc = ImGui.GetForegroundDrawList();
+                var dlc = ImGui.GetBackgroundDrawList();
                 float baseR = healthbarConfig.CircleRadius > 0 ? healthbarConfig.CircleRadius : MathF.Max(6f, baseScale.Y);
                 float radius = baseR * healthbarConfig.CircleScale;
                 float arcThick = MathF.Max(1f, healthbarConfig.CircleArcThickness * healthbarConfig.CircleScale);
@@ -431,24 +431,23 @@ namespace SimpleBars
             float pad = 1f;
             float thickness = MathF.Max(1f, ImGui.GetFontSize() / 12f);
 
+            // Precompute ES bar geometry (needed for drawing and graduations)
+            var esScale = (isSelf && healthbarConfig.UseIndividualBarScale) ? healthbarConfig.ESScale : healthbarConfig.Scale;
+            var esHalf = esScale / 2f;
+            var esCenter = drawHealth
+                ? location - new Vector2(0f, (baseScale.Y * 0.5f) + healthbarConfig.BarGap + (esScale.Y * 0.5f))
+                : (drawMana
+                    ? location - new Vector2(0f, (esScale.Y + 0f) * 0.5f)
+                    : location);
+            Vector2 esStart = esCenter - esHalf;
+            Vector2 esEnd = esCenter + esHalf;
+
             // ===== ES ABOVE (single bar, gradient PNG) =====
             if (drawES)
             {
                 var (esTex, _, _) = this.textures.GetTexture(this.textureToValidate[0]); // use FULL bar, not hollow
                 float esPct = hComp.EnergyShield.CurrentInPercent();
                 float esPctC = MathF.Max(0f, MathF.Min(100f, esPct));
-
-                // Offset above the HP bar by bar heights + gap
-                float gap = healthbarConfig.BarGap; // from Config
-                var esScale = (isSelf && healthbarConfig.UseIndividualBarScale) ? healthbarConfig.ESScale : healthbarConfig.Scale;
-                var esHalf = esScale / 2f;
-                var esCenter = drawHealth
-                    ? location - new Vector2(0f, (baseScale.Y * 0.5f) + gap + (esScale.Y * 0.5f))
-                    : (drawMana
-                        ? location - new Vector2(0f, (esScale.Y + 0f) * 0.5f) // center top of pair
-                        : location);
-                Vector2 esStart = esCenter - esHalf;
-                Vector2 esEnd = esCenter + esHalf;
                 textAnchor = esStart;
 
                 if (useGradient)
@@ -524,13 +523,29 @@ namespace SimpleBars
                 );
             }
 
-            // Graduations: adapt step to the base (health) scale if using individual scales
+            // HP Graduations
             float gradStep = (isSelf && healthbarConfig.UseIndividualBarScale) ? (baseScale.X / (healthbarConfig.Graduations + 1f)) : healthbarConfig.GraduationsLocationStart;
             Vector2 gradEnd = (isSelf && healthbarConfig.UseIndividualBarScale) ? (Vector2.UnitY * baseScale.Y) : healthbarConfig.GraduationsLocationEnd;
-            for (var i = 0; i < (drawHealth ? healthbarConfig.Graduations : 0); i++)
+            if (drawHealth && healthbarConfig.ShowHPGraduations)
             {
-                tmp.X += gradStep;
-                ptr.AddLine(tmp, tmp + gradEnd, 0xFF000000, this.graduationsThickness);
+                for (var i = 0; i < healthbarConfig.Graduations; i++)
+                {
+                    tmp.X += gradStep;
+                    ptr.AddLine(tmp, tmp + gradEnd, 0xFF000000, this.graduationsThickness);
+                }
+            }
+
+            // ES Graduations (self only)
+            if (isSelf && drawES && healthbarConfig.ShowESGraduations && healthbarConfig.ESGraduations > 0)
+            {
+                float esGradStep = esScale.X / (healthbarConfig.ESGraduations + 1f);
+                Vector2 esGradEnd = Vector2.UnitY * esScale.Y;
+                var esGradTmp = esStart - Vector2.UnitY;
+                for (var i = 0; i < healthbarConfig.ESGraduations; i++)
+                {
+                    esGradTmp.X += esGradStep;
+                    ptr.AddLine(esGradTmp, esGradTmp + esGradEnd, 0xFF000000, this.graduationsThickness);
+                }
             }
 
 AfterBars:
