@@ -257,6 +257,7 @@ function Test-PluginDeploy {
         @{ Plugin = "Atlas"; Files = @("Atlas.dll") },
         @{ Plugin = "LootTracker"; Files = @("LootTracker.dll") },
         @{ Plugin = "LootValue"; Files = @("LootValue.dll") },
+        @{ Plugin = "StashValueByZx0"; Files = @("StashValueByZx0.dll") },
         @{ Plugin = "AmanamuVoidAlert"; Files = @("AmanamuVoidAlert.dll") },
         @{ Plugin = "PlayerBuffBar"; Files = @("PlayerBuffBar.dll") },
         @{ Plugin = "SimpleBars"; Files = @("SimpleBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") },

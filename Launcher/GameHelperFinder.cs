@@ -4,7 +4,7 @@ namespace Launcher
     using System.IO;
     public static class GameHelperFinder
     {
-        private const string AppExeName = "GameHelper.App.exe";
+        private const string AppExeName = "GameHelper.exe";
 
         public static bool TryFindGameHelperExe(out string installDir, out string appExePath)
         {

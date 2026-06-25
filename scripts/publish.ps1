@@ -214,7 +214,8 @@ $migrationMessage = @(
 $RemoveFolders = @(
     "Plugins\RuneforgeHelper",
     "Plugins\FarmTracker",
-    "Plugins\MapKillCounter"
+    "Plugins\MapKillCounter",
+    "Plugins\StashValue"
 )
 
 if ($LegacyManifest) {
