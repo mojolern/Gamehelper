@@ -2,11 +2,9 @@
     "releases":  [
                      {
                          "version":  "1.4.0",
-                         "published":  "2026-06-24T20:55:14.8950384Z",
+                         "published":  "2026-06-25T13:00:34.0852329Z",
                          "changelog":  [
-                                           "Neue Plugins: RunecraftHelper, LootTracker, LootValue, Atlas || New plugins: RunecraftHelper, LootTracker, LootValue, Atlas",
-                                           "RuneforgeHelper, FarmTracker, MapKillCounter entfernt || Removed RuneforgeHelper, FarmTracker, MapKillCounter",
-                                           "Automatische Bereinigung alter Plugin-Ordner beim Start || Automatic cleanup of legacy plugin folders on startup"
+                                           "Release 1.4.0"
                                        ]
                      },
                      {

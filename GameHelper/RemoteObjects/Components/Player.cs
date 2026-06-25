@@ -28,7 +28,7 @@ namespace GameHelper.RemoteObjects.Components
         /// <summary>
         ///     Gets the Xp of the player.
         /// </summary>
-        public int Xp { get; private set; }
+        public uint Xp { get; private set; }
 
         /// <summary>
         ///     Gets the Level of the player.

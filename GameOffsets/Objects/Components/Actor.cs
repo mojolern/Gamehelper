@@ -8,7 +8,7 @@ namespace GameOffsets.Objects.Components
     public struct ActorOffset
     {
         [FieldOffset(0x000)] public ComponentHeader Header;
-        [FieldOffset(0x8B0)] public int AnimationId;
+        [FieldOffset(0x8A0)] public int AnimationId;
         [FieldOffset(0xB08)] public StdVector ActiveSkillsPtr; // ActiveSkillStructure // take and remove skill gem.
         [FieldOffset(0xB20)] public StdVector CooldownsPtr;
         // [FieldOffset(0xA70)] public StdVector VaalSoulsPtr;
