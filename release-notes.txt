@@ -1,4 +1,1 @@
-StashValue plugin renamed to StashValueByZx0 (v1.1.2) — old StashValue folder removed automatically || StashValue Plugin umbenannt in StashValueByZx0 (v1.1.2) — alter StashValue-Ordner wird automatisch entfernt
-RunecraftHelper updated to v0.1.3 || RunecraftHelper auf v0.1.3 aktualisiert
-Fixed game offsets (AreaInstance, Actor, Player XP) || Spieloffsets korrigiert (AreaInstance, Actor, Player XP)
-Fixed launcher auto-update flow for fresh installs || Launcher Auto-Update-Flow für Neuinstallationen behoben
+﻿
