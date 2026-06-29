@@ -1,6 +1,16 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.4.4",
+                         "published":  "2026-06-29T03:29:12.9903541Z",
+                         "changelog":  [
+                                           "Integrated MordWraith v1.4.3 core/plugin baseline and offset updates.",
+                                           "Added ClientPatches plugin for zoom/fog byte patches with startup scan, hotkeys, and restore-on-exit.",
+                                           "Improved LoadedFiles diagnostics/fallback and PreloadAlert create/add/save behavior.",
+                                           "Added plugin source links, save status, force-save on close/hide, and a more reliable F12 menu toggle."
+                                       ]
+                     },
+                     {
                          "version":  "1.4.2",
                          "published":  "2026-06-25T14:02:15.7394075Z",
                          "changelog":  [

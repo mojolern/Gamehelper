@@ -1,4 +1,1 @@
-﻿Integrated MordWraith v1.4.3 core/plugin baseline and offset updates.
-Added ClientPatches plugin for zoom/fog byte patches with startup scan, hotkeys, and restore-on-exit.
-Improved LoadedFiles diagnostics/fallback and PreloadAlert create/add/save behavior.
-Added plugin source links, save status, force-save on close/hide, and a more reliable F12 menu toggle.
+﻿
