@@ -292,6 +292,35 @@ namespace GameHelper.Plugin
             JsonHelper.SafeToFile(snapshot, State.PluginsMetadataFile);
         }
 
+
+        internal static void ForceSaveAllPluginSettings()
+        {
+            SavePluginMetadata();
+
+            PluginContainer[] snapshot;
+            lock (Plugins)
+            {
+                snapshot = Plugins.ToArray();
+            }
+
+            foreach (var container in snapshot)
+            {
+                if (!container.Metadata.Enable)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    container.Plugin.SaveSettings();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[PManager.ForceSaveAllPluginSettings] {container.Name} threw on save: {ex}");
+                }
+            }
+        }
+
         private static IEnumerator<Wait> SavePluginMetadataCoroutine()
         {
             while (true)
@@ -375,3 +404,4 @@ namespace GameHelper.Plugin
         }
     }
 }
+

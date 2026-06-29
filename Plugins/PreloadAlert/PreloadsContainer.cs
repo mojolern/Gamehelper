@@ -1,4 +1,4 @@
-﻿namespace PreloadAlert
+namespace PreloadAlert
 {
     using Newtonsoft.Json;
     using System.Collections.Generic;
@@ -33,6 +33,7 @@
             {
                 this.preloads.Add(value);
                 this.indexes.Add(key, this.preloads.Count - 1);
+                this.isCacheValid = false;
                 return;
             }
 

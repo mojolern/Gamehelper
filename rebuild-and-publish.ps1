@@ -126,10 +126,10 @@ Write-Host " Ordner:  $publishDir" -ForegroundColor Green
 Write-Host " Starten: $publishDir\GameHelper.exe" -ForegroundColor Green
 Write-Host " Version: $publishDir\VERSION.txt" -ForegroundColor Green
 if (-not $SkipUpload) {
-    Write-Host " Releases:    https://github.com/MordWraith/Gamehelper/releases" -ForegroundColor Green
-    Write-Host " Downloader:  https://github.com/MordWraith/Gamehelper/releases/latest/download/GameHelperDownloader.exe" -ForegroundColor Green
+    Write-Host " Releases:    https://github.com/mojolern/Gamehelper/releases" -ForegroundColor Green
+    Write-Host " Downloader:  https://github.com/mojolern/Gamehelper/releases/latest/download/GameHelperDownloader.exe" -ForegroundColor Green
     if ($PushSource) {
-        Write-Host " Source:      https://github.com/MordWraith/Gamehelper/tree/main" -ForegroundColor Green
+        Write-Host " Source:      https://github.com/mojolern/Gamehelper/tree/main" -ForegroundColor Green
     }
 }
 Write-Host ""

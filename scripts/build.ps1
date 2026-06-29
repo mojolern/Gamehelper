@@ -261,7 +261,8 @@ function Test-PluginDeploy {
         @{ Plugin = "AmanamuVoidAlert"; Files = @("AmanamuVoidAlert.dll") },
         @{ Plugin = "PlayerBuffBar"; Files = @("PlayerBuffBar.dll") },
         @{ Plugin = "SimpleBars"; Files = @("SimpleBars.dll", "Textures\full_bar.png", "Textures\hollow_bar.png") },
-        @{ Plugin = "Hiveblood"; Files = @("Hiveblood.dll") }
+        @{ Plugin = "Hiveblood"; Files = @("Hiveblood.dll") },
+        @{ Plugin = "ClientPatches"; Files = @("ClientPatches.dll") }
     )
 
     foreach ($entry in $required) {

@@ -1,1 +1,4 @@
-SimpleBars: separate ES Gradation Marks (self bar), circle dot enhancements (arc thickness, background radius/color, arc offset, scale), individual Show Health Bar toggle || SimpleBars: separate ES-Strichmarkierungen (eigener Balken), Kreis-Dot-Erweiterungen, eigener "Show Health Bar"-Toggle
+﻿Integrated MordWraith v1.4.3 core/plugin baseline and offset updates.
+Added ClientPatches plugin for zoom/fog byte patches with startup scan, hotkeys, and restore-on-exit.
+Improved LoadedFiles diagnostics/fallback and PreloadAlert create/add/save behavior.
+Added plugin source links, save status, force-save on close/hide, and a more reliable F12 menu toggle.

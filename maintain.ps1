@@ -43,7 +43,7 @@ function Get-GithubRepository {
             if ($j.repository) { return $j.repository }
         } catch {}
     }
-    return "MordWraith/Gamehelper (not configured)"
+    return "mojolern/Gamehelper (not configured)"
 }
 
 function Invoke-Script {
@@ -845,7 +845,7 @@ public class Win32ConsoleStable {
 
     # --- Abschnitt: Push + Publish ---
     $pushPanel = New-SectionPanel 72
-    $pushLbl = New-SectionLabel "2  Pushen && Publish nach GitHub (MordWraith/Gamehelper)"
+    $pushLbl = New-SectionLabel "2  Pushen && Publish nach GitHub (mojolern/Gamehelper)"
     $pushLbl.Location = New-Object System.Drawing.Point(14, 8)
     $pushPanel.Controls.Add($pushLbl)
     $btnPushCore = New-Btn "Source pushen"   $false 160

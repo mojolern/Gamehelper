@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>1.1.2</Version>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>StashValueByZx0</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <Choose>
+    <When Condition="'$(Fork)' == 'Legacy'">
+      <PropertyGroup>
+        <AssemblyName>StashValueByZx0-Legacy</AssemblyName>
+      </PropertyGroup>
+      <ItemGroup>
+        <ProjectReference Include="..\..\sources\GameHelper-MordWraith\GameHelper\GameHelper.csproj">
+          <Private>false</Private>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
+        <ProjectReference Include="..\..\sources\GameHelper-MordWraith\GameOffsets\GameOffsets.csproj">
+          <Private>false</Private>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
+      </ItemGroup>
+    </When>
+    <Otherwise>
+      <ItemGroup>
+        <ProjectReference Include="..\..\GameHelper\GameHelper.csproj">
+          <Private>false</Private>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
+        <ProjectReference Include="..\..\GameOffsets\GameOffsets.csproj">
+          <Private>false</Private>
+          <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+        </ProjectReference>
+      </ItemGroup>
+    </Otherwise>
+  </Choose>
+
+  <Target Name="CopyFiles" AfterTargets="Build" Condition="'$(Fork)' != 'Legacy'">
+    <ItemGroup>
+      <_StashValueDeployFiles Include="$(OutDir)$(TargetName)$(TargetExt)" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StashValueDeployFiles)"
+          DestinationFolder="..\..\GameHelper\$(OutDir)Plugins\$(AssemblyName)"
+          Condition="Exists('..\..\GameHelper\$(OutDir)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="BuildLegacyFork" AfterTargets="Build" Condition="'$(Fork)' != 'Legacy' And Exists('..\..\sources\GameHelper-MordWraith')">
+    <MSBuild Projects="$(MSBuildProjectFile)" Properties="Fork=Legacy;Configuration=$(Configuration);Platform=$(Platform)" />
+  </Target>
+
+</Project>

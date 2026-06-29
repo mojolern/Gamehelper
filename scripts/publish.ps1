@@ -2,7 +2,7 @@
 param(
     [string]$Version,
     [string[]]$Changelog,
-    [string]$Repository = "MordWraith/Gamehelper",
+    [string]$Repository = "mojolern/Gamehelper",
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [switch]$SkipBuild,
@@ -24,6 +24,9 @@ if (Test-Path $configPath) {
     $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
     if ($cfg.repository) { $Repository = $cfg.repository }
 }
+
+Write-Host "  Ensure update signing key ..." -ForegroundColor DarkGray
+& (Join-Path $PSScriptRoot "ensure-update-signing-key.ps1")
 
 if (-not $SkipBuild) {
     $buildArgs = @{ Configuration = $Configuration }

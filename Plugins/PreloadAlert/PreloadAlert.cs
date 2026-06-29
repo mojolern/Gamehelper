@@ -1,4 +1,4 @@
-﻿// <copyright file="PreloadAlert.cs" company="PlaceholderCompany">
+// <copyright file="PreloadAlert.cs" company="PlaceholderCompany">
 // Copyright (c) PlaceholderCompany. All rights reserved.
 // </copyright>
 
@@ -83,9 +83,14 @@ namespace PreloadAlert
             var settingsData = JsonConvert.SerializeObject(this.Settings, Formatting.Indented);
             File.WriteAllText(this.SettingPathname, settingsData);
             this.Settings.Locked = lockStatus;
-            this.preloads.Save(this.PreloadFileName);
+            this.SavePreloads();
         }
 
+        private void SavePreloads()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(this.PreloadFileName) ?? string.Empty);
+            this.preloads.Save(this.PreloadFileName);
+        }
         /// <summary>
         ///     Draws the settings for this plugin on settings window.
         /// </summary>
@@ -216,12 +221,11 @@ namespace PreloadAlert
                 ImGui.InputText("Preload Alert List Filter", ref this.preloadListFilter, 200);
                 if (this.preloads.Count() == 0)
                 {
-                    ImGui.Text("No important preload found. Did you forget to copy preload.txt " +
-                        "file in the preload alert plugin folder?");
+                    ImGui.Text("No important preload found yet. Add one below to create preloads.txt automatically.");
                 }
-                else
+
+                if (ImGui.BeginTable("AllImportantPreloadsTable", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.ScrollY))
                 {
-                    ImGui.BeginTable("AllImportantPreloadsTable", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.Borders | ImGuiTableFlags.ScrollY);
                     ImGui.TableSetupColumn("Enable", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoHide);
                     ImGui.TableSetupColumn("Priority", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoHide);
                     ImGui.TableSetupColumn("Log", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.NoHide);
@@ -289,9 +293,16 @@ namespace PreloadAlert
                     ImGui.TableNextColumn();
                     if (ImGui.Button("Add"))
                     {
-                        if (!string.IsNullOrEmpty(this.tmpAddPreloadKey) || !string.IsNullOrEmpty(this.tmpAddPreloadValue.DisplayName))
+                        var preloadKey = this.tmpAddPreloadKey.Trim();
+                        if (!string.IsNullOrEmpty(preloadKey))
                         {
-                            this.preloads.AddOrUpdate(this.tmpAddPreloadKey, this.tmpAddPreloadValue, this.tmpAddPreloadValue.Priority);
+                            if (string.IsNullOrWhiteSpace(this.tmpAddPreloadValue.DisplayName))
+                            {
+                                this.tmpAddPreloadValue.DisplayName = preloadKey.Split('/', '\\').LastOrDefault() ?? preloadKey;
+                            }
+
+                            this.preloads.AddOrUpdate(preloadKey, this.tmpAddPreloadValue, this.tmpAddPreloadValue.Priority);
+                            this.SavePreloads();
                             this.tmpAddPreloadKey = string.Empty;
                             this.tmpAddPreloadValue = new();
                         }

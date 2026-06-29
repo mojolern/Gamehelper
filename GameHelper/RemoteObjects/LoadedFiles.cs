@@ -1,4 +1,4 @@
-﻿// <copyright file="LoadedFiles.cs" company="None">
+// <copyright file="LoadedFiles.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -10,6 +10,7 @@ namespace GameHelper.RemoteObjects
     using System.IO;
     using System.Linq;
     using System.Numerics;
+    using System.Threading;
     using System.Threading.Tasks;
     using Coroutine;
     using CoroutineEvents;
@@ -22,11 +23,29 @@ namespace GameHelper.RemoteObjects
     /// </summary>
     public class LoadedFiles : RemoteObjectBase
     {
+        private readonly ConcurrentDictionary<int, int> lastAreaCountHistogram = new();
+        private readonly ConcurrentQueue<(string Name, int AreaChangeCount)> scannedPathCandidates = new();
+        private readonly ConcurrentQueue<string> lastSampleNames = new();
         private bool areaAlreadyDone;
         private string areaHashCache = string.Empty;
         private string filename = string.Empty;
         private string searchText = string.Empty;
         private string[] searchTextSplit = Array.Empty<string>();
+        private int lastBucketsScanned;
+        private int lastFileNodesSeen;
+        private int lastMatchedFiles;
+        private int lastRejectedBeforeIgnore;
+        private int lastRejectedCounterMismatch;
+        private int lastRootObjectCount;
+        private int lastAreaChangeCounter;
+        private int lastFallbackAreaChangeCounter;
+        private IntPtr lastAddress;
+        private IntPtr lastRootPointer;
+        private string lastScanReason = "never";
+        private string lastScanAreaHash = string.Empty;
+        private string lastScanAreaName = string.Empty;
+        private string lastScanError = string.Empty;
+        private DateTime lastScanUtc = DateTime.MinValue;
 
         /// <summary>
         ///     Initializes a new instance of the <see cref="LoadedFiles" /> class.
@@ -58,6 +77,59 @@ namespace GameHelper.RemoteObjects
                               "hideout isn't considered a new Map. So basically you can find important preloads " +
                               "even after you have completed the whole map/gone to town/hideouts and " +
                               "entered the same Map again.");
+
+            if (ImGui.CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.Text($"Last scan: {this.lastScanReason} {(this.lastScanUtc == DateTime.MinValue ? "never" : this.lastScanUtc.ToLocalTime().ToString("HH:mm:ss"))}");
+                ImGui.Text($"Area: {this.lastScanAreaName} hash={this.lastScanAreaHash}");
+                ImGuiHelper.IntPtrToImGui("File Root static address", this.lastAddress);
+                ImGuiHelper.IntPtrToImGui("File Root table pointer", this.lastRootPointer);
+                ImGui.Text($"AreaChangeCounter: {this.lastAreaChangeCounter}");
+                if (this.lastFallbackAreaChangeCounter > 0)
+                {
+                    ImGui.TextColored(new Vector4(0.35f, 1f, 0.35f, 1f), $"Fallback AreaChangeCount: {this.lastFallbackAreaChangeCounter}");
+                }
+                ImGui.Text($"Root objects: {this.lastRootObjectCount}  Buckets scanned: {this.lastBucketsScanned}");
+                ImGui.Text($"File nodes seen: {this.lastFileNodesSeen}  Matched current area: {this.lastMatchedFiles}");
+                ImGui.Text($"Rejected before ignore threshold: {this.lastRejectedBeforeIgnore}  Counter mismatch: {this.lastRejectedCounterMismatch}");
+                if (!string.IsNullOrWhiteSpace(this.lastScanError))
+                {
+                    ImGui.TextColored(new Vector4(1f, 0.35f, 0.25f, 1f), $"Last error: {this.lastScanError}");
+                }
+
+                if (ImGui.Button("Rescan loaded files now"))
+                {
+                    try
+                    {
+                        this.ScanCurrentArea("manual", force: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        this.lastScanError = ex.Message;
+                        Console.WriteLine($"[LoadedFiles.ManualRescan] {ex}");
+                    }
+                }
+
+                if (this.lastAreaCountHistogram.Count > 0 && ImGui.TreeNode("AreaChangeCount samples"))
+                {
+                    foreach (var kv in this.lastAreaCountHistogram.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key).Take(20))
+                    {
+                        ImGui.Text($"{kv.Key}: {kv.Value}");
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                if (!this.lastSampleNames.IsEmpty && ImGui.TreeNode("Matched file samples"))
+                {
+                    foreach (var sample in this.lastSampleNames.Take(20))
+                    {
+                        ImGui.TextWrapped(sample);
+                    }
+
+                    ImGui.TreePop();
+                }
+            }
 
             ImGui.Text("File Name: ");
             ImGui.SameLine();
@@ -92,7 +164,8 @@ namespace GameHelper.RemoteObjects
             ImGui.Text("NOTE: Search is Case-Insensitive. Use commas (,) to narrow down the resulting files.");
             if (!string.IsNullOrEmpty(this.searchText))
             {
-                if (ImGui.BeginChild("Result##loadedfiles", Vector2.Zero, ImGuiChildFlags.Borders))
+                var resultVisible = ImGui.BeginChild("Result##loadedfiles", Vector2.Zero, ImGuiChildFlags.Borders);
+                if (resultVisible)
                 {
                     ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0, 0, 0, 0));
                     foreach (var kv in this.PathNames)
@@ -116,8 +189,9 @@ namespace GameHelper.RemoteObjects
                     }
 
                     ImGui.PopStyleColor();
-                    ImGui.EndChild();
                 }
+
+                ImGui.EndChild();
             }
         }
 
@@ -128,6 +202,7 @@ namespace GameHelper.RemoteObjects
             this.areaHashCache = string.Empty;
             this.areaAlreadyDone = false;
             this.filename = string.Empty;
+            this.ResetDiagnostics("cleanup");
         }
 
         /// <summary>
@@ -140,12 +215,16 @@ namespace GameHelper.RemoteObjects
         {
             var totalFiles = LoadedFilesRootObject.TotalCount;
             var reader = Core.Process.Handle;
+            this.lastAddress = this.Address;
+            this.lastRootPointer = reader.ReadMemory<IntPtr>(this.Address);
+            this.lastRootObjectCount = totalFiles;
             return reader.ReadMemoryArray<LoadedFilesRootObject>(
-                reader.ReadMemory<IntPtr>(this.Address), totalFiles);
+                this.lastRootPointer, totalFiles);
         }
 
         private void ScanForFilesParallel(SafeMemoryHandle reader, LoadedFilesRootObject filesRootObj)
         {
+            Interlocked.Increment(ref this.lastBucketsScanned);
             var filesPtr = reader.ReadStdBucket<FilesPointerStructure>(filesRootObj.LoadedFiles);
             Parallel.ForEach(filesPtr, fileNode =>
             {
@@ -155,13 +234,168 @@ namespace GameHelper.RemoteObjects
 
         private void AddFileIfLoadedInCurrentArea(SafeMemoryHandle reader, IntPtr address)
         {
-            var information = reader.ReadMemory<FileInfoValueStruct>(address);
-            if (information.AreaChangeCount > FileInfoValueStruct.IGNORE_FIRST_X_AREAS &&
-                information.AreaChangeCount == Core.AreaChangeCounter.Value)
+            if (address == IntPtr.Zero)
             {
-                var name = reader.ReadStdWString(information.Name).Split('@')[0];
-                this.PathNames.AddOrUpdate(name, information.AreaChangeCount,
-                    (key, oldValue) => { return Math.Max(oldValue, information.AreaChangeCount); });
+                return;
+            }
+
+            Interlocked.Increment(ref this.lastFileNodesSeen);
+            var information = reader.ReadMemory<FileInfoValueStruct>(address);
+            this.lastAreaCountHistogram.AddOrUpdate(information.AreaChangeCount, 1, (_, value) => value + 1);
+
+            if (information.AreaChangeCount <= 0)
+            {
+                Interlocked.Increment(ref this.lastRejectedBeforeIgnore);
+                return;
+            }
+
+            var name = reader.ReadStdWString(information.Name).Split('@')[0];
+            this.scannedPathCandidates.Enqueue((name, information.AreaChangeCount));
+
+            if (information.AreaChangeCount == Core.AreaChangeCounter.Value)
+            {
+                this.AddMatchedFile(name, information.AreaChangeCount);
+                return;
+            }
+
+            if (information.AreaChangeCount <= FileInfoValueStruct.IGNORE_FIRST_X_AREAS)
+            {
+                Interlocked.Increment(ref this.lastRejectedBeforeIgnore);
+                return;
+            }
+
+            Interlocked.Increment(ref this.lastRejectedCounterMismatch);
+        }
+
+        private bool ScanCurrentArea(string reason, bool force)
+        {
+            if (this.Address == IntPtr.Zero)
+            {
+                this.ResetDiagnostics(reason);
+                this.lastScanError = "File Root address is zero";
+                return false;
+            }
+
+            LoadedFilesRootObject[] filesRootObjs;
+            SafeMemoryHandle reader;
+            try
+            {
+                var areaHash = Core.States.InGameStateObject.CurrentAreaInstance.AreaHash;
+                var iH = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.IsHideout;
+                var iT = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.IsTown;
+                var name = Core.States.AreaLoading.CurrentAreaName;
+                if (!force && ((iH && Core.GHSettings.SkipPreloadedFilesInHideout) || iT || areaHash == this.areaHashCache))
+                {
+                    return false;
+                }
+
+                this.CleanUpData();
+                this.ResetDiagnostics(reason);
+                this.filename = $"{name}_{areaHash}.txt";
+                this.areaAlreadyDone = false;
+                this.areaHashCache = areaHash;
+                this.lastScanAreaHash = areaHash;
+                this.lastScanAreaName = name;
+                this.lastAreaChangeCounter = Core.AreaChangeCounter.Value;
+
+                filesRootObjs = this.GetAllPointers();
+                reader = Core.Process.Handle;
+            }
+            catch (Exception ex)
+            {
+                this.lastScanError = ex.Message;
+                Console.WriteLine($"[LoadedFiles.ScanCurrentArea.setup] {ex}");
+                return false;
+            }
+
+            for (var i = 0; i < filesRootObjs.Length; i++)
+            {
+                try
+                {
+                    this.ScanForFilesParallel(reader, filesRootObjs[i]);
+                }
+                catch (Exception ex)
+                {
+                    this.lastScanError = ex.Message;
+                    Console.WriteLine($"[LoadedFiles.ScanCurrentArea.scan] {ex}");
+                }
+            }
+
+            if (this.lastMatchedFiles == 0)
+            {
+                this.ApplyFallbackLoadedFiles();
+            }
+
+            try
+            {
+                CoroutineHandler.RaiseEvent(HybridEvents.PreloadsUpdated);
+            }
+            catch (Exception ex)
+            {
+                this.lastScanError = ex.Message;
+                Console.WriteLine($"[LoadedFiles.ScanCurrentArea.raise] {ex}");
+            }
+
+            return true;
+        }
+
+        private void AddMatchedFile(string name, int areaChangeCount)
+        {
+            this.PathNames.AddOrUpdate(name, areaChangeCount,
+                (key, oldValue) => { return Math.Max(oldValue, areaChangeCount); });
+            Interlocked.Increment(ref this.lastMatchedFiles);
+            if (this.lastSampleNames.Count < 25)
+            {
+                this.lastSampleNames.Enqueue(name);
+            }
+        }
+
+        private void ApplyFallbackLoadedFiles()
+        {
+            var candidates = this.scannedPathCandidates
+                .Where(candidate => candidate.AreaChangeCount > 0)
+                .ToArray();
+            if (candidates.Length == 0)
+            {
+                return;
+            }
+
+            var fallbackAreaChangeCount = candidates
+                .GroupBy(candidate => candidate.AreaChangeCount)
+                .OrderByDescending(group => group.Key)
+                .First().Key;
+
+            foreach (var candidate in candidates.Where(candidate => candidate.AreaChangeCount == fallbackAreaChangeCount))
+            {
+                this.AddMatchedFile(candidate.Name, candidate.AreaChangeCount);
+            }
+
+            this.lastFallbackAreaChangeCounter = fallbackAreaChangeCount;
+            this.lastScanError = $"Exact AreaChangeCounter match was empty; using newest loaded-file bucket {fallbackAreaChangeCount}.";
+        }
+
+        private void ResetDiagnostics(string reason)
+        {
+            this.lastScanReason = reason;
+            this.lastScanUtc = DateTime.UtcNow;
+            this.lastScanError = string.Empty;
+            this.lastBucketsScanned = 0;
+            this.lastFileNodesSeen = 0;
+            this.lastMatchedFiles = 0;
+            this.lastRejectedBeforeIgnore = 0;
+            this.lastRejectedCounterMismatch = 0;
+            this.lastRootObjectCount = 0;
+            this.lastAreaChangeCounter = Core.AreaChangeCounter.Value;
+            this.lastFallbackAreaChangeCounter = 0;
+            this.lastAddress = this.Address;
+            this.lastRootPointer = IntPtr.Zero;
+            this.lastAreaCountHistogram.Clear();
+            while (this.lastSampleNames.TryDequeue(out _))
+            {
+            }
+
+            while (this.scannedPathCandidates.TryDequeue(out _))
+            {
             }
         }
 
@@ -170,60 +404,8 @@ namespace GameHelper.RemoteObjects
             while (true)
             {
                 yield return new Wait(RemoteEvents.AreaChanged);
-                if (this.Address == IntPtr.Zero)
-                {
-                    continue;
-                }
-
-                LoadedFilesRootObject[] filesRootObjs;
-                SafeMemoryHandle reader;
-                try
-                {
-                    var areaHash = Core.States.InGameStateObject.CurrentAreaInstance.AreaHash;
-                    var iH = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.IsHideout;
-                    var iT = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.IsTown;
-                    var name = Core.States.AreaLoading.CurrentAreaName;
-                    if ((iH && Core.GHSettings.SkipPreloadedFilesInHideout) || iT || areaHash == this.areaHashCache)
-                    {
-                        continue;
-                    }
-
-                    this.CleanUpData();
-                    this.filename = $"{name}_{areaHash}.txt";
-                    this.areaAlreadyDone = false;
-                    this.areaHashCache = areaHash;
-
-                    filesRootObjs = this.GetAllPointers();
-                    reader = Core.Process.Handle;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LoadedFiles.OnAreaChange.setup] {ex}");
-                    continue;
-                }
-
-                for (var i = 0; i < filesRootObjs.Length; i++)
-                {
-                    try
-                    {
-                        this.ScanForFilesParallel(reader, filesRootObjs[i]);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[LoadedFiles.OnAreaChange.scan] {ex}");
-                    }
-
-                    yield return new Wait(0d);
-                }
-
-                try
-                {
-                    CoroutineHandler.RaiseEvent(HybridEvents.PreloadsUpdated);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[LoadedFiles.OnAreaChange.raise] {ex}");
-                }
+                this.ScanCurrentArea("area-change", force: false);
+                yield return new Wait(0d);
             }
         }
     }
