@@ -1,4 +1,4 @@
-﻿using GameHelper.Plugin;
+using GameHelper.Plugin;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 using System.Numerics;
@@ -57,6 +57,20 @@ namespace Atlas
         // DEBUG/RE: draw the node's child-index (its number in the atlas-panel child list) as a small
         // badge to the LEFT of the map name, so a node called out by number is easy to find on-screen.
         public bool ShowNodeIndex = false;
+
+        // RE/debug: when enabled, the Atlas plugin writes timestamped snapshots/diffs of the live
+        // Atlas node graph while the Atlas is open. Intended for Expedition Logbook preview research:
+        // enable it, capture a baseline, hover/select a logbook so the yellow preview route appears,
+        // then chart the area and compare the resulting log.
+        public bool LogbookPreviewWatch = false;
+        public int LogbookPreviewPollMs = 250;
+        public bool ShowLogbookPreviewCandidates = true;
+        public int LogbookPreviewCandidateTtlSeconds = 30;
+        public bool LogbookHoverPanelProbe = true;
+        public bool LogbookPreviewUiScan = false;
+        public bool DrawLogbookPreviewUiChanges = false;
+        public int LogbookPreviewUiScanDepth = 5;
+
         public bool ShowBiomeBorder = true;
         public float BiomeBorderThickness = 2.0f;
 

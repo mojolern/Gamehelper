@@ -40,6 +40,7 @@ namespace Atlas
         // is {int unknown; grid Source; grid Target}; Source/Target are grid coords matched against
         // each node's grid (node+0x320). Verified live in GameHelper2-main for PoE2 0.5.x.
         private const int AtlasConnectionsVectorOffset = 0x5A8;
+        private const int UiElementTextOffset = 0x390;
 
         // fp of the "you are here" marker child (shares the node-list container fp, not the
         // map-node fp 0x542EF3). Used to locate the player's current atlas node by screen position.
@@ -158,6 +159,137 @@ namespace Atlas
         // chain, so this is computed once per frame and every node's position becomes O(1) math off it
         // (instead of walking the whole ancestor chain per node). Cleared each frame.
         private static readonly Dictionary<IntPtr, Vector2> parentOffsetCache = new();
+
+        private LogbookWatchSnapshot logbookWatchLastSnapshot;
+        private DateTime logbookWatchLastSampleUtc = DateTime.MinValue;
+        private string logbookWatchPath = string.Empty;
+        private int logbookWatchSeq;
+        private readonly Dictionary<string, LogbookPreviewCandidate> logbookPreviewCandidates = new(StringComparer.Ordinal);
+        private LogbookUiSnapshot logbookUiLastSnapshot;
+        private DateTime logbookUiLastSampleUtc = DateTime.MinValue;
+        private string logbookUiScanPath = string.Empty;
+        private int logbookUiScanSeq;
+        private string logbookHoverPanelSignature = string.Empty;
+        private readonly Dictionary<IntPtr, LogbookUiChange> logbookUiChanges = new();
+        private readonly Dictionary<IntPtr, LogbookUiEntry> logbookUiMouseHits = new();
+        private LogbookUseIconAnchor logbookLastUseIconAnchor;
+
+        private sealed class LogbookWatchSnapshot
+        {
+            public string Signature { get; init; } = string.Empty;
+            public int NodeCount { get; init; }
+            public int EdgeCount { get; init; }
+            public int AccessibleCount { get; init; }
+            public int CompletedCount { get; init; }
+            public int ContentNodeCount { get; init; }
+            public Dictionary<string, LogbookWatchNode> Nodes { get; init; } = new(StringComparer.Ordinal);
+            public HashSet<string> Edges { get; init; } = new(StringComparer.Ordinal);
+        }
+
+        private sealed class LogbookWatchNode
+        {
+            public string Key { get; init; } = string.Empty;
+            public string MapName { get; init; } = string.Empty;
+            public string InternalId { get; init; } = string.Empty;
+            public string State { get; init; } = string.Empty;
+            public byte BiomeId { get; init; }
+            public int ChildIndex { get; init; }
+            public int ContentCount { get; init; }
+            public string ContentSignature { get; init; } = string.Empty;
+
+            public string Compact => $"{Key} idx={ChildIndex} '{MapName}' id='{InternalId}' state={State} biome={BiomeId} content={ContentCount} [{ContentSignature}]";
+        }
+
+        private sealed class LogbookPreviewCandidate
+        {
+            public DateTime FirstSeenUtc { get; set; }
+            public DateTime LastSeenUtc { get; set; }
+            public DateTime ExpiresUtc { get; set; }
+            public string MapName { get; set; } = string.Empty;
+            public string InternalId { get; set; } = string.Empty;
+            public string Reason { get; set; } = string.Empty;
+            public int ContentCount { get; set; }
+            public string ContentSignature { get; set; } = string.Empty;
+        }
+
+        private sealed class LogbookUiSnapshot
+        {
+            public Dictionary<IntPtr, LogbookUiEntry> Entries { get; init; } = new();
+            public List<LogbookUiEntry> MouseHits { get; init; } = [];
+            public Vector2 MousePos { get; init; }
+            public string MouseSignature => string.Join(",", MouseHits.Select(e => e.Address.ToInt64().ToString("X")));
+        }
+
+        private sealed class LogbookUiEntry
+        {
+            public IntPtr Address { get; init; }
+            public string Path { get; init; } = string.Empty;
+            public uint Flags { get; init; }
+            public uint Fingerprint { get; init; }
+            public int ChildCount { get; init; }
+            public Vector2 TopLeft { get; init; }
+            public Vector2 Size { get; init; }
+            public uint BackgroundColor { get; init; }
+            public string Text { get; init; } = string.Empty;
+
+            public string Signature => $"{Flags:X8}:{ChildCount}:{TopLeft.X:F1},{TopLeft.Y:F1}:{Size.X:F1},{Size.Y:F1}:{BackgroundColor:X8}:{Text}";
+            public string Compact => $"{Path} addr=0x{Address.ToInt64():X} fp=0x{Fingerprint:X6} flags=0x{Flags:X8} children={ChildCount} rect={TopLeft.X:F0},{TopLeft.Y:F0} {Size.X:F0}x{Size.Y:F0} bg=0x{BackgroundColor:X8}{FormatUiText(Text)}";
+        }
+
+        private sealed class LogbookUiChange
+        {
+            public DateTime ExpiresUtc { get; set; }
+            public LogbookUiEntry Entry { get; set; }
+        }
+
+        private sealed class LogbookUseIconNodeMapping
+        {
+            public int ChildIndex { get; init; }
+            public LogbookUiEntry Icon { get; init; }
+            public NodeData Node { get; init; }
+            public Vector2 NodeCenter { get; init; }
+            public float Distance { get; init; }
+            public bool HasNode { get; init; }
+            public bool IsHovered { get; init; }
+
+            public string Compact
+            {
+                get
+                {
+                    var marker = IsHovered ? "HOVER " : string.Empty;
+                    var iconCenter = Icon.TopLeft + Icon.Size * 0.5f;
+                    if (!HasNode)
+                        return $"{marker}icon[{ChildIndex}] screen={iconCenter.X:F0},{iconCenter.Y:F0} -> no nearby atlas node";
+
+                    return $"{marker}icon[{ChildIndex}] screen={iconCenter.X:F0},{iconCenter.Y:F0} -> grid={FormatGrid(Node.GridPosition)} idx={Node.ChildIndex} '{Node.MapName}' id='{Node.InternalId}' state={Node.State} nodeScreen={NodeCenter.X:F0},{NodeCenter.Y:F0} dist={Distance:F0}";
+                }
+            }
+        }
+
+        private sealed class LogbookUseIconAnchor
+        {
+            public DateTime SeenUtc { get; init; }
+            public int ChildIndex { get; init; }
+            public Vector2 IconCenter { get; init; }
+            public bool HasNode { get; init; }
+            public StdTuple2D<int> Grid { get; init; }
+            public string MapName { get; init; } = string.Empty;
+            public string InternalId { get; init; } = string.Empty;
+            public string State { get; init; } = string.Empty;
+            public Vector2 NodeCenter { get; init; }
+            public float Distance { get; init; }
+
+            public string Compact
+            {
+                get
+                {
+                    if (!HasNode)
+                        return $"iconChild={ChildIndex} iconScreen={IconCenter.X:F0},{IconCenter.Y:F0} no mapped atlas node";
+
+                    return $"iconChild={ChildIndex} iconScreen={IconCenter.X:F0},{IconCenter.Y:F0} anchorGrid={FormatGrid(Grid)} '{MapName}' id='{InternalId}' state={State} nodeScreen={NodeCenter.X:F0},{NodeCenter.Y:F0} dist={Distance:F0}";
+                }
+            }
+        }
 
 
         public override void OnDisable()
@@ -313,6 +445,56 @@ namespace Atlas
                 ImGui.Checkbox("Show Node Index (debug/RE)", ref Settings.ShowNodeIndex);
                 ImGuiHelper.ToolTip("DEBUG: draws each node's child-index (its number in the atlas-panel child list) as a badge " +
                     "to the left of the map name, so a node referenced by number is easy to locate on-screen.");
+
+                if (ImGui.TreeNode("Logbook Preview Watch (RE)"))
+                {
+                    ImGui.Checkbox("Write atlas logbook preview diffs", ref Settings.LogbookPreviewWatch);
+                    ImGuiHelper.ToolTip("Read-only research logger. Enable it while the Atlas is open, capture a baseline, " +
+                        "hover/select an Expedition Logbook so the preview route appears, then chart the area. " +
+                        "Logs are written under Plugins\\Atlas\\logs.");
+                    ImGui.SetNextItemWidth(160);
+                    ImGui.SliderInt("Poll ms", ref Settings.LogbookPreviewPollMs, 50, 2000);
+                    ImGui.Checkbox("Highlight recent preview candidates", ref Settings.ShowLogbookPreviewCandidates);
+                    ImGuiHelper.ToolTip("Samples Atlas node content while enabled and highlights nodes whose content changes, " +
+                        "which is the signal observed when hovering/selecting a logbook preview.");
+                    ImGui.Checkbox("Probe hover icon/panel state", ref Settings.LogbookHoverPanelProbe);
+                    ImGuiHelper.ToolTip("Logs the actual Uncharted Waters hover/use-icon panel state, including UI text and mouse-hit ancestry, so it can be correlated with revealed Atlas node changes.");
+                    ImGui.SetNextItemWidth(160);
+                    ImGui.SliderInt("Highlight TTL sec", ref Settings.LogbookPreviewCandidateTtlSeconds, 5, 300);
+
+                    if (ImGui.Button("Reset log session"))
+                        ResetLogbookPreviewWatch();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Clear candidates"))
+                        logbookPreviewCandidates.Clear();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Open logs folder"))
+                        OpenLogbookPreviewWatchFolder();
+
+                    var activeCandidates = CountActiveLogbookPreviewCandidates(DateTime.UtcNow);
+                    ImGui.TextDisabled($"Active preview candidates: {activeCandidates}");
+
+                    ImGui.SeparatorText("Preview UI scanner");
+                    ImGui.Checkbox("Scan hover UI changes", ref Settings.LogbookPreviewUiScan);
+                    ImGuiHelper.ToolTip("RE-only broad scan. Prefer the hover icon/panel probe above for normal testing.");
+                    ImGui.Checkbox("Draw UI debug boxes", ref Settings.DrawLogbookPreviewUiChanges);
+                    ImGuiHelper.ToolTip("Optional RE visualization only. Leave off unless you specifically want UI rectangles.");
+                    ImGui.SetNextItemWidth(160);
+                    ImGui.SliderInt("UI scan depth", ref Settings.LogbookPreviewUiScanDepth, 2, 8);
+                    if (ImGui.Button("Reset UI scan"))
+                        ResetLogbookUiScan();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Open UI scan log"))
+                        OpenLogbookPreviewWatchFolder();
+                    ImGui.TextDisabled($"Active UI changes: {CountActiveLogbookUiChanges(DateTime.UtcNow)}");
+
+                    if (!string.IsNullOrWhiteSpace(logbookWatchPath))
+                        ImGui.TextWrapped($"Current log: {logbookWatchPath}");
+                    else
+                        ImGui.TextDisabled("No log file yet. Enable watch and open the Atlas.");
+
+                    ImGui.TreePop();
+                }
             }
 
             // Collapsed-by-default Display section: node-visibility filters, biome border, label
@@ -745,7 +927,9 @@ namespace Atlas
             // When every node state is hidden and nothing searches/routes to a node, no node is ever
             // drawn — so reading per-node data this frame would be wasted work. Skip the read + draw.
             bool allStatesHidden = Settings.HideCompletedMaps && Settings.HideNotAccessibleMaps && Settings.HideAvailableMaps;
-            bool needNodeData = !allStatesHidden || doSearch || wantContentRoute
+            bool previewWatchActive = Settings.LogbookPreviewWatch || Settings.ShowLogbookPreviewCandidates;
+            bool uiScanActive = Settings.LogbookPreviewUiScan || Settings.LogbookHoverPanelProbe;
+            bool needNodeData = previewWatchActive || uiScanActive || !allStatesHidden || doSearch || wantContentRoute
                 || Settings.DrawLinesToUniqueMaps || Settings.PathToLineageMaps || Settings.PathToArbiterMaps;
             if (!needNodeData)
             {
@@ -762,6 +946,11 @@ namespace Atlas
                 this.RefreshNodeCache(atlasUi, atlasCount);
                 cacheFrameCounter = 0;
             }
+
+            if (uiScanActive)
+                UpdateLogbookUiScan(atlasPanelAddr);
+            if (previewWatchActive)
+                UpdateLogbookPreviewWatch(atlasPanelAddr);
 
             var panelTopLeft = GetFinalTopLeft(in atlasUi.UiElementBase);
             var panelScale = ComputeScalePair(in atlasUi.UiElementBase);
@@ -877,14 +1066,19 @@ namespace Atlas
                 // triangles on the same spots — the later colour (usually a white/cream content route)
                 // then fully hid the earlier one (e.g. a red arbiter route) on their common segment.
                 var pendingRoutes = new List<(List<StdTuple2D<int>> path, uint color, float thickness)>();
+                var logbookPreviewNow = DateTime.UtcNow;
+                PurgeExpiredLogbookPreviewCandidates(logbookPreviewNow);
 
                 foreach (var nd in nodeCache)
                 {
                     if (!nd.Drawable)
                         continue;
                     var mapName = nd.MapName;
+                    LogbookPreviewCandidate previewInfo = null;
+                    bool previewCandidate = Settings.ShowLogbookPreviewCandidates &&
+                        TryGetLogbookPreviewCandidate(nd.GridPosition, logbookPreviewNow, out previewInfo);
 
-                    if (doSearch && !searchList.Any(searchTerm => mapName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
+                    if (!previewCandidate && doSearch && !searchList.Any(searchTerm => mapName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
                         continue;
 
                     bool completed = nd.State == AtlasNodeState.CompletedBase;
@@ -901,7 +1095,7 @@ namespace Atlas
                     ContentRouteEntry contentEntry = null;
                     ContentGroupSettings contentGroup = null;
                     bool targetContent = !completed && MatchContentRoute(in nd, out contentEntry, out contentGroup);
-                    bool routeTarget = targetUnique || targetLineage || targetArbiter || targetContent || doSearch;
+                    bool routeTarget = previewCandidate || targetUnique || targetLineage || targetArbiter || targetContent || doSearch;
 
                     if (Settings.HideCompletedMaps && completed)
                         continue;
@@ -1047,8 +1241,46 @@ namespace Atlas
                             outRounding, ImDrawFlags.RoundCornersAll, bBorderTh);
                     }
 
+                    if (previewCandidate)
+                    {
+                        var fade = 1f;
+                        var age = Math.Max(0.0, (logbookPreviewNow - previewInfo.LastSeenUtc).TotalSeconds);
+                        var ttl = Math.Max(1, Settings.LogbookPreviewCandidateTtlSeconds);
+                        fade = (float)Math.Clamp(1.0 - (age / ttl), 0.25, 1.0);
+                        var previewColor = new Vector4(1f, 0.78f, 0.12f, fade);
+                        var previewFill = new Vector4(1f, 0.78f, 0.12f, 0.13f * fade);
+                        var radius = MathF.Max(nodeSize.X, nodeSize.Y) * 0.75f + 8f * uiScale;
+
+                        drawList.ChannelsSetCurrent(ChannelDots);
+                        drawList.AddCircleFilled(nodeCenter, radius, ImGuiHelper.Color(previewFill), 32);
+                        drawList.AddCircle(nodeCenter, radius, ImGuiHelper.Color(previewColor), 32, MathF.Max(2f, 2.5f * uiScale));
+
+                        drawList.ChannelsSetCurrent(ChannelLabels);
+                        var markMin = bgPos - new Vector2(4f, 4f) * uiScale;
+                        var markMax = bgPos + bgSize + new Vector2(4f, 4f) * uiScale;
+                        drawList.AddRect(markMin, markMax, ImGuiHelper.Color(previewColor),
+                            rounding + 4f * uiScale, ImDrawFlags.RoundCornersAll, MathF.Max(2f, 2f * uiScale));
+                    }
+
                     drawList.AddRectFilled(bgPos, bgPos + bgSize, ImGuiHelper.Color(backgroundColor), rounding);
                     drawList.AddText(drawPosition, ImGuiHelper.Color(fontColor), mapName);
+
+                    if (previewCandidate)
+                    {
+                        var reason = string.IsNullOrWhiteSpace(previewInfo.Reason)
+                            ? string.Empty
+                            : " " + previewInfo.Reason;
+                        var tag = previewInfo.ContentCount > 0
+                            ? $"PREVIEW{reason} {previewInfo.ContentCount}"
+                            : $"PREVIEW{reason}";
+                        var tagSize = ImGui.CalcTextSize(tag);
+                        var tagPad = new Vector2(5f, 1.5f) * uiScale;
+                        var tagBox = tagSize + tagPad * 2f;
+                        var tagMin = new Vector2(rectCenter.X - tagBox.X * 0.5f, bgPos.Y - tagBox.Y - 3f * uiScale);
+                        drawList.AddRectFilled(tagMin, tagMin + tagBox,
+                            ImGuiHelper.Color(new Vector4(0.1f, 0.07f, 0.01f, 0.9f)), 3f * uiScale);
+                        drawList.AddText(tagMin + tagPad, ImGuiHelper.Color(new Vector4(1f, 0.85f, 0.22f, 1f)), tag);
+                    }
 
                     // DEBUG/RE: node child-index badge, sitting to the LEFT of the name and vertically
                     // centered against it, so a node called out by number is easy to find on-screen.
@@ -1138,6 +1370,9 @@ namespace Atlas
 
                 drawList.ChannelsMerge();
             }
+
+            if (Settings.DrawLogbookPreviewUiChanges)
+                DrawLogbookUiChanges(ImGui.GetForegroundDrawList(), DateTime.UtcNow);
 
             // Tooltip for the content marker under the cursor — drawn after the FontScaleScope so the
             // text is normal-sized. ImGui tooltip windows render above the background draw list.
@@ -1354,6 +1589,1297 @@ namespace Atlas
             _ => AtlasNodeState.None,
         };
 
+        private void ResetLogbookPreviewWatch()
+        {
+            logbookWatchLastSnapshot = null;
+            logbookWatchLastSampleUtc = DateTime.MinValue;
+            logbookWatchPath = string.Empty;
+            logbookWatchSeq = 0;
+            logbookPreviewCandidates.Clear();
+            ResetLogbookUiScan();
+        }
+
+        private void ResetLogbookUiScan()
+        {
+            logbookUiLastSnapshot = null;
+            logbookUiLastSampleUtc = DateTime.MinValue;
+            logbookUiScanPath = string.Empty;
+            logbookUiScanSeq = 0;
+            logbookHoverPanelSignature = string.Empty;
+            logbookUiChanges.Clear();
+            logbookUiMouseHits.Clear();
+            logbookLastUseIconAnchor = null;
+        }
+
+        private string LogbookWatchDirectory => Path.Join(DllDirectory, "logs");
+
+        private void OpenLogbookPreviewWatchFolder()
+        {
+            try
+            {
+                Directory.CreateDirectory(LogbookWatchDirectory);
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = LogbookWatchDirectory,
+                    UseShellExecute = true,
+                });
+            }
+            catch
+            {
+                // Debug convenience only; never let it affect overlay operation.
+            }
+        }
+
+        private void UpdateLogbookPreviewWatch(IntPtr atlasPanelAddr)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var writeLog = Settings.LogbookPreviewWatch;
+                var pollMs = Math.Clamp(Settings.LogbookPreviewPollMs, 50, 5000);
+                if ((now - logbookWatchLastSampleUtc).TotalMilliseconds < pollMs)
+                    return;
+
+                logbookWatchLastSampleUtc = now;
+                if (writeLog)
+                    EnsureLogbookPreviewWatchFile();
+                var snapshot = BuildLogbookWatchSnapshot(atlasPanelAddr);
+                if (logbookWatchLastSnapshot == null)
+                {
+                    if (writeLog)
+                        AppendLogbookWatchBlock("baseline", DescribeLogbookSnapshot(snapshot));
+                    logbookWatchLastSnapshot = snapshot;
+                    return;
+                }
+
+                UpdateLogbookPreviewCandidates(logbookWatchLastSnapshot, snapshot, now);
+                var diff = DescribeLogbookSnapshotDiff(logbookWatchLastSnapshot, snapshot);
+                if (diff.Count > 0)
+                {
+                    AppendCurrentLogbookHoverPanelState(diff, "hover panel state at node delta");
+                    if (writeLog)
+                        AppendLogbookWatchBlock("delta", diff);
+                    logbookWatchLastSnapshot = snapshot;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Settings.LogbookPreviewWatch)
+                {
+                    try
+                    {
+                        EnsureLogbookPreviewWatchFile();
+                        AppendLogbookWatchBlock("error", [$"{ex.GetType().Name}: {ex.Message}"]);
+                    }
+                    catch
+                    {
+                        // Read-only research helper: do not destabilize the overlay.
+                    }
+                }
+            }
+        }
+
+        private void UpdateLogbookUiScan(IntPtr atlasPanelAddr)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var pollMs = Math.Clamp(Settings.LogbookPreviewPollMs, 50, 5000);
+                if ((now - logbookUiLastSampleUtc).TotalMilliseconds < pollMs)
+                    return;
+
+                logbookUiLastSampleUtc = now;
+                var root = FindLogbookUiScanRoot(atlasPanelAddr);
+                if (root == IntPtr.Zero)
+                    return;
+
+                EnsureLogbookUiScanFile();
+                var snapshot = BuildLogbookUiSnapshot(root, atlasPanelAddr, Math.Clamp(Settings.LogbookPreviewUiScanDepth, 2, 8));
+                logbookUiMouseHits.Clear();
+                foreach (var hit in snapshot.MouseHits)
+                    logbookUiMouseHits[hit.Address] = hit;
+
+                if (Settings.LogbookHoverPanelProbe)
+                {
+                    var hoverPanelState = DescribeLogbookHoverPanelState(snapshot);
+                    if (hoverPanelState.Count > 0)
+                    {
+                        var signature = string.Join("\n", hoverPanelState);
+                        if (!string.Equals(signature, logbookHoverPanelSignature, StringComparison.Ordinal))
+                        {
+                            AppendLogbookUiScanBlock("hover panel/use-icon state", hoverPanelState);
+                            logbookHoverPanelSignature = signature;
+                        }
+                    }
+                }
+
+                if (!Settings.LogbookPreviewUiScan)
+                {
+                    logbookUiLastSnapshot = snapshot;
+                    PurgeExpiredLogbookUiChanges(now);
+                    return;
+                }
+
+                if (logbookUiLastSnapshot == null)
+                {
+                    AppendLogbookUiScanBlock("baseline", DescribeLogbookUiSnapshot(snapshot));
+                    logbookUiLastSnapshot = snapshot;
+                    return;
+                }
+
+                var diff = DescribeLogbookUiDiff(logbookUiLastSnapshot, snapshot, now);
+                if (diff.Count > 0)
+                {
+                    AppendLogbookUiScanBlock("delta", diff);
+                    logbookUiLastSnapshot = snapshot;
+                }
+
+                PurgeExpiredLogbookUiChanges(now);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    EnsureLogbookUiScanFile();
+                    AppendLogbookUiScanBlock("error", [$"{ex.GetType().Name}: {ex.Message}"]);
+                }
+                catch
+                {
+                    // RE helper only.
+                }
+            }
+        }
+
+        private void EnsureLogbookUiScanFile()
+        {
+            if (!string.IsNullOrWhiteSpace(logbookUiScanPath))
+                return;
+
+            Directory.CreateDirectory(LogbookWatchDirectory);
+            logbookUiScanPath = Path.Join(LogbookWatchDirectory, $"atlas-logbook-ui-scan-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            File.AppendAllLines(logbookUiScanPath, new[]
+            {
+                "Atlas Logbook Preview UI Scan",
+                "=============================",
+                "Steps: reset scan, keep cursor off the logbook use icon for baseline, then hover/select the icon.",
+                "This log focuses on the hovered Uncharted Waters panel/use-icon state and its readable UI text.",
+                string.Empty,
+            });
+        }
+
+        private void AppendLogbookUiScanBlock(string title, IReadOnlyList<string> lines)
+        {
+            if (string.IsNullOrWhiteSpace(logbookUiScanPath))
+                return;
+
+            var output = new List<string>(lines.Count + 4)
+            {
+                $"[{++logbookUiScanSeq:0000}] {DateTime.Now:HH:mm:ss.fff} {title}",
+            };
+            output.AddRange(lines);
+            output.Add(string.Empty);
+            File.AppendAllLines(logbookUiScanPath, output);
+        }
+
+        private static IntPtr FindLogbookUiScanRoot(IntPtr atlasPanelAddr)
+        {
+            // atlasPanelAddr is the node-list container. Climb to the highest valid parent so
+            // sibling widgets, including the left-side Uncharted Waters panel, are included.
+            var current = atlasPanelAddr;
+            var lastValid = atlasPanelAddr;
+            for (int i = 0; i < 12 && current != IntPtr.Zero; i++)
+            {
+                var ub = Read<UiElementBaseOffset>(current);
+                if (ub.ParentPtr == IntPtr.Zero)
+                    break;
+                lastValid = ub.ParentPtr;
+                current = ub.ParentPtr;
+            }
+
+            return lastValid;
+        }
+
+        private static IntPtr ClimbUiParents(IntPtr addr, int hops)
+        {
+            var current = addr;
+            for (int i = 0; i < hops && current != IntPtr.Zero; i++)
+            {
+                var ub = Read<UiElementBaseOffset>(current);
+                current = ub.ParentPtr;
+            }
+            return current;
+        }
+
+        private LogbookUiSnapshot BuildLogbookUiSnapshot(IntPtr rootAddr, IntPtr skipSubtreeAddr, int maxDepth)
+        {
+            var entries = new Dictionary<IntPtr, LogbookUiEntry>();
+            var mouseHits = new List<LogbookUiEntry>();
+            var mousePos = ImGui.GetMousePos();
+            AddLogbookUiEntries(rootAddr, skipSubtreeAddr, "root", 0, maxDepth, entries, mouseHits, mousePos);
+            return new LogbookUiSnapshot
+            {
+                Entries = entries,
+                MouseHits = mouseHits
+                    .OrderBy(e => e.Size.X * e.Size.Y)
+                    .ThenByDescending(e => e.Path.Length)
+                    .Take(5)
+                    .ToList(),
+                MousePos = mousePos,
+            };
+        }
+
+        private void AddLogbookUiEntries(
+            IntPtr addr,
+            IntPtr skipSubtreeAddr,
+            string path,
+            int depth,
+            int maxDepth,
+            Dictionary<IntPtr, LogbookUiEntry> entries,
+            List<LogbookUiEntry> mouseHits,
+            Vector2 mousePos)
+        {
+            if (addr == IntPtr.Zero || addr == skipSubtreeAddr || entries.Count >= 3000)
+                return;
+
+            var ui = Read<UiElement>(addr);
+            var ub = ui.UiElementBase;
+            var fp = ub.Flags & ~IsVisibleMask;
+            var childCount = ui.Length;
+            var isVisible = (ub.Flags & IsVisibleMask) != 0;
+
+            if (isVisible && fp != AtlasMapNodeFp)
+            {
+                var scale = ComputeScalePair(in ub);
+                var topLeft = GetFinalTopLeft(in ub);
+                var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
+                if (size.X >= 2f && size.Y >= 2f)
+                {
+                    var entry = new LogbookUiEntry
+                    {
+                        Address = addr,
+                        Path = path,
+                        Flags = ub.Flags,
+                        Fingerprint = fp,
+                        ChildCount = childCount,
+                        TopLeft = topLeft,
+                        Size = size,
+                        BackgroundColor = ub.BackgroundColor,
+                        Text = ReadUiElementText(addr),
+                    };
+                    if (IsReasonableUiScanEntry(entry))
+                        entries[addr] = entry;
+                    if (ContainsPoint(entry, mousePos))
+                        mouseHits.Add(entry);
+                }
+            }
+
+            if (depth >= maxDepth || childCount <= 0 || childCount > 2000)
+                return;
+
+            for (int i = 0; i < childCount && entries.Count < 3000; i++)
+            {
+                var childAddr = ui.GetChildAddress(i);
+                if (childAddr == IntPtr.Zero)
+                    continue;
+                AddLogbookUiEntries(childAddr, skipSubtreeAddr, $"{path}/{i}", depth + 1, maxDepth, entries, mouseHits, mousePos);
+            }
+        }
+
+        private static bool IsReasonableUiScanEntry(LogbookUiEntry entry)
+        {
+            if (entry.Size.X < 2f || entry.Size.Y < 2f)
+                return false;
+            if (entry.Size.X > 2600f || entry.Size.Y > 1800f)
+                return true;
+            return entry.TopLeft.X > -200f && entry.TopLeft.Y > -200f && entry.TopLeft.X < 2600f && entry.TopLeft.Y < 1800f;
+        }
+
+        private static bool ContainsPoint(LogbookUiEntry entry, Vector2 point) =>
+            point.X >= entry.TopLeft.X && point.Y >= entry.TopLeft.Y &&
+            point.X <= entry.TopLeft.X + entry.Size.X && point.Y <= entry.TopLeft.Y + entry.Size.Y;
+
+        private static List<string> DescribeLogbookUiSnapshot(LogbookUiSnapshot snapshot) =>
+        [
+            $"entries={snapshot.Entries.Count} mouse={snapshot.MousePos.X:F0},{snapshot.MousePos.Y:F0} mouseHits={snapshot.MouseHits.Count}",
+            "Mouse-hit UI entries:",
+            .. snapshot.MouseHits.Select(e => "  " + e.Compact),
+            "Sample visible UI entries:",
+            .. snapshot.Entries.Values
+                .OrderBy(e => e.Path, StringComparer.Ordinal)
+                .Take(60)
+                .Select(e => "  " + e.Compact),
+        ];
+
+        private List<string> DescribeLogbookHoverPanelState(LogbookUiSnapshot snapshot)
+        {
+            if (snapshot.MouseHits.Count == 0)
+                return [];
+
+            var lines = new List<string>
+            {
+                $"mouse={snapshot.MousePos.X:F0},{snapshot.MousePos.Y:F0} mouseHits={snapshot.MouseHits.Count}",
+            };
+
+            AppendLimited(lines, "mouse-hit UI", snapshot.MouseHits.Select(e => e.Compact), 5);
+
+            var useIcon = snapshot.MouseHits.FirstOrDefault(IsLikelyLogbookUseIcon);
+            if (useIcon != null)
+            {
+                lines.Add("focused logbook use icon:");
+                foreach (var line in DescribeFocusedLogbookUseIcon(useIcon))
+                    lines.Add("  " + line);
+                AppendLimited(lines, "nearest atlas nodes to cursor", DescribeNearestAtlasNodes(snapshot.MousePos, 12), 12);
+                return lines;
+            }
+
+            foreach (var hit in snapshot.MouseHits.Take(3))
+            {
+                lines.Add($"parent chain for 0x{hit.Address.ToInt64():X}:");
+                foreach (var parentLine in DescribeUiParentChain(hit.Address, 8))
+                    lines.Add("  " + parentLine);
+            }
+
+            var relevantText = snapshot.Entries.Values
+                .Where(e => !string.IsNullOrWhiteSpace(e.Text))
+                .Where(e => IsLikelyLogbookPanelText(e.Text) || DistanceSquaredToRect(snapshot.MousePos, e) <= 260f * 260f)
+                .OrderBy(e => DistanceSquaredToRect(snapshot.MousePos, e))
+                .ThenBy(e => e.Path, StringComparer.Ordinal)
+                .Select(e => e.Compact)
+                .ToList();
+            AppendLimited(lines, "nearby/panel text UI", relevantText, 20);
+
+            AppendLimited(lines, "nearest atlas nodes to cursor", DescribeNearestAtlasNodes(snapshot.MousePos, 8), 8);
+
+            return lines;
+        }
+
+        private static bool IsLikelyLogbookUseIcon(LogbookUiEntry entry)
+        {
+            if (entry.Fingerprint != 0x4C26F0)
+                return false;
+
+            return entry.Size.X >= 32f && entry.Size.X <= 48f &&
+                   entry.Size.Y >= 32f && entry.Size.Y <= 48f;
+        }
+
+        private IEnumerable<string> DescribeFocusedLogbookUseIcon(LogbookUiEntry useIcon)
+        {
+            yield return useIcon.Compact;
+
+            var parentAddr = Read<UiElementBaseOffset>(useIcon.Address).ParentPtr;
+            if (parentAddr == IntPtr.Zero)
+                yield break;
+
+            var parentUi = Read<UiElement>(parentAddr);
+            var childIndex = FindChildIndex(parentUi, useIcon.Address);
+            yield return $"iconParent=0x{parentAddr.ToInt64():X} childIndex={childIndex} parentChildren={parentUi.Length}";
+            RememberLogbookUseIconAnchor(useIcon, childIndex);
+
+            foreach (var line in DescribeLogbookUseIconGrid(parentUi, childIndex))
+                yield return line;
+
+            yield return "parent chain:";
+            foreach (var parentLine in DescribeUiParentChain(useIcon.Address, 8))
+                yield return "  " + parentLine;
+
+            var panelText = CollectUiSubtreeText(parentAddr, 4, 80)
+                .Where(line => !line.Contains("Waiting for player", StringComparison.OrdinalIgnoreCase))
+                .Where(line => !line.Contains("report another user", StringComparison.OrdinalIgnoreCase))
+                .Where(line => !line.Contains("Microtransactions", StringComparison.OrdinalIgnoreCase))
+                .Take(40)
+                .ToList();
+            if (panelText.Count > 0)
+            {
+                yield return "panel-local text:";
+                foreach (var line in panelText)
+                    yield return "  " + line;
+            }
+        }
+
+        private IEnumerable<string> DescribeLogbookUseIconGrid(UiElement parentUi, int hoveredChildIndex)
+        {
+            if (parentUi.Length <= 0 || parentUi.Length > 2000)
+                yield break;
+
+            var mappings = new List<LogbookUseIconNodeMapping>();
+            for (int i = 0; i < parentUi.Length; i++)
+            {
+                var child = parentUi.GetChildAddress(i);
+                if (child == IntPtr.Zero || !TryBuildLogbookUiEntry(child, $"icon[{i}]", out var entry) || !IsLikelyLogbookUseIcon(entry))
+                    continue;
+
+                var iconCenter = entry.TopLeft + entry.Size * 0.5f;
+                if (TryFindNearestAtlasNode(iconCenter, 260f, out var node, out var nodeCenter, out var distance))
+                {
+                    mappings.Add(new LogbookUseIconNodeMapping
+                    {
+                        ChildIndex = i,
+                        Icon = entry,
+                        Node = node,
+                        NodeCenter = nodeCenter,
+                        Distance = distance,
+                        HasNode = true,
+                        IsHovered = i == hoveredChildIndex,
+                    });
+                }
+                else
+                {
+                    mappings.Add(new LogbookUseIconNodeMapping
+                    {
+                        ChildIndex = i,
+                        Icon = entry,
+                        HasNode = false,
+                        IsHovered = i == hoveredChildIndex,
+                    });
+                }
+            }
+
+            if (mappings.Count == 0)
+                yield break;
+
+            var mappedCount = mappings.Count(m => m.HasNode);
+            var uniqueNodeCount = mappings
+                .Where(m => m.HasNode)
+                .Select(m => FormatGrid(m.Node.GridPosition))
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            yield return $"use icon grid mapping: icons={mappings.Count} mappedToAtlasNodes={mappedCount} uniqueNodes={uniqueNodeCount} hoveredChildIndex={hoveredChildIndex}";
+
+            var visibleMappings = hoveredChildIndex >= 0
+                ? mappings.Where(m => Math.Abs(m.ChildIndex - hoveredChildIndex) <= 12 || m.IsHovered).ToList()
+                : mappings.Take(30).ToList();
+            yield return $"near hovered icon mappings ({visibleMappings.Count} shown):";
+            foreach (var mapping in visibleMappings)
+                yield return "  " + mapping.Compact;
+
+            var duplicateNodes = mappings
+                .Where(m => m.HasNode)
+                .GroupBy(m => FormatGrid(m.Node.GridPosition), StringComparer.Ordinal)
+                .Where(g => g.Count() > 1)
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .Take(12)
+                .ToList();
+            if (duplicateNodes.Count > 0)
+            {
+                yield return "nodes with multiple use icons:";
+                foreach (var group in duplicateNodes)
+                {
+                    var first = group.First();
+                    yield return $"  grid={group.Key} '{first.Node.MapName}' iconChildren={string.Join(",", group.Select(m => m.ChildIndex).OrderBy(x => x))}";
+                }
+            }
+        }
+
+        private void RememberLogbookUseIconAnchor(LogbookUiEntry useIcon, int childIndex)
+        {
+            var iconCenter = useIcon.TopLeft + useIcon.Size * 0.5f;
+            if (TryFindNearestAtlasNode(iconCenter, 260f, out var node, out var nodeCenter, out var distance))
+            {
+                logbookLastUseIconAnchor = new LogbookUseIconAnchor
+                {
+                    SeenUtc = DateTime.UtcNow,
+                    ChildIndex = childIndex,
+                    IconCenter = iconCenter,
+                    HasNode = true,
+                    Grid = node.GridPosition,
+                    MapName = node.MapName ?? string.Empty,
+                    InternalId = node.InternalId ?? string.Empty,
+                    State = node.State.ToString(),
+                    NodeCenter = nodeCenter,
+                    Distance = distance,
+                };
+                return;
+            }
+
+            logbookLastUseIconAnchor = new LogbookUseIconAnchor
+            {
+                SeenUtc = DateTime.UtcNow,
+                ChildIndex = childIndex,
+                IconCenter = iconCenter,
+                HasNode = false,
+            };
+        }
+
+        private static int FindChildIndex(UiElement parentUi, IntPtr childAddr)
+        {
+            var count = parentUi.Length;
+            if (count <= 0 || count > 2000)
+                return -1;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (parentUi.GetChildAddress(i) == childAddr)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private static IEnumerable<string> CollectUiSubtreeText(IntPtr rootAddr, int maxDepth, int maxCount)
+        {
+            var emitted = 0;
+            foreach (var line in CollectUiSubtreeTextImpl(rootAddr, "panel", 0, maxDepth))
+            {
+                yield return line;
+                if (++emitted >= maxCount)
+                    yield break;
+            }
+        }
+
+        private static IEnumerable<string> CollectUiSubtreeTextImpl(IntPtr addr, string path, int depth, int maxDepth)
+        {
+            if (addr == IntPtr.Zero || depth > maxDepth)
+                yield break;
+
+            var ui = Read<UiElement>(addr);
+            var ub = ui.UiElementBase;
+            var isVisible = (ub.Flags & IsVisibleMask) != 0;
+            if (!isVisible)
+                yield break;
+
+            var text = ReadUiElementText(addr);
+            if (!string.IsNullOrWhiteSpace(text))
+                yield return DescribeUiElementAt(addr, path);
+
+            var count = ui.Length;
+            if (depth >= maxDepth || count <= 0 || count > 2000)
+                yield break;
+
+            for (int i = 0; i < count; i++)
+            {
+                var child = ui.GetChildAddress(i);
+                foreach (var line in CollectUiSubtreeTextImpl(child, $"{path}/{i}", depth + 1, maxDepth))
+                    yield return line;
+            }
+        }
+
+        private static IEnumerable<string> DescribeNearbyWStringFields(IntPtr addr, string label)
+        {
+            for (int offset = 0; offset <= 0x700; offset += 8)
+            {
+                var text = ReadStdWString(Read<StdWString>(addr + offset));
+                if (string.IsNullOrWhiteSpace(text))
+                    continue;
+
+                if (text.Length <= 1 && char.IsDigit(text[0]))
+                    continue;
+
+                yield return $"{label}+0x{offset:X3}: \"{TrimUiText(text, 160)}\"";
+            }
+        }
+
+        private void AppendCurrentLogbookHoverPanelState(List<string> lines, string label)
+        {
+            if (logbookUiLastSnapshot == null)
+                return;
+
+            var hoverPanelState = DescribeLogbookHoverPanelState(logbookUiLastSnapshot);
+            if (hoverPanelState.Count == 0)
+                return;
+
+            lines.Add(label + ":");
+            foreach (var line in hoverPanelState.Take(80))
+                lines.Add("  " + line);
+            if (hoverPanelState.Count > 80)
+                lines.Add($"  ... {hoverPanelState.Count - 80} more hover panel line(s)");
+        }
+
+        private static IEnumerable<string> DescribeUiParentChain(IntPtr addr, int maxHops)
+        {
+            var current = addr;
+            for (int i = 0; i < maxHops && current != IntPtr.Zero; i++)
+            {
+                yield return DescribeUiElementAt(current, $"parent[{i}]");
+                var ub = Read<UiElementBaseOffset>(current);
+                current = ub.ParentPtr;
+            }
+        }
+
+        private static string DescribeUiElementAt(IntPtr addr, string path)
+        {
+            var ui = Read<UiElement>(addr);
+            var ub = ui.UiElementBase;
+            var scale = ComputeScalePair(in ub);
+            var topLeft = GetFinalTopLeft(in ub);
+            var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
+            var text = ReadUiElementText(addr);
+            var fp = ub.Flags & ~IsVisibleMask;
+
+            return $"{path} addr=0x{addr.ToInt64():X} fp=0x{fp:X6} flags=0x{ub.Flags:X8} children={ui.Length} rect={topLeft.X:F0},{topLeft.Y:F0} {size.X:F0}x{size.Y:F0} bg=0x{ub.BackgroundColor:X8}{FormatUiText(text)}";
+        }
+
+        private static bool TryBuildLogbookUiEntry(IntPtr addr, string path, out LogbookUiEntry entry)
+        {
+            entry = null;
+            if (addr == IntPtr.Zero)
+                return false;
+
+            var ui = Read<UiElement>(addr);
+            var ub = ui.UiElementBase;
+            var fp = ub.Flags & ~IsVisibleMask;
+            var isVisible = (ub.Flags & IsVisibleMask) != 0;
+            if (!isVisible)
+                return false;
+
+            var scale = ComputeScalePair(in ub);
+            var topLeft = GetFinalTopLeft(in ub);
+            var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
+            entry = new LogbookUiEntry
+            {
+                Address = addr,
+                Path = path,
+                Flags = ub.Flags,
+                Fingerprint = fp,
+                ChildCount = ui.Length,
+                TopLeft = topLeft,
+                Size = size,
+                BackgroundColor = ub.BackgroundColor,
+                Text = ReadUiElementText(addr),
+            };
+            return IsReasonableUiScanEntry(entry);
+        }
+
+        private IEnumerable<string> DescribeNearestAtlasNodes(Vector2 point, int limit)
+        {
+            return nodeCache
+                .Where(n => n.Drawable)
+                .Select(n =>
+                {
+                    var ub = Read<UiElementBaseOffset>(n.Address);
+                    var scale = ComputeScalePair(in ub);
+                    var topLeft = GetLeafTopLeft(in ub);
+                    var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
+                    var center = topLeft + size * 0.5f;
+                    return (Node: n, Center: center, Dist2: Vector2.DistanceSquared(point, center));
+                })
+                .Where(x => x.Dist2 <= 900f * 900f)
+                .OrderBy(x => x.Dist2)
+                .Take(limit)
+                .Select(x => $"grid={FormatGrid(x.Node.GridPosition)} idx={x.Node.ChildIndex} '{x.Node.MapName}' id='{x.Node.InternalId}' state={x.Node.State} screen={x.Center.X:F0},{x.Center.Y:F0} dist={MathF.Sqrt(x.Dist2):F0}");
+        }
+
+        private bool TryFindNearestAtlasNode(Vector2 point, float maxDistance, out NodeData node, out Vector2 center, out float distance)
+        {
+            var nearest = nodeCache
+                .Where(n => n.Drawable)
+                .Select(n =>
+                {
+                    var ub = Read<UiElementBaseOffset>(n.Address);
+                    var scale = ComputeScalePair(in ub);
+                    var topLeft = GetLeafTopLeft(in ub);
+                    var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
+                    var nodeCenter = topLeft + size * 0.5f;
+                    return (Node: n, Center: nodeCenter, Dist2: Vector2.DistanceSquared(point, nodeCenter));
+                })
+                .Where(x => x.Dist2 <= maxDistance * maxDistance)
+                .OrderBy(x => x.Dist2)
+                .FirstOrDefault();
+
+            if (nearest.Node.Address == IntPtr.Zero)
+            {
+                node = default;
+                center = default;
+                distance = 0f;
+                return false;
+            }
+
+            node = nearest.Node;
+            center = nearest.Center;
+            distance = MathF.Sqrt(nearest.Dist2);
+            return true;
+        }
+
+        private static float DistanceSquaredToRect(Vector2 point, LogbookUiEntry entry)
+        {
+            var min = entry.TopLeft;
+            var max = entry.TopLeft + entry.Size;
+            var dx = point.X < min.X ? min.X - point.X : point.X > max.X ? point.X - max.X : 0f;
+            var dy = point.Y < min.Y ? min.Y - point.Y : point.Y > max.Y ? point.Y - max.Y : 0f;
+            return dx * dx + dy * dy;
+        }
+
+        private static bool IsLikelyLogbookPanelText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return text.Contains("logbook", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("uncharted", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("waters", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("consumes", StringComparison.OrdinalIgnoreCase)
+                || text.Contains("island rumours", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ReadUiElementText(IntPtr uiElementAddr) =>
+            ReadStdWString(Read<StdWString>(uiElementAddr + UiElementTextOffset));
+
+        private static string ReadStdWString(in StdWString ws)
+        {
+            const int MaxAllowed = 512;
+            if (ws.Length <= 0 || ws.Length > MaxAllowed || ws.Capacity <= 0 || ws.Capacity > MaxAllowed)
+                return string.Empty;
+
+            try
+            {
+                string text;
+                if (ws.Capacity <= 8)
+                {
+                    var buffer = new byte[16];
+                    BitConverter.GetBytes(ws.Buffer.ToInt64()).CopyTo(buffer, 0);
+                    BitConverter.GetBytes(ws.ReservedBytes.ToInt64()).CopyTo(buffer, 8);
+                    text = Encoding.Unicode.GetString(buffer);
+                }
+                else
+                {
+                    text = ReadWideString(ws.Buffer, ws.Length);
+                }
+
+                if (string.IsNullOrEmpty(text))
+                    return string.Empty;
+
+                text = text.Split('\0')[0];
+                if (text.Length > ws.Length)
+                    text = text[..ws.Length];
+                return IsPrintableUnicode(text) ? text : string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private static string FormatUiText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            text = TrimUiText(text, 120);
+            return $" text=\"{text}\"";
+        }
+
+        private static string TrimUiText(string text, int maxLength)
+        {
+            text = text.Replace("\r", " ").Replace("\n", " ").Trim();
+            if (text.Length > maxLength)
+                text = text[..maxLength] + "...";
+            return text;
+        }
+
+        private List<string> DescribeLogbookUiDiff(LogbookUiSnapshot before, LogbookUiSnapshot after, DateTime nowUtc)
+        {
+            var added = after.Entries.Keys.Except(before.Entries.Keys).Select(k => after.Entries[k]).ToList();
+            var removed = before.Entries.Keys.Except(after.Entries.Keys).Select(k => before.Entries[k]).ToList();
+            var changed = after.Entries.Keys.Intersect(before.Entries.Keys)
+                .Where(k => !string.Equals(before.Entries[k].Signature, after.Entries[k].Signature, StringComparison.Ordinal))
+                .Select(k => (Before: before.Entries[k], After: after.Entries[k]))
+                .ToList();
+            var mouseChanged = !string.Equals(before.MouseSignature, after.MouseSignature, StringComparison.Ordinal);
+
+            if (added.Count == 0 && removed.Count == 0 && changed.Count == 0 && !mouseChanged)
+                return [];
+
+            var lines = new List<string>
+            {
+                $"summary: entries {before.Entries.Count}->{after.Entries.Count}, added={added.Count}, removed={removed.Count}, changed={changed.Count}, mouseHits {before.MouseHits.Count}->{after.MouseHits.Count} at {after.MousePos.X:F0},{after.MousePos.Y:F0}",
+            };
+
+            foreach (var entry in added.Concat(changed.Select(x => x.After))
+                .Where(e => e.Size.X * e.Size.Y <= 120000f)
+                .OrderBy(e => e.Size.X * e.Size.Y)
+                .Take(12))
+                RememberLogbookUiChange(entry, nowUtc);
+
+            if (mouseChanged)
+                AppendLimited(lines, "mouse-hit UI", after.MouseHits.Select(e => e.Compact), 5);
+            AppendLimited(lines, "added UI", added.OrderBy(e => e.Path, StringComparer.Ordinal).Select(e => e.Compact), 80);
+            if (changed.Count > 0)
+            {
+                lines.Add($"changed UI ({changed.Count}):");
+                foreach (var (a, b) in changed.OrderBy(x => x.After.Path, StringComparer.Ordinal).Take(80))
+                {
+                    lines.Add("  " + b.Compact);
+                    if (a.Flags != b.Flags)
+                        lines.Add($"    flags: 0x{a.Flags:X8} -> 0x{b.Flags:X8}");
+                    if (a.ChildCount != b.ChildCount)
+                        lines.Add($"    children: {a.ChildCount} -> {b.ChildCount}");
+                    if (Vector2.DistanceSquared(a.TopLeft, b.TopLeft) > 0.25f || Vector2.DistanceSquared(a.Size, b.Size) > 0.25f)
+                        lines.Add($"    rect: {a.TopLeft.X:F0},{a.TopLeft.Y:F0} {a.Size.X:F0}x{a.Size.Y:F0} -> {b.TopLeft.X:F0},{b.TopLeft.Y:F0} {b.Size.X:F0}x{b.Size.Y:F0}");
+                    if (a.BackgroundColor != b.BackgroundColor)
+                        lines.Add($"    bg: 0x{a.BackgroundColor:X8} -> 0x{b.BackgroundColor:X8}");
+                }
+                if (changed.Count > 80)
+                    lines.Add($"  ... {changed.Count - 80} more changed UI element(s)");
+            }
+            AppendLimited(lines, "removed UI", removed.OrderBy(e => e.Path, StringComparer.Ordinal).Select(e => e.Compact), 40);
+
+            return lines;
+        }
+
+        private void RememberLogbookUiChange(LogbookUiEntry entry, DateTime nowUtc)
+        {
+            logbookUiChanges[entry.Address] = new LogbookUiChange
+            {
+                Entry = entry,
+                ExpiresUtc = nowUtc + TimeSpan.FromSeconds(Math.Clamp(Settings.LogbookPreviewCandidateTtlSeconds, 5, 300)),
+            };
+        }
+
+        private int CountActiveLogbookUiChanges(DateTime nowUtc)
+        {
+            PurgeExpiredLogbookUiChanges(nowUtc);
+            return logbookUiChanges.Count;
+        }
+
+        private void PurgeExpiredLogbookUiChanges(DateTime nowUtc)
+        {
+            if (logbookUiChanges.Count == 0)
+                return;
+
+            foreach (var key in logbookUiChanges
+                .Where(kv => kv.Value.ExpiresUtc <= nowUtc)
+                .Select(kv => kv.Key)
+                .ToList())
+            {
+                logbookUiChanges.Remove(key);
+            }
+        }
+
+        private void DrawLogbookUiChanges(ImDrawListPtr drawList, DateTime nowUtc)
+        {
+            PurgeExpiredLogbookUiChanges(nowUtc);
+            foreach (var change in logbookUiChanges.Values
+                .Select(x => x.Entry)
+                .Where(e => e.Size.X * e.Size.Y <= 120000f)
+                .OrderBy(e => e.Size.X * e.Size.Y)
+                .Take(8))
+            {
+                var min = change.TopLeft;
+                var max = change.TopLeft + change.Size;
+                var color = ImGuiHelper.Color(new Vector4(1f, 0.1f, 0.85f, 0.9f));
+                drawList.AddRect(min, max, color, 0f, ImDrawFlags.None, 2.5f);
+            }
+
+            foreach (var e in logbookUiMouseHits.Values
+                .OrderBy(x => x.Size.X * x.Size.Y)
+                .Take(3))
+            {
+                var min = e.TopLeft;
+                var max = e.TopLeft + e.Size;
+                var color = ImGuiHelper.Color(new Vector4(0.1f, 0.9f, 1f, 0.95f));
+                drawList.AddRect(min, max, color, 0f, ImDrawFlags.None, 2f);
+            }
+        }
+
+        private void EnsureLogbookPreviewWatchFile()
+        {
+            if (!string.IsNullOrWhiteSpace(logbookWatchPath))
+                return;
+
+            Directory.CreateDirectory(LogbookWatchDirectory);
+            logbookWatchPath = Path.Join(LogbookWatchDirectory, $"atlas-logbook-watch-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            File.AppendAllLines(logbookWatchPath, new[]
+            {
+                "Atlas Logbook Preview Watch",
+                "===========================",
+                "Steps: enable watch, open Atlas, capture baseline, hover/select an Expedition Logbook preview, then chart the area.",
+                "This log records read-only node/edge deltas from the live Atlas UI.",
+                string.Empty,
+            });
+        }
+
+        private void AppendLogbookWatchBlock(string title, IReadOnlyList<string> lines)
+        {
+            if (string.IsNullOrWhiteSpace(logbookWatchPath))
+                return;
+
+            var output = new List<string>(lines.Count + 4)
+            {
+                $"[{++logbookWatchSeq:0000}] {DateTime.Now:HH:mm:ss.fff} {title}",
+            };
+            output.AddRange(lines);
+            output.Add(string.Empty);
+            File.AppendAllLines(logbookWatchPath, output);
+        }
+
+        private LogbookWatchSnapshot BuildLogbookWatchSnapshot(IntPtr atlasPanelAddr)
+        {
+            var graph = BuildConnectionGraph(atlasPanelAddr);
+            var edges = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (from, targets) in graph)
+            {
+                foreach (var to in targets)
+                    edges.Add(FormatEdge(from, to));
+            }
+
+            var nodes = new Dictionary<string, LogbookWatchNode>(StringComparer.Ordinal);
+            foreach (var nd in nodeCache)
+            {
+                var key = FormatGrid(nd.GridPosition);
+                var content = BuildLogbookContentSignature(nd);
+                nodes[key] = new LogbookWatchNode
+                {
+                    Key = key,
+                    MapName = nd.MapName ?? string.Empty,
+                    InternalId = nd.InternalId ?? string.Empty,
+                    State = nd.State.ToString(),
+                    BiomeId = nd.BiomeId,
+                    ChildIndex = nd.ChildIndex,
+                    ContentCount = nd.ContentCount,
+                    ContentSignature = content,
+                };
+            }
+
+            var sigParts = nodes.Values
+                .OrderBy(n => n.Key, StringComparer.Ordinal)
+                .Select(n => $"{n.Key}:{n.InternalId}:{n.State}:{n.BiomeId}:{n.ContentCount}:{n.ContentSignature}")
+                .Concat(edges.OrderBy(e => e, StringComparer.Ordinal).Select(e => $"edge:{e}"));
+
+            return new LogbookWatchSnapshot
+            {
+                Signature = string.Join(";", sigParts),
+                NodeCount = nodes.Count,
+                EdgeCount = edges.Count,
+                AccessibleCount = nodes.Values.Count(n => string.Equals(n.State, AtlasNodeState.AccessibleNow.ToString(), StringComparison.Ordinal)),
+                CompletedCount = nodes.Values.Count(n => string.Equals(n.State, AtlasNodeState.CompletedBase.ToString(), StringComparison.Ordinal)),
+                ContentNodeCount = nodes.Values.Count(n => n.ContentCount > 0 || !string.IsNullOrWhiteSpace(n.ContentSignature)),
+                Nodes = nodes,
+                Edges = edges,
+            };
+        }
+
+        private static List<string> DescribeLogbookSnapshot(LogbookWatchSnapshot snapshot) =>
+        [
+            $"nodes={snapshot.NodeCount} edges={snapshot.EdgeCount} accessible={snapshot.AccessibleCount} completed={snapshot.CompletedCount} contentNodes={snapshot.ContentNodeCount}",
+            "Sample nodes:",
+            .. snapshot.Nodes.Values
+                .OrderBy(n => n.Key, StringComparer.Ordinal)
+                .Take(25)
+                .Select(n => "  " + n.Compact),
+        ];
+
+        private List<string> DescribeLogbookSnapshotDiff(LogbookWatchSnapshot before, LogbookWatchSnapshot after)
+        {
+            if (string.Equals(before.Signature, after.Signature, StringComparison.Ordinal))
+                return [];
+
+            var lines = new List<string>
+            {
+                $"summary: nodes {before.NodeCount}->{after.NodeCount}, edges {before.EdgeCount}->{after.EdgeCount}, accessible {before.AccessibleCount}->{after.AccessibleCount}, completed {before.CompletedCount}->{after.CompletedCount}, contentNodes {before.ContentNodeCount}->{after.ContentNodeCount}",
+            };
+
+            var addedNodes = after.Nodes.Keys.Except(before.Nodes.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            var removedNodes = before.Nodes.Keys.Except(after.Nodes.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
+            var changedNodes = after.Nodes.Keys.Intersect(before.Nodes.Keys, StringComparer.Ordinal)
+                .Where(k => !SameLogbookNode(before.Nodes[k], after.Nodes[k]))
+                .OrderBy(k => k, StringComparer.Ordinal)
+                .ToList();
+
+            AppendLogbookConsumeCorrelation(lines, addedNodes.Select(k => after.Nodes[k]).ToList());
+            AppendLimited(lines, "added nodes", addedNodes.Select(k => after.Nodes[k].Compact), 40);
+            AppendLimited(lines, "removed nodes", removedNodes.Select(k => before.Nodes[k].Compact), 40);
+
+            if (changedNodes.Count > 0)
+            {
+                lines.Add($"changed nodes ({changedNodes.Count}):");
+                foreach (var key in changedNodes.Take(60))
+                {
+                    var a = before.Nodes[key];
+                    var b = after.Nodes[key];
+                    lines.Add($"  {key} '{b.MapName}' idx={b.ChildIndex}");
+                    AppendLogbookNodeFieldDiffs(lines, a, b);
+                }
+
+                if (changedNodes.Count > 60)
+                    lines.Add($"  ... {changedNodes.Count - 60} more changed node(s)");
+            }
+
+            var contentChangedNodes = changedNodes
+                .Select(k => (Before: before.Nodes[k], After: after.Nodes[k]))
+                .Where(x => x.Before.ContentCount != x.After.ContentCount ||
+                    !string.Equals(x.Before.ContentSignature, x.After.ContentSignature, StringComparison.Ordinal))
+                .ToList();
+
+            if (contentChangedNodes.Count > 0)
+            {
+                lines.Add($"content/preview candidates ({contentChangedNodes.Count}):");
+                var candidateKeys = contentChangedNodes.Select(x => x.After.Key).ToList();
+                var bounds = DescribeGridBounds(candidateKeys);
+                if (!string.IsNullOrWhiteSpace(bounds))
+                    lines.Add($"  bounds: {bounds}");
+
+                foreach (var (a, b) in contentChangedNodes
+                    .OrderBy(x => x.After.ChildIndex)
+                    .ThenBy(x => x.After.Key, StringComparer.Ordinal)
+                    .Take(120))
+                {
+                    lines.Add($"  {b.Key} idx={b.ChildIndex} '{b.MapName}' state={b.State} content={b.ContentCount}");
+                    AppendLogbookNodeFieldDiffs(lines, a, b, "    ");
+                }
+
+                if (contentChangedNodes.Count > 120)
+                    lines.Add($"  ... {contentChangedNodes.Count - 120} more content/preview candidate node(s)");
+            }
+
+            var addedEdges = after.Edges.Except(before.Edges, StringComparer.Ordinal).OrderBy(e => e, StringComparer.Ordinal).ToList();
+            var removedEdges = before.Edges.Except(after.Edges, StringComparer.Ordinal).OrderBy(e => e, StringComparer.Ordinal).ToList();
+            AppendLimited(lines, "added edges", addedEdges, 80);
+            AppendLimited(lines, "removed edges", removedEdges, 80);
+
+            return lines;
+        }
+
+        private void AppendLogbookConsumeCorrelation(List<string> lines, IReadOnlyList<LogbookWatchNode> addedNodes)
+        {
+            if (addedNodes.Count == 0)
+                return;
+
+            var expeditionNodes = addedNodes
+                .Where(IsLogbookRevealNode)
+                .OrderBy(n => n.Key, StringComparer.Ordinal)
+                .ToList();
+            if (expeditionNodes.Count == 0)
+                return;
+
+            lines.Add("consume correlation probe:");
+            if (logbookLastUseIconAnchor == null)
+            {
+                lines.Add("  remembered use icon: none");
+            }
+            else
+            {
+                var age = DateTime.UtcNow - logbookLastUseIconAnchor.SeenUtc;
+                lines.Add($"  remembered use icon age={age.TotalSeconds:F1}s: {logbookLastUseIconAnchor.Compact}");
+            }
+
+            AppendGridClusterSummary(lines, "  added nodes", addedNodes);
+            AppendGridClusterSummary(lines, "  added expedition/logbook nodes", expeditionNodes);
+
+            if (logbookLastUseIconAnchor?.HasNode == true)
+            {
+                var expeditionPoints = expeditionNodes
+                    .Select(n => ParseGridKey(n.Key))
+                    .Where(p => p.HasValue)
+                    .Select(p => p.Value)
+                    .ToList();
+                if (expeditionPoints.Count > 0)
+                {
+                    var centroidX = expeditionPoints.Average(p => p.X);
+                    var centroidY = expeditionPoints.Average(p => p.Y);
+                    lines.Add($"  anchor->expedition centroid delta: dx={centroidX - logbookLastUseIconAnchor.Grid.X:F1}, dy={centroidY - logbookLastUseIconAnchor.Grid.Y:F1}");
+
+                    var nearest = expeditionPoints
+                        .Select(p => (Point: p, Dist2: GridDistanceSquared(p, logbookLastUseIconAnchor.Grid)))
+                        .OrderBy(x => x.Dist2)
+                        .First();
+                    lines.Add($"  nearest added expedition node to anchor: grid={FormatGrid(nearest.Point)} gridDist={MathF.Sqrt(nearest.Dist2):F1}");
+                }
+            }
+
+            AppendLimited(lines, "  sample added expedition/logbook nodes", expeditionNodes.Select(n => n.Compact), 30);
+        }
+
+        private static bool IsLogbookRevealNode(LogbookWatchNode node) =>
+            node.InternalId.Contains("ExpeditionLogBook", StringComparison.OrdinalIgnoreCase) ||
+            node.InternalId.Contains("ExpeditionSubArea", StringComparison.OrdinalIgnoreCase) ||
+            node.ContentSignature.Contains("Grand Expedition", StringComparison.OrdinalIgnoreCase);
+
+        private static void AppendGridClusterSummary(List<string> lines, string label, IReadOnlyList<LogbookWatchNode> nodes)
+        {
+            var points = nodes
+                .Select(n => ParseGridKey(n.Key))
+                .Where(p => p.HasValue)
+                .Select(p => p.Value)
+                .ToList();
+            if (points.Count == 0)
+            {
+                lines.Add($"{label}: count={nodes.Count} no parseable grid points");
+                return;
+            }
+
+            var minX = points.Min(p => p.X);
+            var maxX = points.Max(p => p.X);
+            var minY = points.Min(p => p.Y);
+            var maxY = points.Max(p => p.Y);
+            var centroidX = points.Average(p => p.X);
+            var centroidY = points.Average(p => p.Y);
+            lines.Add($"{label}: count={nodes.Count} bounds=x {minX}..{maxX}, y {minY}..{maxY}, centroid={centroidX:F1},{centroidY:F1}");
+        }
+
+        private static float GridDistanceSquared(StdTuple2D<int> a, StdTuple2D<int> b)
+        {
+            var dx = a.X - b.X;
+            var dy = a.Y - b.Y;
+            return dx * dx + dy * dy;
+        }
+
+        private static bool SameLogbookNode(LogbookWatchNode a, LogbookWatchNode b) =>
+            string.Equals(a.MapName, b.MapName, StringComparison.Ordinal) &&
+            string.Equals(a.InternalId, b.InternalId, StringComparison.Ordinal) &&
+            string.Equals(a.State, b.State, StringComparison.Ordinal) &&
+            a.BiomeId == b.BiomeId &&
+            a.ChildIndex == b.ChildIndex &&
+            a.ContentCount == b.ContentCount &&
+            string.Equals(a.ContentSignature, b.ContentSignature, StringComparison.Ordinal);
+
+        private void UpdateLogbookPreviewCandidates(LogbookWatchSnapshot before, LogbookWatchSnapshot after, DateTime nowUtc)
+        {
+            var ttl = TimeSpan.FromSeconds(Math.Clamp(Settings.LogbookPreviewCandidateTtlSeconds, 5, 300));
+            foreach (var key in after.Nodes.Keys.Intersect(before.Nodes.Keys, StringComparer.Ordinal))
+            {
+                var a = before.Nodes[key];
+                var b = after.Nodes[key];
+                var reason = GetLogbookPreviewMutationReason(a, b);
+                if (string.IsNullOrWhiteSpace(reason))
+                    continue;
+
+                if (!logbookPreviewCandidates.TryGetValue(key, out var candidate))
+                {
+                    candidate = new LogbookPreviewCandidate { FirstSeenUtc = nowUtc };
+                    logbookPreviewCandidates[key] = candidate;
+                }
+
+                candidate.LastSeenUtc = nowUtc;
+                candidate.ExpiresUtc = nowUtc + ttl;
+                candidate.MapName = b.MapName;
+                candidate.InternalId = b.InternalId;
+                candidate.Reason = reason;
+                candidate.ContentCount = b.ContentCount;
+                candidate.ContentSignature = b.ContentSignature;
+            }
+
+            PurgeExpiredLogbookPreviewCandidates(nowUtc);
+        }
+
+        private static string GetLogbookPreviewMutationReason(LogbookWatchNode before, LogbookWatchNode after)
+        {
+            var reasons = new List<string>(4);
+            if (!string.Equals(before.InternalId, after.InternalId, StringComparison.Ordinal))
+                reasons.Add("ID");
+            else if (!string.Equals(before.MapName, after.MapName, StringComparison.Ordinal))
+                reasons.Add("NAME");
+            if (!string.Equals(before.State, after.State, StringComparison.Ordinal))
+                reasons.Add("STATE");
+            if (before.BiomeId != after.BiomeId)
+                reasons.Add("BIOME");
+            if (before.ContentCount != after.ContentCount ||
+                !string.Equals(before.ContentSignature, after.ContentSignature, StringComparison.Ordinal))
+                reasons.Add("CONTENT");
+
+            return string.Join("+", reasons);
+        }
+
+        private int CountActiveLogbookPreviewCandidates(DateTime nowUtc)
+        {
+            PurgeExpiredLogbookPreviewCandidates(nowUtc);
+            return logbookPreviewCandidates.Count;
+        }
+
+        private void PurgeExpiredLogbookPreviewCandidates(DateTime nowUtc)
+        {
+            if (logbookPreviewCandidates.Count == 0)
+                return;
+
+            foreach (var key in logbookPreviewCandidates
+                .Where(kv => kv.Value.ExpiresUtc <= nowUtc)
+                .Select(kv => kv.Key)
+                .ToList())
+            {
+                logbookPreviewCandidates.Remove(key);
+            }
+        }
+
+        private bool TryGetLogbookPreviewCandidate(StdTuple2D<int> grid, DateTime nowUtc, out LogbookPreviewCandidate candidate)
+        {
+            var key = FormatGrid(grid);
+            if (logbookPreviewCandidates.TryGetValue(key, out candidate) && candidate.ExpiresUtc > nowUtc)
+                return true;
+
+            candidate = null;
+            return false;
+        }
+
+        private static void AppendLogbookNodeFieldDiffs(List<string> lines, LogbookWatchNode a, LogbookWatchNode b, string indent = "    ")
+        {
+            if (!string.Equals(a.MapName, b.MapName, StringComparison.Ordinal))
+                lines.Add($"{indent}name: {a.MapName} -> {b.MapName}");
+            if (!string.Equals(a.InternalId, b.InternalId, StringComparison.Ordinal))
+                lines.Add($"{indent}id: {a.InternalId} -> {b.InternalId}");
+            if (!string.Equals(a.State, b.State, StringComparison.Ordinal))
+                lines.Add($"{indent}state: {a.State} -> {b.State}");
+            if (a.BiomeId != b.BiomeId)
+                lines.Add($"{indent}biome: {a.BiomeId} -> {b.BiomeId}");
+            if (a.ChildIndex != b.ChildIndex)
+                lines.Add($"{indent}childIndex: {a.ChildIndex} -> {b.ChildIndex}");
+            if (a.ContentCount != b.ContentCount)
+                lines.Add($"{indent}contentCount: {a.ContentCount} -> {b.ContentCount}");
+            if (!string.Equals(a.ContentSignature, b.ContentSignature, StringComparison.Ordinal))
+                lines.Add($"{indent}content: [{a.ContentSignature}] -> [{b.ContentSignature}]");
+        }
+
+        private static string DescribeGridBounds(IEnumerable<string> keys)
+        {
+            var points = keys
+                .Select(ParseGridKey)
+                .Where(p => p.HasValue)
+                .Select(p => p.Value)
+                .ToList();
+
+            if (points.Count == 0)
+                return string.Empty;
+
+            var minX = points.Min(p => p.X);
+            var maxX = points.Max(p => p.X);
+            var minY = points.Min(p => p.Y);
+            var maxY = points.Max(p => p.Y);
+            return $"x {minX}..{maxX}, y {minY}..{maxY}";
+        }
+
+        private static StdTuple2D<int>? ParseGridKey(string key)
+        {
+            var comma = key.IndexOf(',');
+            if (comma <= 0 || comma >= key.Length - 1)
+                return null;
+            if (!int.TryParse(key[..comma], out var x) || !int.TryParse(key[(comma + 1)..], out var y))
+                return null;
+            return new StdTuple2D<int>(x, y);
+        }
+
+        private static void AppendLimited(List<string> lines, string label, IEnumerable<string> values, int limit)
+        {
+            var list = values.ToList();
+            if (list.Count == 0)
+                return;
+
+            lines.Add($"{label} ({list.Count}):");
+            foreach (var value in list.Take(limit))
+                lines.Add("  " + value);
+            if (list.Count > limit)
+                lines.Add($"  ... {list.Count - limit} more");
+        }
+
+        private static string BuildLogbookContentSignature(in NodeData nd)
+        {
+            var parts = new List<string>();
+            if (nd.ContentNames is { Length: > 0 })
+                parts.AddRange(nd.ContentNames.Select(x => $"name:{x}"));
+            if (nd.RawContents is { Count: > 0 })
+                parts.AddRange(nd.RawContents.Select(x => $"raw:{x}"));
+            if (nd.ContentTokens is { Length: > 0 })
+                parts.AddRange(nd.ContentTokens.Select(x => $"token:0x{x:X8}"));
+            if (nd.BadgeContentIds is { Length: > 0 })
+                parts.AddRange(nd.BadgeContentIds.Select(x => $"badge:0x{x:X8}"));
+            return string.Join(", ", parts.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal));
+        }
+
+        private static string FormatGrid(StdTuple2D<int> p) => $"{p.X},{p.Y}";
+
+        private static string FormatEdge(StdTuple2D<int> a, StdTuple2D<int> b)
+        {
+            var ak = FormatGrid(a);
+            var bk = FormatGrid(b);
+            return string.CompareOrdinal(ak, bk) <= 0 ? $"{ak}<->{bk}" : $"{bk}<->{ak}";
+        }
         #region Routing helpers
 
         // Adjacency graph of the revealed atlas, built from the panel's connection (edge) list at
