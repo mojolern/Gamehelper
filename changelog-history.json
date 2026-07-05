@@ -1,6 +1,16 @@
 ﻿{
     "releases":  [
                      {
+                         "version":  "1.4.5",
+                         "published":  "2026-07-05T06:25:06.0656389Z",
+                         "changelog":  [
+                                           "Port MordWraith v1.4.5 Runecraft Expedition planner updates",
+                                           "Add GameHelper localization framework and plugin language assets",
+                                           "Update StashUtility filters and in-game safety checks",
+                                           "Preserve fork-specific ClientPatches and Atlas research behavior"
+                                       ]
+                     },
+                     {
                          "version":  "1.4.4",
                          "published":  "2026-07-03T04:14:47.8988796Z",
                          "changelog":  [
