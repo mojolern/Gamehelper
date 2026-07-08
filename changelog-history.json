@@ -2,10 +2,11 @@
     "releases":  [
                      {
                          "version":  "1.4.6",
-                         "published":  "2026-07-07T14:32:49.4336390Z",
+                         "published":  "2026-07-08T01:58:10.4127462Z",
                          "changelog":  [
-                                           "New: PickupHelper (Gordin)",
-                                           "Atlas: 0.3.0 (yokkenUA)"
+                                           "New: PickupHelper plugin from Gordin",
+                                           "Atlas: 0.3.0 with Uncharted Waters fog ships/leylines, map ratings, and Head of the King ritual planner",
+                                           "Fork: kept restored save status/manual save, clickable plugin sources, universal watched entities, RitualHelper detection/logging fixes, and safer GH-Test publishing"
                                        ]
                      },
                      {
