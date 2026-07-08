@@ -1,6 +1,7 @@
 namespace Atlas
 {
     using GameHelper;
+    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteObjects.Components;
     using GameHelper.Utils;
@@ -40,11 +41,63 @@ namespace Atlas
         // is {int unknown; grid Source; grid Target}; Source/Target are grid coords matched against
         // each node's grid (node+0x320). Verified live in GameHelper2-main for PoE2 0.5.x.
         private const int AtlasConnectionsVectorOffset = 0x5A8;
-        private const int UiElementTextOffset = 0x390;
 
         // fp of the "you are here" marker child (shares the node-list container fp, not the
         // map-node fp 0x542EF3). Used to locate the player's current atlas node by screen position.
         private const uint AtlasCurrentNodeFp = 0x502EF3;
+
+        // fp of a MIST-shrouded map node (King in the Mists): the map-node fp 0x542EF3 with
+        // bit 20 cleared. Data-block layout is identical to a regular node. Upstream's core atlas
+        // reader keeps only 0x542EF3, silently dropping these from GameUi.AtlasMaps — so when the
+        // cache is fed from the core list, AppendMistNodesMissedByCore() sweeps them back in.
+        // (Kept plugin-side on purpose: no core edit to re-apply after an upstream sync.)
+        private const uint AtlasMistNodeFp = 0x442EF3;
+
+        // ── Uncharted Waters ships (sea chunk reveal buttons) ──────────────────────────────
+        // A sea "ship" is NOT an atlas node: it's an EndgameRegionActionButton widget living in
+        // the same children list as the map nodes (row 0=Breach, 1=Forest, 2=Ocean/ship,
+        // 3=Tower). Using a logbook on a ship reveals the ship's whole 16x16 atlas chunk, and
+        // the hidden nodes of that chunk are already materialized client-side with their map
+        // assigned — so the reveal set is known in advance. Verified live 0.5.4BHF3 (2026-07);
+        // see obsidian poe2/Atlas.md §"Sea / ships".
+        private const int RegionButtonRowPtrOffset = 0x320;   // ptr → EndgameRegionActionButtons row
+        private const int RegionButtonGridOffset = 0x330;     // int32 x, int32 y (button grid coords)
+        private const int RegionButtonRowIndexOffset = 0x338; // int32 row index; 2 = Ocean/ship
+        private const int RegionButtonOceanRow = 2;
+        // icons\UnchartedShip.png — the ship graphic drawn on fog ships. Game asset:
+        // Art/2DArt/UIImages/InGame/MapQuickUseButton/QuickUseItemIconLogbook (the dat row's
+        // QuickUseIcon — despite the name, the art is the framed ship).
+        private const string FogShipIconName = "UnchartedShip";
+
+        // ── Ritual atlas line (the line drawn to the Crux of Nothingness) ───────────────────
+        // When a node is picked onto the line, the game sets flag bit 20 on the node widget and
+        // attaches a text child at +0x3B8 whose label already holds the LOCALIZED Rite-mod lines
+        // (rolled client-side, translated via stat_descriptions.csd). We just read that text.
+        // See obsidian poe2/Ritual.md; Ghidra AtlasPanel_ritualLineToggleNode / FUN_140b18010.
+        private const uint RitualLineFlagMask = 0x100000u;  // node widget +0x180 bit 20 = "on the ritual line"
+        private const int RitualModsChildOffset = 0x3B8;    // ptr → text child carrying the Rite-mod lines
+        private const int TextElementTextOffset = 0x4C0;    // std::wstring on a game text element (uitree guide)
+        // Ritual-line state on the atlas panel (== the node-list container, verified live 0.5.4):
+        private const int PanelLineModeOffset = 0x637;      // u8 bool: ritual line mode (page mode 6) active
+        private const int PanelLineIdOffset = 0x63C;        // u32 line id/seed word (TinyMT input word 0)
+        private const int PanelPendingVecOffset = 0x648;    // std::vector<(i32,i32)> candidate grids
+        private const int PanelCommittedVecOffset = 0x660;  // std::vector<(i32,i32)> committed line grids
+        // Precomputed next-candidate table (AtlasPanel_ritualLineNextCandidates does a binary search
+        // here): std::vector begin@+0x590 / end@+0x598, entry stride 0x44 = 17 int32:
+        //   [0]=nodeX [1]=nodeY, then 5 candidates × (x,y,extra) = ints [2..16]. Sorted by x<<16|y.
+        // The roll's candIdx = the clicked node's rank among these 5 (minus (0,0) / already-committed)
+        // sorted lexicographically by (x,y). See obsidian poe2/Ritual.md.
+        private const int PanelCandTableBeginOffset = 0x590;
+        private const int PanelCandTableEndOffset = 0x598;
+        private const int CandTableEntryStride = 0x44;   // bytes; 17 int32
+        private const int CandTableMaxCandidates = 5;
+        // Node widget +0x300 → per-map dat-row ptr; row +0x7C = special-map category id
+        // (0 normal, 1 unique, 3 hideout, 5/7/8/13 citadels & league bosses, 6 tower — audited
+        // live over the whole atlas, re-tools/ritual/reachcheck_audit.py). The game's reach
+        // check (ritualLineReachCheck 140b775f0) refuses ANY nonzero category, so this — not a
+        // maps.json type/tag guess — is the authoritative "line can't pass here" discriminator.
+        private const int NodeDatRowPtrOffset = 0x300;
+        private const int DatRowSpecialCategoryOffset = 0x7C;
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
         private struct AtlasConnectionEdge
@@ -56,11 +109,53 @@ namespace Atlas
 
         private string SettingPathname => Path.Join(DllDirectory, "config", "settings.txt");
         private string MapGroupsPathname => Path.Join(DllDirectory, "config", "mapgroups.json");
+        private string MapRatingsPathname => Path.Join(DllDirectory, "config", "mapratings.json");
+        private string RitualRollLogPathname => Path.Join(DllDirectory, "config", "ritual_roll_log.jsonl");
         private string NewGroupName = string.Empty;
+
+        // ── UI-chrome localization (GameHelper PluginLocalization; Localization\<lang>.json next to the
+        // dll). Lazy so it's ready even if a Draw* runs before OnEnable. English literal fallback at each
+        // call site keeps the plugin working with no dictionaries present. This is the plugin's own UI
+        // text; it is SEPARATE from Settings.Language, which selects the game map-name data language. ──
+        private PluginLocalization loc;
+        private PluginLocalization Loc => this.loc ??= new PluginLocalization(this.DllDirectory);
+        private string L(string key, string fallback) => this.Loc.T(key, fallback);
+
+        // ── Map-name (data) language. "auto" (default) tracks GameHelper's UI language; any other value
+        // is an explicit maps.json "translates" token override. See the Settings language combo. ──
+        private const string AutoLang = "auto";
+        private static bool IsAutoLang(string s) =>
+            string.IsNullOrWhiteSpace(s) || s.Equals(AutoLang, StringComparison.OrdinalIgnoreCase);
+
+        // maps.json "translates" token for GameHelper's current UI language (used when Language == auto).
+        // ChineseSimplified has no map translations → falls back to traditional chinese (then English via
+        // ApplyContentLanguage). Thai map values are often English in the data; that's the data's choice.
+        private static string UiLanguageMapToken() => OverlayLocalization.CurrentLanguage switch
+        {
+            OverlayLanguage.Russian => "russian",
+            OverlayLanguage.French => "french",
+            OverlayLanguage.German => "german",
+            OverlayLanguage.SpanishSpain => "spanish",
+            OverlayLanguage.Japanese => "japanese",
+            OverlayLanguage.Korean => "korean",
+            OverlayLanguage.PortugueseBrazil => "portuguese",
+            OverlayLanguage.Thai => "thai",
+            OverlayLanguage.ChineseTraditional => "traditional chinese",
+            OverlayLanguage.ChineseSimplified => "traditional chinese",
+            _ => "english",
+        };
+
+        // Effective map-name token: resolves "auto" to the UI-language token; else the explicit override.
+        private string EffectiveLanguage => IsAutoLang(Settings?.Language) ? UiLanguageMapToken() : Settings.Language;
+
+        // Last map-name token actually applied to the content overlays; lets DrawUI re-slice live when the
+        // GH UI language changes while Language == auto. Set by ApplyContentLanguage.
+        private static string appliedContentLang = null;
         // Free-text filters for the "Add content…" / "Add map…" (content-route) / map-group pickers
         // (one combo open at a time).
         private string ContentAddFilter = string.Empty;
         private string MapAddFilter = string.Empty;
+        private string RatingFilter = string.Empty;
         private string MapGroupAddFilter = string.Empty;
         // Distinct map display names for the picker, as (canonical English name, localized name), sorted
         // by the localized name. Rebuilt when the UI language changes (MapPickCacheLang tracks it).
@@ -144,8 +239,17 @@ namespace Atlas
             public uint[] BadgeContentIds;  // class-2 badge content ids (badge+0x188); see re-findings §2.10.3
             public string[] ContentNames;   // resolved + filtered + de-duped display names (precomputed in cache, not per-frame)
             public StdTuple2D<int> GridPosition;
+            public int Rating;              // 0..10 from config/mapratings.json, keyed by MapInfo.Name (-1 = unrated)
+            public bool RitualSpecial;      // game's ritual reach-check refuses this node (dat-row category != 0)
         }
         private readonly List<NodeData> nodeCache = new();
+        // Uncharted Waters ships found in the atlas children list, with the button's grid coords
+        // (== the grid of the chunk node the button snapped to) and the 16x16 chunk they chart
+        // (grid >> 4). Refreshed with nodeCache; empty while both ship toggles are off.
+        private readonly List<(IntPtr Address, int GridX, int GridY, int ChunkX, int ChunkY)> shipCache = new();
+        // Fog-ship icons drawn THIS frame (chunk + screen rect), so the leyline hover can
+        // hit-test them. Rebuilt every frame by DrawFogShips; cleared when the pass is off.
+        private readonly List<((int X, int Y) Chunk, Vector2 Center, float Half)> fogShipIcons = new();
         // Addresses of "you are here" marker candidates (fp 0x502EF3), refreshed with nodeCache.
         private readonly List<IntPtr> markerCandidates = new();
         private int cacheFrameCounter = int.MaxValue;   // force refresh on first frame
@@ -159,137 +263,6 @@ namespace Atlas
         // chain, so this is computed once per frame and every node's position becomes O(1) math off it
         // (instead of walking the whole ancestor chain per node). Cleared each frame.
         private static readonly Dictionary<IntPtr, Vector2> parentOffsetCache = new();
-
-        private LogbookWatchSnapshot logbookWatchLastSnapshot;
-        private DateTime logbookWatchLastSampleUtc = DateTime.MinValue;
-        private string logbookWatchPath = string.Empty;
-        private int logbookWatchSeq;
-        private readonly Dictionary<string, LogbookPreviewCandidate> logbookPreviewCandidates = new(StringComparer.Ordinal);
-        private LogbookUiSnapshot logbookUiLastSnapshot;
-        private DateTime logbookUiLastSampleUtc = DateTime.MinValue;
-        private string logbookUiScanPath = string.Empty;
-        private int logbookUiScanSeq;
-        private string logbookHoverPanelSignature = string.Empty;
-        private readonly Dictionary<IntPtr, LogbookUiChange> logbookUiChanges = new();
-        private readonly Dictionary<IntPtr, LogbookUiEntry> logbookUiMouseHits = new();
-        private LogbookUseIconAnchor logbookLastUseIconAnchor;
-
-        private sealed class LogbookWatchSnapshot
-        {
-            public string Signature { get; init; } = string.Empty;
-            public int NodeCount { get; init; }
-            public int EdgeCount { get; init; }
-            public int AccessibleCount { get; init; }
-            public int CompletedCount { get; init; }
-            public int ContentNodeCount { get; init; }
-            public Dictionary<string, LogbookWatchNode> Nodes { get; init; } = new(StringComparer.Ordinal);
-            public HashSet<string> Edges { get; init; } = new(StringComparer.Ordinal);
-        }
-
-        private sealed class LogbookWatchNode
-        {
-            public string Key { get; init; } = string.Empty;
-            public string MapName { get; init; } = string.Empty;
-            public string InternalId { get; init; } = string.Empty;
-            public string State { get; init; } = string.Empty;
-            public byte BiomeId { get; init; }
-            public int ChildIndex { get; init; }
-            public int ContentCount { get; init; }
-            public string ContentSignature { get; init; } = string.Empty;
-
-            public string Compact => $"{Key} idx={ChildIndex} '{MapName}' id='{InternalId}' state={State} biome={BiomeId} content={ContentCount} [{ContentSignature}]";
-        }
-
-        private sealed class LogbookPreviewCandidate
-        {
-            public DateTime FirstSeenUtc { get; set; }
-            public DateTime LastSeenUtc { get; set; }
-            public DateTime ExpiresUtc { get; set; }
-            public string MapName { get; set; } = string.Empty;
-            public string InternalId { get; set; } = string.Empty;
-            public string Reason { get; set; } = string.Empty;
-            public int ContentCount { get; set; }
-            public string ContentSignature { get; set; } = string.Empty;
-        }
-
-        private sealed class LogbookUiSnapshot
-        {
-            public Dictionary<IntPtr, LogbookUiEntry> Entries { get; init; } = new();
-            public List<LogbookUiEntry> MouseHits { get; init; } = [];
-            public Vector2 MousePos { get; init; }
-            public string MouseSignature => string.Join(",", MouseHits.Select(e => e.Address.ToInt64().ToString("X")));
-        }
-
-        private sealed class LogbookUiEntry
-        {
-            public IntPtr Address { get; init; }
-            public string Path { get; init; } = string.Empty;
-            public uint Flags { get; init; }
-            public uint Fingerprint { get; init; }
-            public int ChildCount { get; init; }
-            public Vector2 TopLeft { get; init; }
-            public Vector2 Size { get; init; }
-            public uint BackgroundColor { get; init; }
-            public string Text { get; init; } = string.Empty;
-
-            public string Signature => $"{Flags:X8}:{ChildCount}:{TopLeft.X:F1},{TopLeft.Y:F1}:{Size.X:F1},{Size.Y:F1}:{BackgroundColor:X8}:{Text}";
-            public string Compact => $"{Path} addr=0x{Address.ToInt64():X} fp=0x{Fingerprint:X6} flags=0x{Flags:X8} children={ChildCount} rect={TopLeft.X:F0},{TopLeft.Y:F0} {Size.X:F0}x{Size.Y:F0} bg=0x{BackgroundColor:X8}{FormatUiText(Text)}";
-        }
-
-        private sealed class LogbookUiChange
-        {
-            public DateTime ExpiresUtc { get; set; }
-            public LogbookUiEntry Entry { get; set; }
-        }
-
-        private sealed class LogbookUseIconNodeMapping
-        {
-            public int ChildIndex { get; init; }
-            public LogbookUiEntry Icon { get; init; }
-            public NodeData Node { get; init; }
-            public Vector2 NodeCenter { get; init; }
-            public float Distance { get; init; }
-            public bool HasNode { get; init; }
-            public bool IsHovered { get; init; }
-
-            public string Compact
-            {
-                get
-                {
-                    var marker = IsHovered ? "HOVER " : string.Empty;
-                    var iconCenter = Icon.TopLeft + Icon.Size * 0.5f;
-                    if (!HasNode)
-                        return $"{marker}icon[{ChildIndex}] screen={iconCenter.X:F0},{iconCenter.Y:F0} -> no nearby atlas node";
-
-                    return $"{marker}icon[{ChildIndex}] screen={iconCenter.X:F0},{iconCenter.Y:F0} -> grid={FormatGrid(Node.GridPosition)} idx={Node.ChildIndex} '{Node.MapName}' id='{Node.InternalId}' state={Node.State} nodeScreen={NodeCenter.X:F0},{NodeCenter.Y:F0} dist={Distance:F0}";
-                }
-            }
-        }
-
-        private sealed class LogbookUseIconAnchor
-        {
-            public DateTime SeenUtc { get; init; }
-            public int ChildIndex { get; init; }
-            public Vector2 IconCenter { get; init; }
-            public bool HasNode { get; init; }
-            public StdTuple2D<int> Grid { get; init; }
-            public string MapName { get; init; } = string.Empty;
-            public string InternalId { get; init; } = string.Empty;
-            public string State { get; init; } = string.Empty;
-            public Vector2 NodeCenter { get; init; }
-            public float Distance { get; init; }
-
-            public string Compact
-            {
-                get
-                {
-                    if (!HasNode)
-                        return $"iconChild={ChildIndex} iconScreen={IconCenter.X:F0},{IconCenter.Y:F0} no mapped atlas node";
-
-                    return $"iconChild={ChildIndex} iconScreen={IconCenter.X:F0},{IconCenter.Y:F0} anchorGrid={FormatGrid(Grid)} '{MapName}' id='{InternalId}' state={State} nodeScreen={NodeCenter.X:F0},{NodeCenter.Y:F0} dist={Distance:F0}";
-                }
-            }
-        }
 
 
         public override void OnDisable()
@@ -307,11 +280,16 @@ namespace Atlas
                 Settings = JsonConvert.DeserializeObject<AtlasSettings>(content, serializerSettings);
             }
 
+            // Migrate out-of-range ship icon sizes (old default was 28, slider is now 32..96).
+            if (Settings.ShipIconSize is < 32f or > 96f)
+                Settings.ShipIconSize = 64f;
+
             LoadMapGroups();
             LoadBiomeMap();
             LoadContentMap();
             LoadMapContent();
             LoadMaps();
+            LoadMapRatings();
             EnsureBuiltInContentGroup();
 
             if (Settings.UniversalFont)
@@ -328,6 +306,7 @@ namespace Atlas
             File.WriteAllText(SettingPathname, settingsData);
 
             SaveMapGroups();
+            SaveMapRatings();
         }
 
         // MapGroups live in their own config/mapgroups.json (kept out of settings.txt via [JsonIgnore]).
@@ -376,40 +355,93 @@ namespace Atlas
             File.WriteAllText(MapGroupsPathname, JsonConvert.SerializeObject(Settings.MapGroups, Formatting.Indented));
         }
 
+        // Map ratings live in config/mapratings.json (dict: canonical English map name → 0..10).
+        // First run (no config file) seeds from the bundled json\mapratings.json defaults.
+        private void LoadMapRatings()
+        {
+            if (Settings == null)
+                return;
+
+            Settings.MapRatings.Clear();
+            try
+            {
+                var path = File.Exists(MapRatingsPathname)
+                    ? MapRatingsPathname
+                    : Path.Join(DllDirectory, "json", "mapratings.json");
+                if (!File.Exists(path))
+                    return;
+
+                var ratings = JsonConvert.DeserializeObject<Dictionary<string, int>>(File.ReadAllText(path));
+                if (ratings == null)
+                    return;
+
+                foreach (var kv in ratings)
+                    if (!string.IsNullOrWhiteSpace(kv.Key))
+                        Settings.MapRatings[kv.Key] = Math.Clamp(kv.Value, 0, 10);
+            }
+            catch (JsonException) { /* malformed file — start with no ratings */ }
+        }
+
+        private void SaveMapRatings()
+        {
+            if (Settings?.MapRatings == null)
+                return;
+
+            var dir = Path.GetDirectoryName(MapRatingsPathname);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+
+            var ordered = new SortedDictionary<string, int>(Settings.MapRatings, StringComparer.OrdinalIgnoreCase);
+            File.WriteAllText(MapRatingsPathname, JsonConvert.SerializeObject(ordered, Formatting.Indented));
+        }
+
         public override void DrawSettings()
         {
             #region SettingsUI
             // Collapsed-by-default top section grouping the rarely-touched setup toggles
             // (input layout, font, map-name language). CollapsingHeader matches GameHelper's
             // General-tab section style (full-width bar).
-            if (ImGui.CollapsingHeader("Settings"))
+            if (ImGui.CollapsingHeader(this.Loc.Title("atlas.settings", "Settings", "atlas_settings")))
             {
-                ImGui.SeparatorText("Input");
-                if (ImGui.Checkbox("Controller Mode", ref Settings.ControllerMode))
+                ImGui.SeparatorText(this.L("atlas.input", "Input"));
+                if (ImGui.Checkbox(this.L("atlas.controller_mode", "Controller Mode"), ref Settings.ControllerMode))
                     nodeCache.Clear(); // re-resolve the panel on the other layout next frame
-                ImGuiHelper.ToolTip("GameHelper auto-detects controller mode, so you normally don't need this. " +
+                ImGuiHelper.ToolTip(this.L("atlas.controller_mode_hint", "GameHelper auto-detects controller mode, so you normally don't need this. " +
                     "Tick it only to FORCE the controller Atlas layout if auto-detect ever fails. Either way the " +
                     "plugin falls back to the other layout when the selected one isn't found. In controller mode " +
-                    "the overlay also stays visible while the inventory is open.");
+                    "the overlay also stays visible while the inventory is open."));
 
-                ImGui.SeparatorText("Font");
-                if (ImGui.Checkbox("Universal font (render map names in any language)", ref Settings.UniversalFont))
+                ImGui.SeparatorText(this.L("atlas.font", "Font"));
+                if (ImGui.Checkbox(this.L("atlas.universal_font", "Universal font (render map names in any language)"), ref Settings.UniversalFont))
                 {
                     if (Settings.UniversalFont)
                         UniversalFont.Apply(DllDirectory);
                     else
                         UniversalFont.Restore();
                 }
-                ImGuiHelper.ToolTip("Loads the plugin's bundled DejaVuSans + GNU Unifont into the overlay so " +
+                ImGuiHelper.ToolTip(this.L("atlas.universal_font_hint", "Loads the plugin's bundled DejaVuSans + GNU Unifont into the overlay so " +
                     "any-language map names render without configuring a font in GameHelper. Affects the whole overlay; " +
-                    "turning it off restores GameHelper's configured font.");
+                    "turning it off restores GameHelper's configured font."));
 
-                ImGui.SeparatorText("Map name language");
-                if (ImGui.BeginCombo("Language", Settings.Language))
+                ImGui.SeparatorText(this.L("atlas.map_name_language", "Map name language"));
+                bool isAuto = IsAutoLang(Settings.Language);
+                string autoLabel = this.L("atlas.lang_auto", "Auto (follow UI language)");
+                // Preview shows "Auto" (with the resolved token) or the explicit override token.
+                string preview = isAuto ? $"{autoLabel} — {UiLanguageMapToken()}" : Settings.Language;
+                if (ImGui.BeginCombo(this.L("atlas.language", "Language"), preview))
                 {
+                    // Auto = track GameHelper's UI language; re-resolves live when the UI language changes.
+                    if (ImGui.Selectable(autoLabel, isAuto) && !isAuto)
+                    {
+                        Settings.Language = AutoLang;
+                        ApplyContentLanguage(EffectiveLanguage);
+                        nodeCache.Clear();
+                    }
+                    if (isAuto)
+                        ImGui.SetItemDefaultFocus();
                     foreach (var lang in AvailableLanguages)
                     {
-                        bool selected = string.Equals(lang, Settings.Language, StringComparison.OrdinalIgnoreCase);
+                        bool selected = !isAuto && string.Equals(lang, Settings.Language, StringComparison.OrdinalIgnoreCase);
                         if (ImGui.Selectable(lang, selected) && !selected)
                         {
                             Settings.Language = lang;
@@ -421,97 +453,59 @@ namespace Atlas
                     }
                     ImGui.EndCombo();
                 }
-                ImGuiHelper.ToolTip("Display language for map-node names (from maps.json 'translates'). " +
-                    "Changing it re-labels nodes immediately. Map Group names are matched in the selected language.");
+                ImGuiHelper.ToolTip(this.L("atlas.language_hint", "Display language for map-node names (from maps.json 'translates'). " +
+                    "Auto follows GameHelper's UI language; pick a specific language to match your game client instead. " +
+                    "Changing it re-labels nodes immediately. Map Group names are matched in the selected language."));
 
-                ImGui.SeparatorText("Draw Lines");
-                if (ImGui.TreeNode("Draw Lines Settings"))
+                ImGui.SeparatorText(this.L("atlas.draw_lines", "Draw Lines"));
+                if (ImGui.TreeNode(this.Loc.Title("atlas.draw_lines_settings", "Draw Lines Settings", "atlas_draw_lines")))
                 {
-                    ImGui.Checkbox("Shortest Path", ref Settings.RouteLinesThroughNodes);
-                    ImGuiHelper.ToolTip("Route lines follow the shortest hop-path through the revealed atlas edges " +
-                        "(from the nearest accessible node). When off, a straight line is drawn instead.");
+                    ImGui.Checkbox(this.L("atlas.shortest_path", "Shortest Path"), ref Settings.RouteLinesThroughNodes);
+                    ImGuiHelper.ToolTip(this.L("atlas.shortest_path_hint", "Route lines follow the shortest hop-path through the revealed atlas edges " +
+                        "(from the nearest accessible node). When off, a straight line is drawn instead."));
                     ImGui.SameLine();
                     ImGui.SetNextItemWidth(150);
-                    ImGui.SliderFloat("Path Thickness", ref Settings.PathLineThickness, 1.0f, 8.0f);
+                    ImGui.SliderFloat(this.L("atlas.path_thickness", "Path Thickness"), ref Settings.PathLineThickness, 1.0f, 8.0f);
                     ImGui.SetNextItemWidth(150);
-                    ImGui.SliderFloat("Arrow spacing", ref Settings.RouteArrowSpacing, 6.0f, 18.0f);
-                    ImGuiHelper.ToolTip("Gap between the direction arrows drawn along a route (higher = more spread out).");
+                    ImGui.SliderFloat(this.L("atlas.arrow_spacing", "Arrow spacing"), ref Settings.RouteArrowSpacing, 6.0f, 18.0f);
+                    ImGuiHelper.ToolTip(this.L("atlas.arrow_spacing_hint", "Gap between the direction arrows drawn along a route (higher = more spread out)."));
                     ImGui.SetNextItemWidth(150);
-                    ImGui.SliderFloat("Search route range", ref Settings.DrawSearchInRange, 1.0f, 10.0f);
+                    ImGui.SliderFloat(this.L("atlas.search_route_range", "Search route range"), ref Settings.DrawSearchInRange, 1.0f, 10.0f);
                     ImGui.TreePop();
                 }
 
-                ImGui.SeparatorText("Debug");
-                ImGui.Checkbox("Show Node Index (debug/RE)", ref Settings.ShowNodeIndex);
-                ImGuiHelper.ToolTip("DEBUG: draws each node's child-index (its number in the atlas-panel child list) as a badge " +
-                    "to the left of the map name, so a node referenced by number is easy to locate on-screen.");
-
-                if (ImGui.TreeNode("Logbook Preview Watch (RE)"))
-                {
-                    ImGui.Checkbox("Write atlas logbook preview diffs", ref Settings.LogbookPreviewWatch);
-                    ImGuiHelper.ToolTip("Read-only research logger. Enable it while the Atlas is open, capture a baseline, " +
-                        "hover/select an Expedition Logbook so the preview route appears, then chart the area. " +
-                        "Logs are written under Plugins\\Atlas\\logs.");
-                    ImGui.SetNextItemWidth(160);
-                    ImGui.SliderInt("Poll ms", ref Settings.LogbookPreviewPollMs, 50, 2000);
-                    ImGui.Checkbox("Highlight recent preview candidates", ref Settings.ShowLogbookPreviewCandidates);
-                    ImGuiHelper.ToolTip("Samples Atlas node content while enabled and highlights nodes whose content changes, " +
-                        "which is the signal observed when hovering/selecting a logbook preview.");
-                    ImGui.Checkbox("Probe hover icon/panel state", ref Settings.LogbookHoverPanelProbe);
-                    ImGuiHelper.ToolTip("Logs the actual Uncharted Waters hover/use-icon panel state, including UI text and mouse-hit ancestry, so it can be correlated with revealed Atlas node changes.");
-                    ImGui.SetNextItemWidth(160);
-                    ImGui.SliderInt("Highlight TTL sec", ref Settings.LogbookPreviewCandidateTtlSeconds, 5, 300);
-
-                    if (ImGui.Button("Reset log session"))
-                        ResetLogbookPreviewWatch();
-                    ImGui.SameLine();
-                    if (ImGui.Button("Clear candidates"))
-                        logbookPreviewCandidates.Clear();
-                    ImGui.SameLine();
-                    if (ImGui.Button("Open logs folder"))
-                        OpenLogbookPreviewWatchFolder();
-
-                    var activeCandidates = CountActiveLogbookPreviewCandidates(DateTime.UtcNow);
-                    ImGui.TextDisabled($"Active preview candidates: {activeCandidates}");
-
-                    ImGui.SeparatorText("Preview UI scanner");
-                    ImGui.Checkbox("Scan hover UI changes", ref Settings.LogbookPreviewUiScan);
-                    ImGuiHelper.ToolTip("RE-only broad scan. Prefer the hover icon/panel probe above for normal testing.");
-                    ImGui.Checkbox("Draw UI debug boxes", ref Settings.DrawLogbookPreviewUiChanges);
-                    ImGuiHelper.ToolTip("Optional RE visualization only. Leave off unless you specifically want UI rectangles.");
-                    ImGui.SetNextItemWidth(160);
-                    ImGui.SliderInt("UI scan depth", ref Settings.LogbookPreviewUiScanDepth, 2, 8);
-                    if (ImGui.Button("Reset UI scan"))
-                        ResetLogbookUiScan();
-                    ImGui.SameLine();
-                    if (ImGui.Button("Open UI scan log"))
-                        OpenLogbookPreviewWatchFolder();
-                    ImGui.TextDisabled($"Active UI changes: {CountActiveLogbookUiChanges(DateTime.UtcNow)}");
-
-                    if (!string.IsNullOrWhiteSpace(logbookWatchPath))
-                        ImGui.TextWrapped($"Current log: {logbookWatchPath}");
-                    else
-                        ImGui.TextDisabled("No log file yet. Enable watch and open the Atlas.");
-
-                    ImGui.TreePop();
-                }
+                ImGui.SeparatorText(this.L("atlas.debug", "Debug"));
+                ImGui.Checkbox(this.L("atlas.show_node_index", "Show Node Index (debug/RE)"), ref Settings.ShowNodeIndex);
+                ImGuiHelper.ToolTip(this.L("atlas.show_node_index_hint", "DEBUG: draws each node's child-index (its number in the atlas-panel child list) as a badge " +
+                    "to the left of the map name, so a node referenced by number is easy to locate on-screen."));
             }
 
             // Collapsed-by-default Display section: node-visibility filters, biome border, label
             // layout, and the content-icon overlay.
-            if (ImGui.CollapsingHeader("Display"))
+            if (ImGui.CollapsingHeader(this.Loc.Title("atlas.display", "Display", "atlas_display")))
             {
-                ImGui.SeparatorText("Atlas Settings");
-                ImGui.Checkbox("Hide Completed Maps", ref Settings.HideCompletedMaps);
-                ImGui.Checkbox("Hide Not Accessible Maps", ref Settings.HideNotAccessibleMaps);
-                ImGui.Checkbox("Hide Available Maps", ref Settings.HideAvailableMaps);
-                ImGuiHelper.ToolTip("Hide maps that are accessible/runnable right now. Route/search targets stay visible.");
-                ImGui.Checkbox("Show Biome Border", ref Settings.ShowBiomeBorder);
+                ImGui.SeparatorText(this.L("atlas.atlas_settings", "Atlas Settings"));
+                ImGui.Checkbox(this.L("atlas.hide_completed", "Hide Completed Maps"), ref Settings.HideCompletedMaps);
+                ImGui.Checkbox(this.L("atlas.hide_not_accessible", "Hide Not Accessible Maps"), ref Settings.HideNotAccessibleMaps);
+                ImGui.Checkbox(this.L("atlas.hide_available", "Hide Available Maps"), ref Settings.HideAvailableMaps);
+                ImGuiHelper.ToolTip(this.L("atlas.hide_available_hint", "Hide maps that are accessible/runnable right now. Route/search targets stay visible."));
+                ImGui.Checkbox(this.L("atlas.show_connections", "Show node connections"), ref Settings.ShowAtlasGraph);
+                ImGuiHelper.ToolTip(this.L("atlas.show_connections_hint", "Draw the atlas connection graph — a faint line along every edge between adjacent map nodes, beneath the labels and routes."));
+                if (Settings.ShowAtlasGraph)
+                {
+                    ColorSwatch("##AtlasGraphColor", ref Settings.AtlasGraphLineColor);
+                    ImGui.SameLine();
+                    ImGui.Text(this.L("atlas.connection_color", "Connection Color"));
+                    ImGui.SetNextItemWidth(150);
+                    ImGui.SliderFloat(this.L("atlas.connection_thickness", "Connection Thickness"), ref Settings.AtlasGraphThickness, 0.5f, 5.0f);
+                }
+
+                ImGui.Checkbox(this.L("atlas.show_biome_border", "Show Biome Border"), ref Settings.ShowBiomeBorder);
                 if (Settings.ShowBiomeBorder)
-                    if (ImGui.TreeNode("Biome Settings"))
+                    if (ImGui.TreeNode(this.Loc.Title("atlas.biome_settings", "Biome Settings", "atlas_biome")))
                     {
                         ImGui.SetNextItemWidth(180);
-                        ImGui.SliderFloat("Biome Border Thickness", ref Settings.BiomeBorderThickness, 1.0f, 6.0f);
+                        ImGui.SliderFloat(this.L("atlas.biome_border_thickness", "Biome Border Thickness"), ref Settings.BiomeBorderThickness, 1.0f, 6.0f);
 
                         if (ImGui.BeginTable("split", 3))
                         {
@@ -536,7 +530,7 @@ namespace Atlas
 
                                 var border = ov.BorderColor ?? info.BdColor;
                                 ImGui.SameLine();
-                                ColorSwatch($"Border Color##Biome{id}", ref border);
+                                ColorSwatch($"{this.L("atlas.border_color", "Border Color")}##Biome{id}", ref border);
                                 if (!ColorsEqual(border, ov.BorderColor ?? info.BdColor))
                                 {
                                     ov.BorderColor = border;
@@ -553,35 +547,170 @@ namespace Atlas
                         ImGui.TreePop();
                     }
 
-                if (ImGui.TreeNode("Layout Settings"))
+                if (ImGui.TreeNode(this.Loc.Title("atlas.layout_settings", "Layout Settings", "atlas_layout")))
                 {
                     var nudge = Settings.AnchorNudge;
-                    if (ImGui.SliderFloat2("Layout Nudge (px)", ref nudge, -60f, 60f))
+                    if (ImGui.SliderFloat2(this.L("atlas.layout_nudge", "Layout Nudge (px)"), ref nudge, -60f, 60f))
                         Settings.AnchorNudge = nudge;
-                    ImGui.SliderFloat("Scale Multiplier", ref Settings.ScaleMultiplier, 0.5f, 3.0f);
+                    ImGui.SliderFloat(this.L("atlas.scale_multiplier", "Scale Multiplier"), ref Settings.ScaleMultiplier, 0.5f, 3.0f);
                     ImGui.TreePop();
                 }
 
-                ImGui.SeparatorText("Content Icons");
-                ImGui.Checkbox("Show Content Icons", ref Settings.ShowContentIcons);
-                ImGuiHelper.ToolTip("Draws each content as its in-game icon (from Plugins\\Atlas\\icons\\<name>.png) above the map " +
+                // Per-map rating (0 = normal … 10 = terrible): colored number pill right of the map
+                // name. Ratings are keyed by canonical English name (config/mapratings.json) while
+                // the table lists maps in the UI language, so they work on any client language.
+                if (ImGui.TreeNode(this.Loc.Title("atlas.maps_rating", "Maps rating", "atlas_maps_rating")))
+                {
+                    ImGui.Checkbox(this.L("atlas.map_rating_show", "Show maps rating"), ref Settings.ShowMapRating);
+                    ImGuiHelper.ToolTip(this.L("atlas.map_rating_show_hint",
+                        "Draws each rated map's rating (0 = normal … 10 = terrible) as a colored pill " +
+                        "to the right of the map name: green → yellow → red."));
+
+                    ImGui.SetNextItemWidth(220);
+                    ImGui.InputTextWithHint("##RatingFilter", this.L("atlas.hint_filter", "filter…"), ref RatingFilter, 64);
+
+                    EnsureMapPickCache();
+                    if (ImGui.BeginTable("##MapRatings", 3,
+                        ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.ScrollY,
+                        new Vector2(0, 320)))
+                    {
+                        ImGui.TableSetupScrollFreeze(0, 1);
+                        ImGui.TableSetupColumn(this.L("atlas.rating_map_col", "Map"), ImGuiTableColumnFlags.WidthStretch);
+                        ImGui.TableSetupColumn(this.L("atlas.rating_col", "Rating"), ImGuiTableColumnFlags.WidthFixed, 170f);
+                        ImGui.TableSetupColumn("##clear", ImGuiTableColumnFlags.WidthFixed, 26f);
+                        ImGui.TableHeadersRow();
+
+                        var rfilter = RatingFilter;
+                        foreach (var (english, localized) in MapPickCache)
+                        {
+                            if (!string.IsNullOrEmpty(rfilter)
+                                && localized.IndexOf(rfilter, StringComparison.OrdinalIgnoreCase) < 0
+                                && english.IndexOf(rfilter, StringComparison.OrdinalIgnoreCase) < 0)
+                                continue;
+
+                            ImGui.PushID(english);
+                            ImGui.TableNextRow();
+                            ImGui.TableNextColumn();
+                            ImGui.AlignTextToFramePadding();
+                            ImGui.TextUnformatted(localized);
+
+                            ImGui.TableNextColumn();
+                            bool rated = Settings.MapRatings.TryGetValue(english, out int rating);
+                            if (rated)
+                            {
+                                ImGui.ColorButton("##sw", RatingColor(rating),
+                                    ImGuiColorEditFlags.NoTooltip | ImGuiColorEditFlags.NoPicker | ImGuiColorEditFlags.NoDragDrop,
+                                    new Vector2(ImGui.GetFrameHeight(), ImGui.GetFrameHeight()));
+                                ImGui.SameLine();
+                            }
+                            int v = rated ? rating : 0;
+                            ImGui.SetNextItemWidth(-1);
+                            // Unrated rows show "—" until first touched; any edit stores a rating.
+                            if (ImGui.SliderInt("##rating", ref v, 0, 10, rated ? "%d" : "—"))
+                                Settings.MapRatings[english] = v;
+                            if (ImGui.IsItemDeactivatedAfterEdit())
+                                SaveMapRatings();
+
+                            ImGui.TableNextColumn();
+                            if (rated && ImGui.SmallButton("X"))
+                            {
+                                Settings.MapRatings.Remove(english);
+                                SaveMapRatings();
+                            }
+                            ImGui.PopID();
+                        }
+
+                        ImGui.EndTable();
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Expedition (sea / Uncharted Waters) overlays: leyline highlight + fog ships.
+                if (ImGui.TreeNode(this.Loc.Title("atlas.expedition_settings", "Expedition Settings", "atlas_expedition")))
+                {
+                    if (ImGui.Checkbox(this.L("atlas.uncharted_leylines", "Uncharted waters leyline"), ref Settings.ShowUnchartedLeylines))
+                        nodeCache.Clear(); // force a cache rebuild next frame — the ship scan is gated on this toggle
+                    ImGuiHelper.ToolTip(this.L("atlas.uncharted_leylines_hint",
+                        "Hover a sea ship (Uncharted Waters) to highlight its reveal area: the connection graph " +
+                        "between the map nodes a logbook used there will uncover, thicker than the normal node " +
+                        "connections. The hidden maps are already assigned client-side, so the highlighted " +
+                        "cluster is exactly what that ship yields."));
+                    if (Settings.ShowUnchartedLeylines)
+                    {
+                        ColorSwatch("##UnchartedLeylineColor", ref Settings.UnchartedLeylineColor);
+                        ImGui.SameLine();
+                        ImGui.Text(this.L("atlas.leyline_color", "Leyline Color"));
+                        ImGui.SetNextItemWidth(150);
+                        ImGui.SliderFloat(this.L("atlas.leyline_thickness", "Leyline Thickness"), ref Settings.UnchartedLeylineThickness, 1.0f, 8.0f);
+                    }
+
+                    if (ImGui.Checkbox(this.L("atlas.ships_in_fog", "Show ships in fog"), ref Settings.ShowShipsInFog))
+                        nodeCache.Clear(); // force a cache rebuild next frame — the ship scan is gated on the toggles
+                    ImGuiHelper.ToolTip(this.L("atlas.ships_in_fog_hint",
+                        "Marks the Uncharted Waters ships the game isn't rendering yet (deep fog) with an icon, " +
+                        "one per uncharted sea chunk — so upcoming logbook spots are visible before you sail " +
+                        "close. Uses icons\\UnchartedShip.png when present, else a ring marker. Hovering the " +
+                        "icon also triggers the leyline highlight."));
+                    if (Settings.ShowShipsInFog)
+                    {
+                        ImGui.SetNextItemWidth(150);
+                        ImGui.SliderFloat(this.L("atlas.ship_icon_size", "Ship icon size"), ref Settings.ShipIconSize, 32f, 96f);
+                    }
+
+                    ImGui.TreePop();
+                }
+
+                // Ritual (atlas line to the Crux of Nothingness) overlays.
+                if (ImGui.TreeNode(this.Loc.Title("atlas.ritual_settings", "Ritual Settings", "atlas_ritual")))
+                {
+                    if (ImGui.Checkbox(this.L("atlas.ritual_predict", "Show Ritual mods (on hover)"),
+                        ref Settings.ShowRitualPrediction))
+                        nodeCache.Clear(); // force a cache rebuild next frame — the mod-text read is gated on this toggle
+                    ImGuiHelper.ToolTip(this.L("atlas.ritual_predict_hint",
+                        "Shows the Rite mods of the Ritual atlas line (the line drawn to the Crux of " +
+                        "Nothingness): the game's own mods on committed line nodes (blue), plus the exact " +
+                        "predicted mods (green) every still-reachable node WILL roll — the whole look-ahead " +
+                        "chain into the fog, before you click, including which nodes get a second mod. Before " +
+                        "the first node is placed, hover any accessible map in line mode to preview the whole " +
+                        "chain that start would give. Predicted labels are in English."));
+
+                    ImGui.Checkbox(this.L("atlas.ritual_planner", "Head of the king planner window"),
+                        ref Settings.ShowRitualPlanner);
+                    ImGuiHelper.ToolTip(this.L("atlas.ritual_planner_hint",
+                        "Opens a window while the atlas is in line-drawing mode listing every path the line " +
+                        "could take from every possible start map, with the predicted reward chain for each. " +
+                        "Pick desired rewards in the filter dropdown (a path shows if ANY of them is in its " +
+                        "chain); tick a path to highlight its route on the atlas and draw a ray to its first " +
+                        "map. Closing the window with X also clears this checkbox."));
+                    if (Settings.ShowRitualPlanner)
+                        this.DrawRewardWeightsTable();
+
+                    // The "Log Ritual rolls (RE)" debug toggle is HIDDEN from the UI for release;
+                    // LogRitualRolls still works when set by hand in config/settings.txt.
+                    ImGui.TreePop();
+                }
+
+                ImGui.SeparatorText(this.L("atlas.content_icons", "Content Icons"));
+                ImGui.Checkbox(this.L("atlas.show_content_icons", "Show Content Icons"), ref Settings.ShowContentIcons);
+                ImGuiHelper.ToolTip(this.L("atlas.show_content_icons_hint", "Draws each content as its in-game icon (from Plugins\\Atlas\\icons\\<name>.png) above the map " +
                     "name. Content without an icon file falls back to its text name. Icons are suppressed on visible nodes " +
-                    "(the game already draws them there) and shown only on hidden ones.");
+                    "(the game already draws them there) and shown only on hidden ones."));
                 if (Settings.ShowContentIcons)
                 {
                     ImGui.SetNextItemWidth(180);
-                    ImGui.SliderFloat("Content Icon Size", ref Settings.ContentIconSize, 16f, 64f);
+                    ImGui.SliderFloat(this.L("atlas.content_icon_size", "Content Icon Size"), ref Settings.ContentIconSize, 16f, 64f);
                     var iconOffset = Settings.ContentIconOffset;
                     ImGui.SetNextItemWidth(180);
-                    if (ImGui.SliderFloat2("Content Icon Offset (X,Y)", ref iconOffset, -64f, 64f))
+                    if (ImGui.SliderFloat2(this.L("atlas.content_icon_offset", "Content Icon Offset (X,Y)"), ref iconOffset, -64f, 64f))
                         Settings.ContentIconOffset = iconOffset;
                 }
 
-                if (ImGui.TreeNode("Map Styles##MapStyles"))
+                if (ImGui.TreeNode(this.Loc.Title("atlas.map_styles", "Map Styles", "MapStyles")))
                 {
-                    ImGui.InputTextWithHint("##MapGroupName", "group name", ref Settings.GroupNameInput, 256);
+                    ImGui.InputTextWithHint("##MapGroupName", this.L("atlas.hint_group_name", "group name"), ref Settings.GroupNameInput, 256);
                     ImGui.SameLine();
-                    if (ImGui.Button("Add new map group"))
+                    if (ImGui.Button(this.L("atlas.add_map_group", "Add new map group")))
                     {
                         Settings.MapGroups.Add(new MapGroupSettings(Settings.GroupNameInput, Settings.DefaultBackgroundColor, Settings.DefaultFontColor));
                         Settings.GroupNameInput = string.Empty;
@@ -603,39 +732,39 @@ namespace Atlas
                                 MoveMapGroup(i, 1);
                             }
                             ImGui.SameLine();
-                            if (ImGui.Button($"Rename Group##{i}"))
+                            if (ImGui.Button($"{this.L("atlas.rename_group", "Rename Group")}##{i}"))
                             {
                                 NewGroupName = mapGroup.Name;
                                 ImGui.OpenPopup($"RenamePopup##{i}");
                             }
                             ImGui.SameLine();
-                            if (ImGui.Button($"Delete Group##{i}"))
+                            if (ImGui.Button($"{this.L("atlas.delete_group", "Delete Group")}##{i}"))
                             {
                                 DeleteMapGroup(i);
                             }
                             ImGui.SameLine();
                             ColorSwatch($"##MapGroupBackgroundColor{i}", ref mapGroup.BackgroundColor);
                             ImGui.SameLine();
-                            ImGui.Text("Background Color");
+                            ImGui.Text(this.L("atlas.background_color", "Background Color"));
                             ImGui.SameLine();
                             ColorSwatch($"##MapGroupFontColor{i}", ref mapGroup.FontColor);
-                            ImGui.SameLine(); ImGui.Text("Font Color");
+                            ImGui.SameLine(); ImGui.Text(this.L("atlas.font_color", "Font Color"));
 
                             for (int j = 0; j < mapGroup.Maps.Count; j++)
                             {
                                 var mapName = mapGroup.Maps[j];
-                                if (ImGui.InputTextWithHint($"##MapName{i}-{j}", "map name", ref mapName, 256))
+                                if (ImGui.InputTextWithHint($"##MapName{i}-{j}", this.L("atlas.hint_map_name", "map name"), ref mapName, 256))
                                     mapGroup.Maps[j] = mapName;
 
                                 ImGui.SameLine();
-                                if (ImGui.Button($"Delete##MapNameDelete{i}-{j}"))
+                                if (ImGui.Button($"{this.L("atlas.delete", "Delete")}##MapNameDelete{i}-{j}"))
                                 {
                                     mapGroup.Maps.RemoveAt(j);
                                     break;
                                 }
                             }
 
-                            if (ImGui.Button($"Add new map##AddNewMap{i}"))
+                            if (ImGui.Button($"{this.L("atlas.add_new_map", "Add new map")}##AddNewMap{i}"))
                                 mapGroup.Maps.Add(string.Empty);
 
                             // Pick a map from a filtered list instead of typing it. Stores the localized
@@ -643,11 +772,11 @@ namespace Atlas
                             // filter narrows by localized or English name. Skips maps already in the group.
                             ImGui.SameLine();
                             ImGui.SetNextItemWidth(220);
-                            if (ImGui.BeginCombo($"##MapGroupAdd{i}", "Add from list…"))
+                            if (ImGui.BeginCombo($"##MapGroupAdd{i}", this.L("atlas.add_from_list", "Add from list…")))
                             {
                                 EnsureMapPickCache();
                                 ImGui.SetNextItemWidth(-1);
-                                ImGui.InputTextWithHint($"##MapGroupFilter{i}", "filter…", ref MapGroupAddFilter, 64);
+                                ImGui.InputTextWithHint($"##MapGroupFilter{i}", this.L("atlas.hint_filter", "filter…"), ref MapGroupAddFilter, 64);
                                 var gfilter = MapGroupAddFilter;
                                 foreach (var (english, localized) in MapPickCache)
                                 {
@@ -668,14 +797,14 @@ namespace Atlas
 
                             if (ImGui.BeginPopupModal($"RenamePopup##{i}", ImGuiWindowFlags.AlwaysAutoResize))
                             {
-                                ImGui.InputText("New Name", ref NewGroupName, 256);
-                                if (ImGui.Button("OK"))
+                                ImGui.InputText(this.L("atlas.new_name", "New Name"), ref NewGroupName, 256);
+                                if (ImGui.Button(this.L("atlas.ok", "OK")))
                                 {
                                     mapGroup.Name = NewGroupName;
                                     ImGui.CloseCurrentPopup();
                                 }
                                 ImGui.SameLine();
-                                if (ImGui.Button("Cancel"))
+                                if (ImGui.Button(this.L("atlas.cancel", "Cancel")))
                                 {
                                     ImGui.CloseCurrentPopup();
                                 }
@@ -688,16 +817,16 @@ namespace Atlas
                 }
             }
 
-            ImGui.SeparatorText("Search Maps");
-            ImGui.InputTextWithHint("Search Map", "You can search multiple maps at once using a comma separator ','", ref Settings.SearchQuery, 256);
+            ImGui.SeparatorText(this.L("atlas.search_maps", "Search Maps"));
+            ImGui.InputTextWithHint(this.L("atlas.search_map", "Search Map"), this.L("atlas.search_map_hint", "You can search multiple maps at once using a comma separator ','"), ref Settings.SearchQuery, 256);
             ImGui.SameLine();
-            if (ImGui.SmallButton("Clear"))
+            if (ImGui.SmallButton(this.L("atlas.clear", "Clear")))
                 Settings.SearchQuery = string.Empty;
             // Search routing is always on now (the old "Draw Lines to Search in range" toggle is hidden);
             // a non-empty Search query draws routes to the matching maps within range.
             Settings.DrawLinesSearchQuery = true;
 
-            ImGui.SeparatorText("Target farming");
+            ImGui.SeparatorText(this.L("atlas.target_farming", "Target farming"));
             DrawMapContentSettings();
             #endregion
         }
@@ -710,9 +839,9 @@ namespace Atlas
         private void DrawMapContentSettings()
         {
             {
-                ImGui.InputTextWithHint("##ContentGroupName", "group name", ref Settings.ContentGroupNameInput, 256);
+                ImGui.InputTextWithHint("##ContentGroupName", this.L("atlas.hint_group_name", "group name"), ref Settings.ContentGroupNameInput, 256);
                 ImGui.SameLine();
-                if (ImGui.Button("Add content group"))
+                if (ImGui.Button(this.L("atlas.add_content_group", "Add content group")))
                 {
                     Settings.ContentGroups.Add(new ContentGroupSettings
                     {
@@ -724,7 +853,7 @@ namespace Atlas
                 for (int gi = 0; gi < Settings.ContentGroups.Count; gi++)
                 {
                     var grp = Settings.ContentGroups[gi];
-                    string title = grp.Locked ? $"{grp.Name} (built-in)##ContentGroup{gi}" : $"{grp.Name}##ContentGroup{gi}";
+                    string title = grp.Locked ? $"{grp.Name} {this.L("atlas.builtin_suffix", "(built-in)")}##ContentGroup{gi}" : $"{grp.Name}##ContentGroup{gi}";
                     // The built-in group stays expanded while it's the only group; once other groups
                     // exist it collapses by default but the user can still toggle it freely.
                     if (grp.Locked && Settings.ContentGroups.Count == 1)
@@ -733,22 +862,22 @@ namespace Atlas
                         continue;
 
                     bool drawPaths = grp.DrawPaths;
-                    if (ImGui.Checkbox($"Draw paths##CG{gi}", ref drawPaths))
+                    if (ImGui.Checkbox($"{this.L("atlas.draw_paths", "Draw paths")}##CG{gi}", ref drawPaths))
                         grp.DrawPaths = drawPaths;
-                    ImGuiHelper.ToolTip("Master switch for this group: when off, no route is drawn for any of its content, " +
-                        "but each entry keeps its own 'route' checkbox unchanged.");
+                    ImGuiHelper.ToolTip(this.L("atlas.draw_paths_hint", "Master switch for this group: when off, no route is drawn for any of its content, " +
+                        "but each entry keeps its own 'route' checkbox unchanged."));
 
                     // One line thickness for all entries in the group, shown right under "Draw paths".
                     ImGui.SetNextItemWidth(180);
                     float gth = grp.LineThickness;
-                    if (ImGui.SliderFloat($"Line thickness##CGth{gi}", ref gth, 1f, 8f))
+                    if (ImGui.SliderFloat($"{this.L("atlas.line_thickness", "Line thickness")}##CGth{gi}", ref gth, 1f, 8f))
                         grp.LineThickness = gth;
 
                     // The built-in group can't be deleted and its content list is fixed.
                     if (!grp.Locked)
                     {
                         ImGui.SameLine();
-                        if (ImGui.Button($"Delete group##CG{gi}"))
+                        if (ImGui.Button($"{this.L("atlas.delete_group_lc", "Delete group")}##CG{gi}"))
                         {
                             Settings.ContentGroups.RemoveAt(gi);
                             ImGui.TreePop();
@@ -758,10 +887,10 @@ namespace Atlas
                         // Add-content combo (only content types not already in this group). Filter box
                         // narrows by content name OR description (in the selected UI language).
                         ImGui.SetNextItemWidth(220);
-                        if (ImGui.BeginCombo($"##AddContent{gi}", "Add content…"))
+                        if (ImGui.BeginCombo($"##AddContent{gi}", this.L("atlas.add_content", "Add content…")))
                         {
                             ImGui.SetNextItemWidth(-1);
-                            ImGui.InputTextWithHint($"##ContentFilter{gi}", "filter…", ref ContentAddFilter, 64);
+                            ImGui.InputTextWithHint($"##ContentFilter{gi}", this.L("atlas.hint_filter", "filter…"), ref ContentAddFilter, 64);
                             var cfilter = ContentAddFilter;
                             foreach (var choice in ContentChoices)
                             {
@@ -792,11 +921,11 @@ namespace Atlas
                         // name). Names are shown/sorted in the selected UI language; filter box narrows.
                         ImGui.SameLine();
                         ImGui.SetNextItemWidth(220);
-                        if (ImGui.BeginCombo($"##AddMap{gi}", "Add map…"))
+                        if (ImGui.BeginCombo($"##AddMap{gi}", this.L("atlas.add_map", "Add map…")))
                         {
                             EnsureMapPickCache();
                             ImGui.SetNextItemWidth(-1);
-                            ImGui.InputTextWithHint($"##MapFilter{gi}", "filter…", ref MapAddFilter, 64);
+                            ImGui.InputTextWithHint($"##MapFilter{gi}", this.L("atlas.hint_filter", "filter…"), ref MapAddFilter, 64);
                             var filter = MapAddFilter;
                             foreach (var (english, localized) in MapPickCache)
                             {
@@ -827,7 +956,7 @@ namespace Atlas
                         bool draw = entry.DrawPath;
                         if (ImGui.Checkbox("##route", ref draw))
                             entry.DrawPath = draw;
-                        ImGuiHelper.ToolTip("Draw a route to the nearest node carrying this content.");
+                        ImGuiHelper.ToolTip(this.L("atlas.route_entry_hint", "Draw a route to the nearest node carrying this content."));
 
                         ImGui.SameLine();
                         var col = entry.LineColor;
@@ -839,7 +968,7 @@ namespace Atlas
                         int hops = entry.MaxHops;
                         if (ImGui.DragInt("##hops", ref hops, 0.1f, 0, 1000))
                             entry.MaxHops = Math.Max(0, hops);
-                        ImGuiHelper.ToolTip("Max hops to route through (0 = unlimited). A longer route is suppressed.");
+                        ImGuiHelper.ToolTip(this.L("atlas.max_hops_hint", "Max hops to route through (0 = unlimited). A longer route is suppressed."));
 
                         // Icon (content entries only) + localized name (map name for built-in entries).
                         ImGui.SameLine();
@@ -884,6 +1013,14 @@ namespace Atlas
 
             EnsureProcessHandle();
 
+            // Auto map-name language: re-slice the content/name overlays live if the GH UI language
+            // changed since the last apply (no-op in explicit-override mode once tokens match).
+            if (!string.Equals(appliedContentLang, EffectiveLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyContentLanguage(EffectiveLanguage);
+                nodeCache.Clear();
+            }
+
             var player = Core.States.InGameStateObject.CurrentAreaInstance.Player;
             if (!player.TryGetComponent<Render>(out var playerRender))
                 return;
@@ -927,10 +1064,19 @@ namespace Atlas
             // When every node state is hidden and nothing searches/routes to a node, no node is ever
             // drawn — so reading per-node data this frame would be wasted work. Skip the read + draw.
             bool allStatesHidden = Settings.HideCompletedMaps && Settings.HideNotAccessibleMaps && Settings.HideAvailableMaps;
-            bool previewWatchActive = Settings.LogbookPreviewWatch || Settings.ShowLogbookPreviewCandidates;
-            bool uiScanActive = Settings.LogbookPreviewUiScan || Settings.LogbookHoverPanelProbe;
-            bool needNodeData = previewWatchActive || uiScanActive || !allStatesHidden || doSearch || wantContentRoute
-                || Settings.DrawLinesToUniqueMaps || Settings.PathToLineageMaps || Settings.PathToArbiterMaps;
+            // Ritual line mode (page mode 6): gates the "Head of the King Rewards" planner window/overlay.
+            bool ritualLineMode = Read<byte>(IntPtr.Add(atlasPanelAddr, PanelLineModeOffset)) != 0;
+            bool wantPlanner = Settings.ShowRitualPlanner && ritualLineMode;
+            // While drawing the ritual line the Hide toggles are ignored: they cull nodes BEFORE
+            // the hover hit-test, so with all three on the pre-click hover start could never
+            // register (its prediction-exemption only kicks in once a node is already predicted).
+            bool ritualShowAll = ritualLineMode
+                && (Settings.ShowRitualPrediction || wantPlanner);
+            bool needNodeData = !allStatesHidden || doSearch || wantContentRoute
+                || Settings.DrawLinesToUniqueMaps || Settings.PathToLineageMaps || Settings.PathToArbiterMaps
+                || Settings.ShowAtlasGraph || Settings.ShowUnchartedLeylines || Settings.ShowShipsInFog
+                || Settings.ShowRitualPrediction || Settings.LogRitualRolls
+                || wantPlanner;
             if (!needNodeData)
             {
                 // cacheFrameCounter is left past the threshold (not incremented) so a re-enable
@@ -947,10 +1093,22 @@ namespace Atlas
                 cacheFrameCounter = 0;
             }
 
-            if (uiScanActive)
-                UpdateLogbookUiScan(atlasPanelAddr);
-            if (previewWatchActive)
-                UpdateLogbookPreviewWatch(atlasPanelAddr);
+            // RE ground-truth collector for the deterministic Rite-mod roll (see poe2/Ritual.md).
+            // Snapshots the ritual line (lineId + committed/pending grids + each node's rolled mod
+            // text) to config/ritual_roll_log.jsonl, deduped, so walking many maps builds a dataset.
+            if (Settings.LogRitualRolls)
+                this.LogRitualSnapshot(atlasPanelAddr);
+
+            // Predict the next candidates' Rite mods (shown before you click them). Rebuilt each frame
+            // it's on — cheap (candidate table is cached; the roll is a few dozen TinyMT draws).
+            this.ritualPredictions = Settings.ShowRitualPrediction
+                ? this.BuildRitualPredictions(atlasPanelAddr)
+                : EmptyRitualPredictions;
+
+            // "Head of the King Rewards" planner: enumerate the chains from the current start/frontier
+            // (cached by line state, so idle frames cost only the state reads).
+            if (wantPlanner)
+                this.BuildPlannerChains(atlasPanelAddr);
 
             var panelTopLeft = GetFinalTopLeft(in atlasUi.UiElementBase);
             var panelScale = ComputeScalePair(in atlasUi.UiElementBase);
@@ -1065,20 +1223,70 @@ namespace Atlas
                 // inline with a global phase let two routes whose phase slots collided stamp opaque
                 // triangles on the same spots — the later colour (usually a white/cream content route)
                 // then fully hid the earlier one (e.g. a red arbiter route) on their common segment.
-                var pendingRoutes = new List<(List<StdTuple2D<int>> path, uint color, float thickness)>();
-                var logbookPreviewNow = DateTime.UtcNow;
-                PurgeExpiredLogbookPreviewCandidates(logbookPreviewNow);
+                // ── Atlas connection graph: faint line along every edge between adjacent nodes ──
+                // Drawn on ChannelGrid (the bottom layer) so labels/routes sit on top. Reuses the
+                // routing edge-graph + centers when a route is also being computed this frame.
+                if (Settings.ShowAtlasGraph && !ritualShowAll)
+                {
+                    var gGraph = routeGraph ?? BuildConnectionGraph(atlasPanelAddr);
+                    var gCenters = routeCenters;
+                    if (gCenters == null)
+                    {
+                        gCenters = new Dictionary<StdTuple2D<int>, Vector2>(nodeCache.Count);
+                        foreach (var nd in nodeCache)
+                        {
+                            var ub = Read<UiElementBaseOffset>(nd.Address);
+                            var sc = ComputeScalePair(in ub);
+                            var tl = GetLeafTopLeft(in ub);
+                            var sz = new Vector2(ub.UnscaledSize.X * sc.X, ub.UnscaledSize.Y * sc.Y);
+                            var center = tl + sz * 0.5f;
+                            if (panelRect.Contains(center.X, center.Y))
+                                gCenters[nd.GridPosition] = center;
+                        }
+                    }
 
+                    drawList.ChannelsSetCurrent(ChannelGrid);
+                    uint gcol = ImGuiHelper.Color(Settings.AtlasGraphLineColor);
+                    float gth = MathF.Max(0.5f, uiScale * Settings.AtlasGraphThickness);
+                    foreach (var kv in gGraph)
+                    {
+                        if (!gCenters.TryGetValue(kv.Key, out var ca))
+                            continue;
+                        foreach (var b in kv.Value)
+                        {
+                            // AddEdge stores both directions; draw each undirected edge once.
+                            if (!IsCanonicalEdge(kv.Key, b))
+                                continue;
+                            if (gCenters.TryGetValue(b, out var cb))
+                                drawList.AddLine(ca, cb, gcol, gth);
+                        }
+                    }
+                }
+
+                // Uncharted Waters leylines (connection graph of the hovered ship's reveal set),
+                // under labels/routes on the same bottom layer as the connection graph. Reuses
+                // the routing edge-graph when one was built this frame.
+                // Fog ships first: they record this frame's icon rects, which the leyline
+                // hover below also hit-tests.
+                if (Settings.ShowShipsInFog && shipCache.Count > 0 && !ritualShowAll)
+                    DrawFogShips(drawList, in panelRect, uiScale);
+                else
+                    fogShipIcons.Clear();
+
+                if (Settings.ShowUnchartedLeylines && shipCache.Count > 0 && !ritualShowAll)
+                    DrawUnchartedLeylines(drawList, in panelRect, uiScale, mousePos,
+                        routeGraph ?? BuildConnectionGraph(atlasPanelAddr));
+
+                var pendingRoutes = new List<(List<StdTuple2D<int>> path, uint color, float thickness)>();
+
+                this.ritualHoverGrid = null;
                 foreach (var nd in nodeCache)
                 {
                     if (!nd.Drawable)
                         continue;
                     var mapName = nd.MapName;
-                    LogbookPreviewCandidate previewInfo = null;
-                    bool previewCandidate = Settings.ShowLogbookPreviewCandidates &&
-                        TryGetLogbookPreviewCandidate(nd.GridPosition, logbookPreviewNow, out previewInfo);
 
-                    if (!previewCandidate && doSearch && !searchList.Any(searchTerm => mapName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
+                    if (doSearch && !searchList.Any(searchTerm => mapName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
                         continue;
 
                     bool completed = nd.State == AtlasNodeState.CompletedBase;
@@ -1095,14 +1303,23 @@ namespace Atlas
                     ContentRouteEntry contentEntry = null;
                     ContentGroupSettings contentGroup = null;
                     bool targetContent = !completed && MatchContentRoute(in nd, out contentEntry, out contentGroup);
-                    bool routeTarget = previewCandidate || targetUnique || targetLineage || targetArbiter || targetContent || doSearch;
+                    bool routeTarget = targetUnique || targetLineage || targetArbiter || targetContent || doSearch;
 
-                    if (Settings.HideCompletedMaps && completed)
-                        continue;
-                    if (Settings.HideNotAccessibleMaps && notAccessible && !routeTarget)
-                        continue;
-                    if (Settings.HideAvailableMaps && available && !routeTarget)
-                        continue;
+                    // A predicted candidate keeps its label (candidates are usually fogged/not
+                    // accessible, which the hide toggles would cull).
+                    string ritualPredText = null;
+                    bool ritualCand = Settings.ShowRitualPrediction
+                        && this.ritualPredictions.TryGetValue(nd.GridPosition, out ritualPredText);
+
+                    if (!ritualShowAll)
+                    {
+                        if (Settings.HideCompletedMaps && completed && !ritualCand)
+                            continue;
+                        if (Settings.HideNotAccessibleMaps && notAccessible && !routeTarget && !ritualCand)
+                            continue;
+                        if (Settings.HideAvailableMaps && available && !routeTarget && !ritualCand)
+                            continue;
+                    }
 
                     // Screen position read LIVE per frame (this atlas scrolls by moving the nodes' own
                     // RelativePosition, so a cached leaf would make labels step/jump every cache cycle).
@@ -1114,6 +1331,27 @@ namespace Atlas
                     var nodeSize = new Vector2(uiBase.UnscaledSize.X * nodeScale.X,
                                                uiBase.UnscaledSize.Y * nodeScale.Y);
                     var nodeCenter = nodeTopLeft + nodeSize * 0.5f;
+
+                    // Hypothetical ritual-line start = the node under the cursor. Only nodes the
+                    // line could actually start from: accessible (per RE: start needs the
+                    // accessible state bits) and not a node the line can never include
+                    // (unique / tower / hideout — completed is excluded by `available` already).
+                    // Used next frame by BuildRitualPredictions while no node is committed yet.
+                    if (Settings.ShowRitualPrediction && available
+                        && !string.Equals(nd.MapInfo?.Type, "unique", StringComparison.OrdinalIgnoreCase)
+                        && !(nd.MapInfo?.HasTag("tower") ?? false)
+                        && !(nd.MapInfo?.HasTag("hideout") ?? false)
+                        && mousePos.X >= nodeTopLeft.X && mousePos.X < nodeTopLeft.X + nodeSize.X
+                        && mousePos.Y >= nodeTopLeft.Y && mousePos.Y < nodeTopLeft.Y + nodeSize.Y)
+                        this.ritualHoverGrid = nd.GridPosition;
+
+                    // Ritual focus: while the line is being drawn only rite-relevant labels draw —
+                    // predicted candidates and the hovered start; every other node label/icon is
+                    // noise here. The hover hit-test above already ran, so any accessible node
+                    // still registers as the pre-click start while undrawn.
+                    if (ritualShowAll && !ritualCand
+                        && !(this.ritualHoverGrid is { } rhg && rhg.Equals(nd.GridPosition)))
+                        continue;
 
                     // Coarse off-screen skip BEFORE CalcTextSize (the per-node hot cost). Route/search
                     // targets draw a line even when off-screen, so they're exempt and handled below.
@@ -1225,7 +1463,8 @@ namespace Atlas
                     drawList.ChannelsSetCurrent(ChannelLabels);
                     float rounding = 3f * uiScale;
 
-                    if (Settings.ShowBiomeBorder && Biomes.TryGetValue(nd.BiomeId, out var biome) && biome.Show)
+                    if (Settings.ShowBiomeBorder && !ritualShowAll
+                        && Biomes.TryGetValue(nd.BiomeId, out var biome) && biome.Show)
                     {
                         var biomeColor = biome.BdColor;
                         if (completed)
@@ -1241,50 +1480,12 @@ namespace Atlas
                             outRounding, ImDrawFlags.RoundCornersAll, bBorderTh);
                     }
 
-                    if (previewCandidate)
-                    {
-                        var fade = 1f;
-                        var age = Math.Max(0.0, (logbookPreviewNow - previewInfo.LastSeenUtc).TotalSeconds);
-                        var ttl = Math.Max(1, Settings.LogbookPreviewCandidateTtlSeconds);
-                        fade = (float)Math.Clamp(1.0 - (age / ttl), 0.25, 1.0);
-                        var previewColor = new Vector4(1f, 0.78f, 0.12f, fade);
-                        var previewFill = new Vector4(1f, 0.78f, 0.12f, 0.13f * fade);
-                        var radius = MathF.Max(nodeSize.X, nodeSize.Y) * 0.75f + 8f * uiScale;
-
-                        drawList.ChannelsSetCurrent(ChannelDots);
-                        drawList.AddCircleFilled(nodeCenter, radius, ImGuiHelper.Color(previewFill), 32);
-                        drawList.AddCircle(nodeCenter, radius, ImGuiHelper.Color(previewColor), 32, MathF.Max(2f, 2.5f * uiScale));
-
-                        drawList.ChannelsSetCurrent(ChannelLabels);
-                        var markMin = bgPos - new Vector2(4f, 4f) * uiScale;
-                        var markMax = bgPos + bgSize + new Vector2(4f, 4f) * uiScale;
-                        drawList.AddRect(markMin, markMax, ImGuiHelper.Color(previewColor),
-                            rounding + 4f * uiScale, ImDrawFlags.RoundCornersAll, MathF.Max(2f, 2f * uiScale));
-                    }
-
                     drawList.AddRectFilled(bgPos, bgPos + bgSize, ImGuiHelper.Color(backgroundColor), rounding);
                     drawList.AddText(drawPosition, ImGuiHelper.Color(fontColor), mapName);
 
-                    if (previewCandidate)
-                    {
-                        var reason = string.IsNullOrWhiteSpace(previewInfo.Reason)
-                            ? string.Empty
-                            : " " + previewInfo.Reason;
-                        var tag = previewInfo.ContentCount > 0
-                            ? $"PREVIEW{reason} {previewInfo.ContentCount}"
-                            : $"PREVIEW{reason}";
-                        var tagSize = ImGui.CalcTextSize(tag);
-                        var tagPad = new Vector2(5f, 1.5f) * uiScale;
-                        var tagBox = tagSize + tagPad * 2f;
-                        var tagMin = new Vector2(rectCenter.X - tagBox.X * 0.5f, bgPos.Y - tagBox.Y - 3f * uiScale);
-                        drawList.AddRectFilled(tagMin, tagMin + tagBox,
-                            ImGuiHelper.Color(new Vector4(0.1f, 0.07f, 0.01f, 0.9f)), 3f * uiScale);
-                        drawList.AddText(tagMin + tagPad, ImGuiHelper.Color(new Vector4(1f, 0.85f, 0.22f, 1f)), tag);
-                    }
-
                     // DEBUG/RE: node child-index badge, sitting to the LEFT of the name and vertically
                     // centered against it, so a node called out by number is easy to find on-screen.
-                    if (Settings.ShowNodeIndex)
+                    if (Settings.ShowNodeIndex && !ritualShowAll)
                     {
                         string idxLabel = nd.ChildIndex.ToString(CultureInfo.InvariantCulture);
                         var idxSize = ImGui.CalcTextSize(idxLabel);
@@ -1297,12 +1498,43 @@ namespace Atlas
                         drawList.AddText(idxMin + ipad, ImGuiHelper.Color(new Vector4(0.55f, 0.85f, 1f, 1f)), idxLabel);
                     }
 
+                    // Map rating (0 normal … 10 terrible) as a colored number pill to the RIGHT of
+                    // the map name, vertically centered on the label box. Green→yellow→red gradient.
+                    if (Settings.ShowMapRating && nd.Rating >= 0 && !ritualShowAll)
+                    {
+                        string rl = nd.Rating.ToString(CultureInfo.InvariantCulture);
+                        float pillH = 18f * uiScale;
+                        var rlSize = ImGui.CalcTextSize(rl);
+                        float pillW = MathF.Max(pillH, rlSize.X + 8f * uiScale);
+                        var rBg = RatingColor(nd.Rating);
+                        if (completed)
+                            rBg.W *= 0.4f;
+                        DrawPill(drawList, rl,
+                            bgPos.X + bgSize.X + (4f * uiScale) + pillW * 0.5f,
+                            rectCenter.Y - pillH * 0.5f,
+                            rBg, RatingTextColor(rBg), uiScale);
+                    }
+
+                    // Predicted Rite mod of a next-candidate node, BELOW the map name — shown BEFORE
+                    // it is committed (the game only reveals it on click). Green to set it apart from
+                    // the game's own (blue) committed-node mods above.
+                    if (ritualCand && !string.IsNullOrEmpty(ritualPredText))
+                    {
+                        var pmSize = ImGui.CalcTextSize(ritualPredText);
+                        var pmPad = new Vector2(4, 2) * uiScale;
+                        var pmPos = new Vector2(rectCenter.X - pmSize.X * 0.5f,
+                            bgPos.Y + bgSize.Y + 3f * uiScale + pmPad.Y);
+                        drawList.AddRectFilled(pmPos - pmPad, pmPos + pmSize + pmPad,
+                            ImGuiHelper.Color(new Vector4(0.02f, 0.10f, 0.03f, 0.88f)), rounding);
+                        drawList.AddText(pmPos, ImGuiHelper.Color(new Vector4(0.45f, 1f, 0.55f, 1f)), ritualPredText);
+                    }
+
                     // Per-node content shown ABOVE the map name. Two disjoint sources merge into one
                     // name list: the token vector (element+0x350, class-1: atlas/tower content) and the
                     // badge ids (badge+0x188, class-2: boss/corruption/unique). Each name draws as its
                     // in-game icon when available, else as a text chip. See re-findings §2.10.3.
                     if ((Settings.ShowContentTokens || Settings.ShowContentIcons)
-                        && nd.ContentNames is { Length: > 0 })
+                        && !ritualShowAll && nd.ContentNames is { Length: > 0 })
                     {
                         // Suppress our (duplicate) icon where the game already renders the node's native
                         // icon (IsVisible bit 0x800 set), show it only where the game isn't (fog/off-screen).
@@ -1359,6 +1591,11 @@ namespace Atlas
                     }
                 }
 
+                // Selected "Head of the King Rewards" chains: ray to each chain's start + highlighted
+                // route with per-node reward labels.
+                if (wantPlanner)
+                    this.DrawPlannerOverlay(drawList, playerLocation, uiScale);
+
                 // "You are here" marker dot (context only — not the route start).
                 if (wantRoute && markerFound)
                 {
@@ -1370,9 +1607,6 @@ namespace Atlas
 
                 drawList.ChannelsMerge();
             }
-
-            if (Settings.DrawLogbookPreviewUiChanges)
-                DrawLogbookUiChanges(ImGui.GetForegroundDrawList(), DateTime.UtcNow);
 
             // Tooltip for the content marker under the cursor — drawn after the FontScaleScope so the
             // text is normal-sized. ImGui tooltip windows render above the background draw list.
@@ -1389,6 +1623,11 @@ namespace Atlas
                 }
                 ImGui.EndTooltip();
             }
+
+            // "Head of the King Rewards" planner window — after the FontScaleScope so its text stays
+            // normal-sized regardless of the overlay label scale.
+            if (wantPlanner)
+                this.DrawPlannerWindow();
         }
 
         // Rebuild the per-node static-data cache (map id / biome / state / content names). This is
@@ -1402,11 +1641,119 @@ namespace Atlas
         // is stripped (AtlasMaps absent/empty) and we read the nodes ourselves. Access is via
         // reflection so a single plugin binary loads on both builds (the AtlasMapNode type does not
         // exist on the fork, so a compile-time reference would break loading there).
+        // The exact node-eligibility test the game's ritual reach check applies (see the
+        // NodeDatRowPtrOffset comment): special-category maps (uniques, towers, hideouts,
+        // citadels, league bosses, quest nodes…) can never carry the line. Reading it here
+        // (2 reads/node, cache-refresh cadence, ritual toggles only) replaced the maps.json
+        // tag heuristic, which missed citadels/bosses and let the planner draw routes whose
+        // completion ran through them — routes the game then refused.
+        private static bool IsRitualSpecialNode(IntPtr addr)
+        {
+            if (addr == IntPtr.Zero)
+                return true;
+            var row = Read<IntPtr>(IntPtr.Add(addr, NodeDatRowPtrOffset));
+            return row == IntPtr.Zero
+                || Read<int>(IntPtr.Add(row, DatRowSpecialCategoryOffset)) != 0;
+        }
+
+        // "Show Ritual mods (on hover)" (ShowRitualPrediction) also owns the committed-node blue
+        // mod display (the old standalone Show-Ritual-mods toggle was folded into it); the planner
+        // needs the same node data.
+        private bool RitualFeaturesOn => Settings.ShowRitualPrediction || Settings.ShowRitualPlanner;
+
         private void RefreshNodeCache(UiElement atlasUi, int atlasCount)
         {
             if (this.TryRefreshNodeCacheFromCore(atlasCount))
+                this.AppendMistNodesMissedByCore(atlasUi, atlasCount);
+            else
+                this.RefreshNodeCacheSelf(atlasUi, atlasCount);
+            this.RefreshShipCache(atlasUi, atlasCount);
+        }
+
+        // Merge in the mist-shrouded map nodes (fp 0x442EF3) that upstream core's fp filter drops
+        // from AtlasMaps (see AtlasMistNodeFp). Self-read (RefreshNodeCacheSelf) loads every child
+        // and doesn't need this. Costs one u32 read per child per cache refresh. De-duped by grid
+        // so nothing breaks if a future upstream starts including them itself.
+        private void AppendMistNodesMissedByCore(UiElement atlasUi, int atlasCount)
+        {
+            var seen = new HashSet<StdTuple2D<int>>(nodeCache.Count);
+            foreach (var nd in nodeCache)
+                seen.Add(nd.GridPosition);
+
+            for (int i = 0; i < atlasCount; i++)
+            {
+                var addr = atlasUi.GetChildAddress(i);
+                if (addr == IntPtr.Zero)
+                    continue;
+
+                uint f = Read<uint>(IntPtr.Add(addr, 0x180));
+                if ((f & ~IsVisibleMask) != (AtlasMistNodeFp & ~IsVisibleMask))
+                    continue;
+
+                var node = AtlasNode.Load(addr);
+                if (node.GridPosition.X is < -0x8000 or > 0x8000
+                    || node.GridPosition.Y is < -0x8000 or > 0x8000
+                    || !seen.Add(node.GridPosition))
+                    continue;
+
+                var nodeUi = Read<UiElement>(addr);
+                var internalId = NormalizeName(node.MapName);
+                var mapInfo = GetMapInfo(internalId);
+                var contentTokens = GetContentTokens(addr);
+                var badgeIds = GetBadgeContentIds(nodeUi);
+                var mapName = ResolveLocalizedName(internalId, mapInfo, EffectiveLanguage);
+                nodeCache.Add(new NodeData
+                {
+                    Address = addr,
+                    ChildIndex = i,
+                    InternalId = internalId,
+                    MapName = mapName,
+                    Drawable = !string.IsNullOrWhiteSpace(mapName) && IsPrintableUnicode(mapName),
+                    MapInfo = mapInfo,
+                    BiomeId = node.BiomeId,
+                    State = node.State,
+                    RawContents = GetContentName(nodeUi),
+                    ContentCount = GetContentCount(nodeUi),
+                    ContentTokens = contentTokens,
+                    BadgeContentIds = badgeIds,
+                    ContentNames = BuildContentNames(contentTokens, badgeIds, internalId),
+                    GridPosition = node.GridPosition,
+                    Rating = GetMapRating(mapInfo),
+                    RitualSpecial = this.RitualFeaturesOn && IsRitualSpecialNode(addr),
+                });
+            }
+        }
+
+        // Scan the atlas children for Uncharted Waters ship buttons. Runs on the node-cache
+        // interval and only while the leyline overlay is on (one extra int read per child).
+        // A chunk spawns up to 4 edge buttons; all chart the same chunk, so duplicates are
+        // fine here — the draw pass keeps one per chunk.
+        private void RefreshShipCache(UiElement atlasUi, int atlasCount)
+        {
+            shipCache.Clear();
+            if (!Settings.ShowUnchartedLeylines && !Settings.ShowShipsInFog)
                 return;
-            this.RefreshNodeCacheSelf(atlasUi, atlasCount);
+
+            for (int i = 0; i < atlasCount; i++)
+            {
+                var addr = atlasUi.GetChildAddress(i);
+                if (addr == IntPtr.Zero)
+                    continue;
+
+                // Cheap discriminator first: map nodes keep zeros at +0x338, the other button
+                // kinds (Breach 0 / Forest 1 / Tower 3) fail the exact Ocean row-index check.
+                if (Read<int>(IntPtr.Add(addr, RegionButtonRowIndexOffset)) != RegionButtonOceanRow)
+                    continue;
+                if (Read<IntPtr>(IntPtr.Add(addr, RegionButtonRowPtrOffset)) == IntPtr.Zero)
+                    continue;
+
+                int bx = Read<int>(IntPtr.Add(addr, RegionButtonGridOffset));
+                int by = Read<int>(IntPtr.Add(addr, RegionButtonGridOffset + 4));
+                if (bx is < -0x80000 or > 0x80000 || by is < -0x80000 or > 0x80000)
+                    continue;
+
+                shipCache.Add((addr, bx, by, bx >> 4, by >> 4)); // arithmetic >> floors negatives too
+            }
         }
 
         private void RefreshNodeCacheSelf(UiElement atlasUi, int atlasCount)
@@ -1439,7 +1786,7 @@ namespace Atlas
                 var mapInfo = GetMapInfo(internalId);
                 var contentTokens = GetContentTokens(addr);
                 var badgeIds = GetBadgeContentIds(nodeUi);
-                var mapName = ResolveLocalizedName(internalId, mapInfo, Settings.Language);
+                var mapName = ResolveLocalizedName(internalId, mapInfo, EffectiveLanguage);
                 nodeCache.Add(new NodeData
                 {
                     Address = addr,
@@ -1456,6 +1803,8 @@ namespace Atlas
                     BadgeContentIds = badgeIds,
                     ContentNames = BuildContentNames(contentTokens, badgeIds, internalId),
                     GridPosition = node.GridPosition,
+                    Rating = GetMapRating(mapInfo),
+                    RitualSpecial = this.RitualFeaturesOn && IsRitualSpecialNode(addr),
                 });
             }
             cachedAtlasCount = atlasCount;
@@ -1505,10 +1854,11 @@ namespace Atlas
                     var mapInfo = GetMapInfo(internalId);
                     var tokens = ToUintArray(nTokens?.GetValue(map));
                     var badgeIds = ToUintArray(nBadgeIds?.GetValue(map));
-                    var mapName = ResolveLocalizedName(internalId, mapInfo, Settings.Language);
+                    var mapName = ResolveLocalizedName(internalId, mapInfo, EffectiveLanguage);
+                    var nodeAddr = (IntPtr)(nAddress.GetValue(map) ?? IntPtr.Zero);
                     newCache.Add(new NodeData
                     {
-                        Address = (IntPtr)(nAddress.GetValue(map) ?? IntPtr.Zero),
+                        Address = nodeAddr,
                         ChildIndex = (int)(nIndex.GetValue(map) ?? 0),
                         InternalId = internalId,
                         MapName = mapName,
@@ -1522,6 +1872,8 @@ namespace Atlas
                         BadgeContentIds = badgeIds,
                         ContentNames = BuildContentNames(tokens, badgeIds, internalId),
                         GridPosition = (StdTuple2D<int>)(nGrid.GetValue(map) ?? default(StdTuple2D<int>)),
+                        Rating = GetMapRating(mapInfo),
+                        RitualSpecial = this.RitualFeaturesOn && IsRitualSpecialNode(nodeAddr),
                     });
                 }
 
@@ -1589,1297 +1941,6 @@ namespace Atlas
             _ => AtlasNodeState.None,
         };
 
-        private void ResetLogbookPreviewWatch()
-        {
-            logbookWatchLastSnapshot = null;
-            logbookWatchLastSampleUtc = DateTime.MinValue;
-            logbookWatchPath = string.Empty;
-            logbookWatchSeq = 0;
-            logbookPreviewCandidates.Clear();
-            ResetLogbookUiScan();
-        }
-
-        private void ResetLogbookUiScan()
-        {
-            logbookUiLastSnapshot = null;
-            logbookUiLastSampleUtc = DateTime.MinValue;
-            logbookUiScanPath = string.Empty;
-            logbookUiScanSeq = 0;
-            logbookHoverPanelSignature = string.Empty;
-            logbookUiChanges.Clear();
-            logbookUiMouseHits.Clear();
-            logbookLastUseIconAnchor = null;
-        }
-
-        private string LogbookWatchDirectory => Path.Join(DllDirectory, "logs");
-
-        private void OpenLogbookPreviewWatchFolder()
-        {
-            try
-            {
-                Directory.CreateDirectory(LogbookWatchDirectory);
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = LogbookWatchDirectory,
-                    UseShellExecute = true,
-                });
-            }
-            catch
-            {
-                // Debug convenience only; never let it affect overlay operation.
-            }
-        }
-
-        private void UpdateLogbookPreviewWatch(IntPtr atlasPanelAddr)
-        {
-            try
-            {
-                var now = DateTime.UtcNow;
-                var writeLog = Settings.LogbookPreviewWatch;
-                var pollMs = Math.Clamp(Settings.LogbookPreviewPollMs, 50, 5000);
-                if ((now - logbookWatchLastSampleUtc).TotalMilliseconds < pollMs)
-                    return;
-
-                logbookWatchLastSampleUtc = now;
-                if (writeLog)
-                    EnsureLogbookPreviewWatchFile();
-                var snapshot = BuildLogbookWatchSnapshot(atlasPanelAddr);
-                if (logbookWatchLastSnapshot == null)
-                {
-                    if (writeLog)
-                        AppendLogbookWatchBlock("baseline", DescribeLogbookSnapshot(snapshot));
-                    logbookWatchLastSnapshot = snapshot;
-                    return;
-                }
-
-                UpdateLogbookPreviewCandidates(logbookWatchLastSnapshot, snapshot, now);
-                var diff = DescribeLogbookSnapshotDiff(logbookWatchLastSnapshot, snapshot);
-                if (diff.Count > 0)
-                {
-                    AppendCurrentLogbookHoverPanelState(diff, "hover panel state at node delta");
-                    if (writeLog)
-                        AppendLogbookWatchBlock("delta", diff);
-                    logbookWatchLastSnapshot = snapshot;
-                }
-            }
-            catch (Exception ex)
-            {
-                if (Settings.LogbookPreviewWatch)
-                {
-                    try
-                    {
-                        EnsureLogbookPreviewWatchFile();
-                        AppendLogbookWatchBlock("error", [$"{ex.GetType().Name}: {ex.Message}"]);
-                    }
-                    catch
-                    {
-                        // Read-only research helper: do not destabilize the overlay.
-                    }
-                }
-            }
-        }
-
-        private void UpdateLogbookUiScan(IntPtr atlasPanelAddr)
-        {
-            try
-            {
-                var now = DateTime.UtcNow;
-                var pollMs = Math.Clamp(Settings.LogbookPreviewPollMs, 50, 5000);
-                if ((now - logbookUiLastSampleUtc).TotalMilliseconds < pollMs)
-                    return;
-
-                logbookUiLastSampleUtc = now;
-                var root = FindLogbookUiScanRoot(atlasPanelAddr);
-                if (root == IntPtr.Zero)
-                    return;
-
-                EnsureLogbookUiScanFile();
-                var snapshot = BuildLogbookUiSnapshot(root, atlasPanelAddr, Math.Clamp(Settings.LogbookPreviewUiScanDepth, 2, 8));
-                logbookUiMouseHits.Clear();
-                foreach (var hit in snapshot.MouseHits)
-                    logbookUiMouseHits[hit.Address] = hit;
-
-                if (Settings.LogbookHoverPanelProbe)
-                {
-                    var hoverPanelState = DescribeLogbookHoverPanelState(snapshot);
-                    if (hoverPanelState.Count > 0)
-                    {
-                        var signature = string.Join("\n", hoverPanelState);
-                        if (!string.Equals(signature, logbookHoverPanelSignature, StringComparison.Ordinal))
-                        {
-                            AppendLogbookUiScanBlock("hover panel/use-icon state", hoverPanelState);
-                            logbookHoverPanelSignature = signature;
-                        }
-                    }
-                }
-
-                if (!Settings.LogbookPreviewUiScan)
-                {
-                    logbookUiLastSnapshot = snapshot;
-                    PurgeExpiredLogbookUiChanges(now);
-                    return;
-                }
-
-                if (logbookUiLastSnapshot == null)
-                {
-                    AppendLogbookUiScanBlock("baseline", DescribeLogbookUiSnapshot(snapshot));
-                    logbookUiLastSnapshot = snapshot;
-                    return;
-                }
-
-                var diff = DescribeLogbookUiDiff(logbookUiLastSnapshot, snapshot, now);
-                if (diff.Count > 0)
-                {
-                    AppendLogbookUiScanBlock("delta", diff);
-                    logbookUiLastSnapshot = snapshot;
-                }
-
-                PurgeExpiredLogbookUiChanges(now);
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    EnsureLogbookUiScanFile();
-                    AppendLogbookUiScanBlock("error", [$"{ex.GetType().Name}: {ex.Message}"]);
-                }
-                catch
-                {
-                    // RE helper only.
-                }
-            }
-        }
-
-        private void EnsureLogbookUiScanFile()
-        {
-            if (!string.IsNullOrWhiteSpace(logbookUiScanPath))
-                return;
-
-            Directory.CreateDirectory(LogbookWatchDirectory);
-            logbookUiScanPath = Path.Join(LogbookWatchDirectory, $"atlas-logbook-ui-scan-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-            File.AppendAllLines(logbookUiScanPath, new[]
-            {
-                "Atlas Logbook Preview UI Scan",
-                "=============================",
-                "Steps: reset scan, keep cursor off the logbook use icon for baseline, then hover/select the icon.",
-                "This log focuses on the hovered Uncharted Waters panel/use-icon state and its readable UI text.",
-                string.Empty,
-            });
-        }
-
-        private void AppendLogbookUiScanBlock(string title, IReadOnlyList<string> lines)
-        {
-            if (string.IsNullOrWhiteSpace(logbookUiScanPath))
-                return;
-
-            var output = new List<string>(lines.Count + 4)
-            {
-                $"[{++logbookUiScanSeq:0000}] {DateTime.Now:HH:mm:ss.fff} {title}",
-            };
-            output.AddRange(lines);
-            output.Add(string.Empty);
-            File.AppendAllLines(logbookUiScanPath, output);
-        }
-
-        private static IntPtr FindLogbookUiScanRoot(IntPtr atlasPanelAddr)
-        {
-            // atlasPanelAddr is the node-list container. Climb to the highest valid parent so
-            // sibling widgets, including the left-side Uncharted Waters panel, are included.
-            var current = atlasPanelAddr;
-            var lastValid = atlasPanelAddr;
-            for (int i = 0; i < 12 && current != IntPtr.Zero; i++)
-            {
-                var ub = Read<UiElementBaseOffset>(current);
-                if (ub.ParentPtr == IntPtr.Zero)
-                    break;
-                lastValid = ub.ParentPtr;
-                current = ub.ParentPtr;
-            }
-
-            return lastValid;
-        }
-
-        private static IntPtr ClimbUiParents(IntPtr addr, int hops)
-        {
-            var current = addr;
-            for (int i = 0; i < hops && current != IntPtr.Zero; i++)
-            {
-                var ub = Read<UiElementBaseOffset>(current);
-                current = ub.ParentPtr;
-            }
-            return current;
-        }
-
-        private LogbookUiSnapshot BuildLogbookUiSnapshot(IntPtr rootAddr, IntPtr skipSubtreeAddr, int maxDepth)
-        {
-            var entries = new Dictionary<IntPtr, LogbookUiEntry>();
-            var mouseHits = new List<LogbookUiEntry>();
-            var mousePos = ImGui.GetMousePos();
-            AddLogbookUiEntries(rootAddr, skipSubtreeAddr, "root", 0, maxDepth, entries, mouseHits, mousePos);
-            return new LogbookUiSnapshot
-            {
-                Entries = entries,
-                MouseHits = mouseHits
-                    .OrderBy(e => e.Size.X * e.Size.Y)
-                    .ThenByDescending(e => e.Path.Length)
-                    .Take(5)
-                    .ToList(),
-                MousePos = mousePos,
-            };
-        }
-
-        private void AddLogbookUiEntries(
-            IntPtr addr,
-            IntPtr skipSubtreeAddr,
-            string path,
-            int depth,
-            int maxDepth,
-            Dictionary<IntPtr, LogbookUiEntry> entries,
-            List<LogbookUiEntry> mouseHits,
-            Vector2 mousePos)
-        {
-            if (addr == IntPtr.Zero || addr == skipSubtreeAddr || entries.Count >= 3000)
-                return;
-
-            var ui = Read<UiElement>(addr);
-            var ub = ui.UiElementBase;
-            var fp = ub.Flags & ~IsVisibleMask;
-            var childCount = ui.Length;
-            var isVisible = (ub.Flags & IsVisibleMask) != 0;
-
-            if (isVisible && fp != AtlasMapNodeFp)
-            {
-                var scale = ComputeScalePair(in ub);
-                var topLeft = GetFinalTopLeft(in ub);
-                var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
-                if (size.X >= 2f && size.Y >= 2f)
-                {
-                    var entry = new LogbookUiEntry
-                    {
-                        Address = addr,
-                        Path = path,
-                        Flags = ub.Flags,
-                        Fingerprint = fp,
-                        ChildCount = childCount,
-                        TopLeft = topLeft,
-                        Size = size,
-                        BackgroundColor = ub.BackgroundColor,
-                        Text = ReadUiElementText(addr),
-                    };
-                    if (IsReasonableUiScanEntry(entry))
-                        entries[addr] = entry;
-                    if (ContainsPoint(entry, mousePos))
-                        mouseHits.Add(entry);
-                }
-            }
-
-            if (depth >= maxDepth || childCount <= 0 || childCount > 2000)
-                return;
-
-            for (int i = 0; i < childCount && entries.Count < 3000; i++)
-            {
-                var childAddr = ui.GetChildAddress(i);
-                if (childAddr == IntPtr.Zero)
-                    continue;
-                AddLogbookUiEntries(childAddr, skipSubtreeAddr, $"{path}/{i}", depth + 1, maxDepth, entries, mouseHits, mousePos);
-            }
-        }
-
-        private static bool IsReasonableUiScanEntry(LogbookUiEntry entry)
-        {
-            if (entry.Size.X < 2f || entry.Size.Y < 2f)
-                return false;
-            if (entry.Size.X > 2600f || entry.Size.Y > 1800f)
-                return true;
-            return entry.TopLeft.X > -200f && entry.TopLeft.Y > -200f && entry.TopLeft.X < 2600f && entry.TopLeft.Y < 1800f;
-        }
-
-        private static bool ContainsPoint(LogbookUiEntry entry, Vector2 point) =>
-            point.X >= entry.TopLeft.X && point.Y >= entry.TopLeft.Y &&
-            point.X <= entry.TopLeft.X + entry.Size.X && point.Y <= entry.TopLeft.Y + entry.Size.Y;
-
-        private static List<string> DescribeLogbookUiSnapshot(LogbookUiSnapshot snapshot) =>
-        [
-            $"entries={snapshot.Entries.Count} mouse={snapshot.MousePos.X:F0},{snapshot.MousePos.Y:F0} mouseHits={snapshot.MouseHits.Count}",
-            "Mouse-hit UI entries:",
-            .. snapshot.MouseHits.Select(e => "  " + e.Compact),
-            "Sample visible UI entries:",
-            .. snapshot.Entries.Values
-                .OrderBy(e => e.Path, StringComparer.Ordinal)
-                .Take(60)
-                .Select(e => "  " + e.Compact),
-        ];
-
-        private List<string> DescribeLogbookHoverPanelState(LogbookUiSnapshot snapshot)
-        {
-            if (snapshot.MouseHits.Count == 0)
-                return [];
-
-            var lines = new List<string>
-            {
-                $"mouse={snapshot.MousePos.X:F0},{snapshot.MousePos.Y:F0} mouseHits={snapshot.MouseHits.Count}",
-            };
-
-            AppendLimited(lines, "mouse-hit UI", snapshot.MouseHits.Select(e => e.Compact), 5);
-
-            var useIcon = snapshot.MouseHits.FirstOrDefault(IsLikelyLogbookUseIcon);
-            if (useIcon != null)
-            {
-                lines.Add("focused logbook use icon:");
-                foreach (var line in DescribeFocusedLogbookUseIcon(useIcon))
-                    lines.Add("  " + line);
-                AppendLimited(lines, "nearest atlas nodes to cursor", DescribeNearestAtlasNodes(snapshot.MousePos, 12), 12);
-                return lines;
-            }
-
-            foreach (var hit in snapshot.MouseHits.Take(3))
-            {
-                lines.Add($"parent chain for 0x{hit.Address.ToInt64():X}:");
-                foreach (var parentLine in DescribeUiParentChain(hit.Address, 8))
-                    lines.Add("  " + parentLine);
-            }
-
-            var relevantText = snapshot.Entries.Values
-                .Where(e => !string.IsNullOrWhiteSpace(e.Text))
-                .Where(e => IsLikelyLogbookPanelText(e.Text) || DistanceSquaredToRect(snapshot.MousePos, e) <= 260f * 260f)
-                .OrderBy(e => DistanceSquaredToRect(snapshot.MousePos, e))
-                .ThenBy(e => e.Path, StringComparer.Ordinal)
-                .Select(e => e.Compact)
-                .ToList();
-            AppendLimited(lines, "nearby/panel text UI", relevantText, 20);
-
-            AppendLimited(lines, "nearest atlas nodes to cursor", DescribeNearestAtlasNodes(snapshot.MousePos, 8), 8);
-
-            return lines;
-        }
-
-        private static bool IsLikelyLogbookUseIcon(LogbookUiEntry entry)
-        {
-            if (entry.Fingerprint != 0x4C26F0)
-                return false;
-
-            return entry.Size.X >= 32f && entry.Size.X <= 48f &&
-                   entry.Size.Y >= 32f && entry.Size.Y <= 48f;
-        }
-
-        private IEnumerable<string> DescribeFocusedLogbookUseIcon(LogbookUiEntry useIcon)
-        {
-            yield return useIcon.Compact;
-
-            var parentAddr = Read<UiElementBaseOffset>(useIcon.Address).ParentPtr;
-            if (parentAddr == IntPtr.Zero)
-                yield break;
-
-            var parentUi = Read<UiElement>(parentAddr);
-            var childIndex = FindChildIndex(parentUi, useIcon.Address);
-            yield return $"iconParent=0x{parentAddr.ToInt64():X} childIndex={childIndex} parentChildren={parentUi.Length}";
-            RememberLogbookUseIconAnchor(useIcon, childIndex);
-
-            foreach (var line in DescribeLogbookUseIconGrid(parentUi, childIndex))
-                yield return line;
-
-            yield return "parent chain:";
-            foreach (var parentLine in DescribeUiParentChain(useIcon.Address, 8))
-                yield return "  " + parentLine;
-
-            var panelText = CollectUiSubtreeText(parentAddr, 4, 80)
-                .Where(line => !line.Contains("Waiting for player", StringComparison.OrdinalIgnoreCase))
-                .Where(line => !line.Contains("report another user", StringComparison.OrdinalIgnoreCase))
-                .Where(line => !line.Contains("Microtransactions", StringComparison.OrdinalIgnoreCase))
-                .Take(40)
-                .ToList();
-            if (panelText.Count > 0)
-            {
-                yield return "panel-local text:";
-                foreach (var line in panelText)
-                    yield return "  " + line;
-            }
-        }
-
-        private IEnumerable<string> DescribeLogbookUseIconGrid(UiElement parentUi, int hoveredChildIndex)
-        {
-            if (parentUi.Length <= 0 || parentUi.Length > 2000)
-                yield break;
-
-            var mappings = new List<LogbookUseIconNodeMapping>();
-            for (int i = 0; i < parentUi.Length; i++)
-            {
-                var child = parentUi.GetChildAddress(i);
-                if (child == IntPtr.Zero || !TryBuildLogbookUiEntry(child, $"icon[{i}]", out var entry) || !IsLikelyLogbookUseIcon(entry))
-                    continue;
-
-                var iconCenter = entry.TopLeft + entry.Size * 0.5f;
-                if (TryFindNearestAtlasNode(iconCenter, 260f, out var node, out var nodeCenter, out var distance))
-                {
-                    mappings.Add(new LogbookUseIconNodeMapping
-                    {
-                        ChildIndex = i,
-                        Icon = entry,
-                        Node = node,
-                        NodeCenter = nodeCenter,
-                        Distance = distance,
-                        HasNode = true,
-                        IsHovered = i == hoveredChildIndex,
-                    });
-                }
-                else
-                {
-                    mappings.Add(new LogbookUseIconNodeMapping
-                    {
-                        ChildIndex = i,
-                        Icon = entry,
-                        HasNode = false,
-                        IsHovered = i == hoveredChildIndex,
-                    });
-                }
-            }
-
-            if (mappings.Count == 0)
-                yield break;
-
-            var mappedCount = mappings.Count(m => m.HasNode);
-            var uniqueNodeCount = mappings
-                .Where(m => m.HasNode)
-                .Select(m => FormatGrid(m.Node.GridPosition))
-                .Distinct(StringComparer.Ordinal)
-                .Count();
-            yield return $"use icon grid mapping: icons={mappings.Count} mappedToAtlasNodes={mappedCount} uniqueNodes={uniqueNodeCount} hoveredChildIndex={hoveredChildIndex}";
-
-            var visibleMappings = hoveredChildIndex >= 0
-                ? mappings.Where(m => Math.Abs(m.ChildIndex - hoveredChildIndex) <= 12 || m.IsHovered).ToList()
-                : mappings.Take(30).ToList();
-            yield return $"near hovered icon mappings ({visibleMappings.Count} shown):";
-            foreach (var mapping in visibleMappings)
-                yield return "  " + mapping.Compact;
-
-            var duplicateNodes = mappings
-                .Where(m => m.HasNode)
-                .GroupBy(m => FormatGrid(m.Node.GridPosition), StringComparer.Ordinal)
-                .Where(g => g.Count() > 1)
-                .OrderByDescending(g => g.Count())
-                .ThenBy(g => g.Key, StringComparer.Ordinal)
-                .Take(12)
-                .ToList();
-            if (duplicateNodes.Count > 0)
-            {
-                yield return "nodes with multiple use icons:";
-                foreach (var group in duplicateNodes)
-                {
-                    var first = group.First();
-                    yield return $"  grid={group.Key} '{first.Node.MapName}' iconChildren={string.Join(",", group.Select(m => m.ChildIndex).OrderBy(x => x))}";
-                }
-            }
-        }
-
-        private void RememberLogbookUseIconAnchor(LogbookUiEntry useIcon, int childIndex)
-        {
-            var iconCenter = useIcon.TopLeft + useIcon.Size * 0.5f;
-            if (TryFindNearestAtlasNode(iconCenter, 260f, out var node, out var nodeCenter, out var distance))
-            {
-                logbookLastUseIconAnchor = new LogbookUseIconAnchor
-                {
-                    SeenUtc = DateTime.UtcNow,
-                    ChildIndex = childIndex,
-                    IconCenter = iconCenter,
-                    HasNode = true,
-                    Grid = node.GridPosition,
-                    MapName = node.MapName ?? string.Empty,
-                    InternalId = node.InternalId ?? string.Empty,
-                    State = node.State.ToString(),
-                    NodeCenter = nodeCenter,
-                    Distance = distance,
-                };
-                return;
-            }
-
-            logbookLastUseIconAnchor = new LogbookUseIconAnchor
-            {
-                SeenUtc = DateTime.UtcNow,
-                ChildIndex = childIndex,
-                IconCenter = iconCenter,
-                HasNode = false,
-            };
-        }
-
-        private static int FindChildIndex(UiElement parentUi, IntPtr childAddr)
-        {
-            var count = parentUi.Length;
-            if (count <= 0 || count > 2000)
-                return -1;
-
-            for (int i = 0; i < count; i++)
-            {
-                if (parentUi.GetChildAddress(i) == childAddr)
-                    return i;
-            }
-
-            return -1;
-        }
-
-        private static IEnumerable<string> CollectUiSubtreeText(IntPtr rootAddr, int maxDepth, int maxCount)
-        {
-            var emitted = 0;
-            foreach (var line in CollectUiSubtreeTextImpl(rootAddr, "panel", 0, maxDepth))
-            {
-                yield return line;
-                if (++emitted >= maxCount)
-                    yield break;
-            }
-        }
-
-        private static IEnumerable<string> CollectUiSubtreeTextImpl(IntPtr addr, string path, int depth, int maxDepth)
-        {
-            if (addr == IntPtr.Zero || depth > maxDepth)
-                yield break;
-
-            var ui = Read<UiElement>(addr);
-            var ub = ui.UiElementBase;
-            var isVisible = (ub.Flags & IsVisibleMask) != 0;
-            if (!isVisible)
-                yield break;
-
-            var text = ReadUiElementText(addr);
-            if (!string.IsNullOrWhiteSpace(text))
-                yield return DescribeUiElementAt(addr, path);
-
-            var count = ui.Length;
-            if (depth >= maxDepth || count <= 0 || count > 2000)
-                yield break;
-
-            for (int i = 0; i < count; i++)
-            {
-                var child = ui.GetChildAddress(i);
-                foreach (var line in CollectUiSubtreeTextImpl(child, $"{path}/{i}", depth + 1, maxDepth))
-                    yield return line;
-            }
-        }
-
-        private static IEnumerable<string> DescribeNearbyWStringFields(IntPtr addr, string label)
-        {
-            for (int offset = 0; offset <= 0x700; offset += 8)
-            {
-                var text = ReadStdWString(Read<StdWString>(addr + offset));
-                if (string.IsNullOrWhiteSpace(text))
-                    continue;
-
-                if (text.Length <= 1 && char.IsDigit(text[0]))
-                    continue;
-
-                yield return $"{label}+0x{offset:X3}: \"{TrimUiText(text, 160)}\"";
-            }
-        }
-
-        private void AppendCurrentLogbookHoverPanelState(List<string> lines, string label)
-        {
-            if (logbookUiLastSnapshot == null)
-                return;
-
-            var hoverPanelState = DescribeLogbookHoverPanelState(logbookUiLastSnapshot);
-            if (hoverPanelState.Count == 0)
-                return;
-
-            lines.Add(label + ":");
-            foreach (var line in hoverPanelState.Take(80))
-                lines.Add("  " + line);
-            if (hoverPanelState.Count > 80)
-                lines.Add($"  ... {hoverPanelState.Count - 80} more hover panel line(s)");
-        }
-
-        private static IEnumerable<string> DescribeUiParentChain(IntPtr addr, int maxHops)
-        {
-            var current = addr;
-            for (int i = 0; i < maxHops && current != IntPtr.Zero; i++)
-            {
-                yield return DescribeUiElementAt(current, $"parent[{i}]");
-                var ub = Read<UiElementBaseOffset>(current);
-                current = ub.ParentPtr;
-            }
-        }
-
-        private static string DescribeUiElementAt(IntPtr addr, string path)
-        {
-            var ui = Read<UiElement>(addr);
-            var ub = ui.UiElementBase;
-            var scale = ComputeScalePair(in ub);
-            var topLeft = GetFinalTopLeft(in ub);
-            var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
-            var text = ReadUiElementText(addr);
-            var fp = ub.Flags & ~IsVisibleMask;
-
-            return $"{path} addr=0x{addr.ToInt64():X} fp=0x{fp:X6} flags=0x{ub.Flags:X8} children={ui.Length} rect={topLeft.X:F0},{topLeft.Y:F0} {size.X:F0}x{size.Y:F0} bg=0x{ub.BackgroundColor:X8}{FormatUiText(text)}";
-        }
-
-        private static bool TryBuildLogbookUiEntry(IntPtr addr, string path, out LogbookUiEntry entry)
-        {
-            entry = null;
-            if (addr == IntPtr.Zero)
-                return false;
-
-            var ui = Read<UiElement>(addr);
-            var ub = ui.UiElementBase;
-            var fp = ub.Flags & ~IsVisibleMask;
-            var isVisible = (ub.Flags & IsVisibleMask) != 0;
-            if (!isVisible)
-                return false;
-
-            var scale = ComputeScalePair(in ub);
-            var topLeft = GetFinalTopLeft(in ub);
-            var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
-            entry = new LogbookUiEntry
-            {
-                Address = addr,
-                Path = path,
-                Flags = ub.Flags,
-                Fingerprint = fp,
-                ChildCount = ui.Length,
-                TopLeft = topLeft,
-                Size = size,
-                BackgroundColor = ub.BackgroundColor,
-                Text = ReadUiElementText(addr),
-            };
-            return IsReasonableUiScanEntry(entry);
-        }
-
-        private IEnumerable<string> DescribeNearestAtlasNodes(Vector2 point, int limit)
-        {
-            return nodeCache
-                .Where(n => n.Drawable)
-                .Select(n =>
-                {
-                    var ub = Read<UiElementBaseOffset>(n.Address);
-                    var scale = ComputeScalePair(in ub);
-                    var topLeft = GetLeafTopLeft(in ub);
-                    var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
-                    var center = topLeft + size * 0.5f;
-                    return (Node: n, Center: center, Dist2: Vector2.DistanceSquared(point, center));
-                })
-                .Where(x => x.Dist2 <= 900f * 900f)
-                .OrderBy(x => x.Dist2)
-                .Take(limit)
-                .Select(x => $"grid={FormatGrid(x.Node.GridPosition)} idx={x.Node.ChildIndex} '{x.Node.MapName}' id='{x.Node.InternalId}' state={x.Node.State} screen={x.Center.X:F0},{x.Center.Y:F0} dist={MathF.Sqrt(x.Dist2):F0}");
-        }
-
-        private bool TryFindNearestAtlasNode(Vector2 point, float maxDistance, out NodeData node, out Vector2 center, out float distance)
-        {
-            var nearest = nodeCache
-                .Where(n => n.Drawable)
-                .Select(n =>
-                {
-                    var ub = Read<UiElementBaseOffset>(n.Address);
-                    var scale = ComputeScalePair(in ub);
-                    var topLeft = GetLeafTopLeft(in ub);
-                    var size = new Vector2(ub.UnscaledSize.X * scale.X, ub.UnscaledSize.Y * scale.Y);
-                    var nodeCenter = topLeft + size * 0.5f;
-                    return (Node: n, Center: nodeCenter, Dist2: Vector2.DistanceSquared(point, nodeCenter));
-                })
-                .Where(x => x.Dist2 <= maxDistance * maxDistance)
-                .OrderBy(x => x.Dist2)
-                .FirstOrDefault();
-
-            if (nearest.Node.Address == IntPtr.Zero)
-            {
-                node = default;
-                center = default;
-                distance = 0f;
-                return false;
-            }
-
-            node = nearest.Node;
-            center = nearest.Center;
-            distance = MathF.Sqrt(nearest.Dist2);
-            return true;
-        }
-
-        private static float DistanceSquaredToRect(Vector2 point, LogbookUiEntry entry)
-        {
-            var min = entry.TopLeft;
-            var max = entry.TopLeft + entry.Size;
-            var dx = point.X < min.X ? min.X - point.X : point.X > max.X ? point.X - max.X : 0f;
-            var dy = point.Y < min.Y ? min.Y - point.Y : point.Y > max.Y ? point.Y - max.Y : 0f;
-            return dx * dx + dy * dy;
-        }
-
-        private static bool IsLikelyLogbookPanelText(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return false;
-
-            return text.Contains("logbook", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("uncharted", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("waters", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("consumes", StringComparison.OrdinalIgnoreCase)
-                || text.Contains("island rumours", StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static string ReadUiElementText(IntPtr uiElementAddr) =>
-            ReadStdWString(Read<StdWString>(uiElementAddr + UiElementTextOffset));
-
-        private static string ReadStdWString(in StdWString ws)
-        {
-            const int MaxAllowed = 512;
-            if (ws.Length <= 0 || ws.Length > MaxAllowed || ws.Capacity <= 0 || ws.Capacity > MaxAllowed)
-                return string.Empty;
-
-            try
-            {
-                string text;
-                if (ws.Capacity <= 8)
-                {
-                    var buffer = new byte[16];
-                    BitConverter.GetBytes(ws.Buffer.ToInt64()).CopyTo(buffer, 0);
-                    BitConverter.GetBytes(ws.ReservedBytes.ToInt64()).CopyTo(buffer, 8);
-                    text = Encoding.Unicode.GetString(buffer);
-                }
-                else
-                {
-                    text = ReadWideString(ws.Buffer, ws.Length);
-                }
-
-                if (string.IsNullOrEmpty(text))
-                    return string.Empty;
-
-                text = text.Split('\0')[0];
-                if (text.Length > ws.Length)
-                    text = text[..ws.Length];
-                return IsPrintableUnicode(text) ? text : string.Empty;
-            }
-            catch
-            {
-                return string.Empty;
-            }
-        }
-
-        private static string FormatUiText(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text))
-                return string.Empty;
-
-            text = TrimUiText(text, 120);
-            return $" text=\"{text}\"";
-        }
-
-        private static string TrimUiText(string text, int maxLength)
-        {
-            text = text.Replace("\r", " ").Replace("\n", " ").Trim();
-            if (text.Length > maxLength)
-                text = text[..maxLength] + "...";
-            return text;
-        }
-
-        private List<string> DescribeLogbookUiDiff(LogbookUiSnapshot before, LogbookUiSnapshot after, DateTime nowUtc)
-        {
-            var added = after.Entries.Keys.Except(before.Entries.Keys).Select(k => after.Entries[k]).ToList();
-            var removed = before.Entries.Keys.Except(after.Entries.Keys).Select(k => before.Entries[k]).ToList();
-            var changed = after.Entries.Keys.Intersect(before.Entries.Keys)
-                .Where(k => !string.Equals(before.Entries[k].Signature, after.Entries[k].Signature, StringComparison.Ordinal))
-                .Select(k => (Before: before.Entries[k], After: after.Entries[k]))
-                .ToList();
-            var mouseChanged = !string.Equals(before.MouseSignature, after.MouseSignature, StringComparison.Ordinal);
-
-            if (added.Count == 0 && removed.Count == 0 && changed.Count == 0 && !mouseChanged)
-                return [];
-
-            var lines = new List<string>
-            {
-                $"summary: entries {before.Entries.Count}->{after.Entries.Count}, added={added.Count}, removed={removed.Count}, changed={changed.Count}, mouseHits {before.MouseHits.Count}->{after.MouseHits.Count} at {after.MousePos.X:F0},{after.MousePos.Y:F0}",
-            };
-
-            foreach (var entry in added.Concat(changed.Select(x => x.After))
-                .Where(e => e.Size.X * e.Size.Y <= 120000f)
-                .OrderBy(e => e.Size.X * e.Size.Y)
-                .Take(12))
-                RememberLogbookUiChange(entry, nowUtc);
-
-            if (mouseChanged)
-                AppendLimited(lines, "mouse-hit UI", after.MouseHits.Select(e => e.Compact), 5);
-            AppendLimited(lines, "added UI", added.OrderBy(e => e.Path, StringComparer.Ordinal).Select(e => e.Compact), 80);
-            if (changed.Count > 0)
-            {
-                lines.Add($"changed UI ({changed.Count}):");
-                foreach (var (a, b) in changed.OrderBy(x => x.After.Path, StringComparer.Ordinal).Take(80))
-                {
-                    lines.Add("  " + b.Compact);
-                    if (a.Flags != b.Flags)
-                        lines.Add($"    flags: 0x{a.Flags:X8} -> 0x{b.Flags:X8}");
-                    if (a.ChildCount != b.ChildCount)
-                        lines.Add($"    children: {a.ChildCount} -> {b.ChildCount}");
-                    if (Vector2.DistanceSquared(a.TopLeft, b.TopLeft) > 0.25f || Vector2.DistanceSquared(a.Size, b.Size) > 0.25f)
-                        lines.Add($"    rect: {a.TopLeft.X:F0},{a.TopLeft.Y:F0} {a.Size.X:F0}x{a.Size.Y:F0} -> {b.TopLeft.X:F0},{b.TopLeft.Y:F0} {b.Size.X:F0}x{b.Size.Y:F0}");
-                    if (a.BackgroundColor != b.BackgroundColor)
-                        lines.Add($"    bg: 0x{a.BackgroundColor:X8} -> 0x{b.BackgroundColor:X8}");
-                }
-                if (changed.Count > 80)
-                    lines.Add($"  ... {changed.Count - 80} more changed UI element(s)");
-            }
-            AppendLimited(lines, "removed UI", removed.OrderBy(e => e.Path, StringComparer.Ordinal).Select(e => e.Compact), 40);
-
-            return lines;
-        }
-
-        private void RememberLogbookUiChange(LogbookUiEntry entry, DateTime nowUtc)
-        {
-            logbookUiChanges[entry.Address] = new LogbookUiChange
-            {
-                Entry = entry,
-                ExpiresUtc = nowUtc + TimeSpan.FromSeconds(Math.Clamp(Settings.LogbookPreviewCandidateTtlSeconds, 5, 300)),
-            };
-        }
-
-        private int CountActiveLogbookUiChanges(DateTime nowUtc)
-        {
-            PurgeExpiredLogbookUiChanges(nowUtc);
-            return logbookUiChanges.Count;
-        }
-
-        private void PurgeExpiredLogbookUiChanges(DateTime nowUtc)
-        {
-            if (logbookUiChanges.Count == 0)
-                return;
-
-            foreach (var key in logbookUiChanges
-                .Where(kv => kv.Value.ExpiresUtc <= nowUtc)
-                .Select(kv => kv.Key)
-                .ToList())
-            {
-                logbookUiChanges.Remove(key);
-            }
-        }
-
-        private void DrawLogbookUiChanges(ImDrawListPtr drawList, DateTime nowUtc)
-        {
-            PurgeExpiredLogbookUiChanges(nowUtc);
-            foreach (var change in logbookUiChanges.Values
-                .Select(x => x.Entry)
-                .Where(e => e.Size.X * e.Size.Y <= 120000f)
-                .OrderBy(e => e.Size.X * e.Size.Y)
-                .Take(8))
-            {
-                var min = change.TopLeft;
-                var max = change.TopLeft + change.Size;
-                var color = ImGuiHelper.Color(new Vector4(1f, 0.1f, 0.85f, 0.9f));
-                drawList.AddRect(min, max, color, 0f, ImDrawFlags.None, 2.5f);
-            }
-
-            foreach (var e in logbookUiMouseHits.Values
-                .OrderBy(x => x.Size.X * x.Size.Y)
-                .Take(3))
-            {
-                var min = e.TopLeft;
-                var max = e.TopLeft + e.Size;
-                var color = ImGuiHelper.Color(new Vector4(0.1f, 0.9f, 1f, 0.95f));
-                drawList.AddRect(min, max, color, 0f, ImDrawFlags.None, 2f);
-            }
-        }
-
-        private void EnsureLogbookPreviewWatchFile()
-        {
-            if (!string.IsNullOrWhiteSpace(logbookWatchPath))
-                return;
-
-            Directory.CreateDirectory(LogbookWatchDirectory);
-            logbookWatchPath = Path.Join(LogbookWatchDirectory, $"atlas-logbook-watch-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-            File.AppendAllLines(logbookWatchPath, new[]
-            {
-                "Atlas Logbook Preview Watch",
-                "===========================",
-                "Steps: enable watch, open Atlas, capture baseline, hover/select an Expedition Logbook preview, then chart the area.",
-                "This log records read-only node/edge deltas from the live Atlas UI.",
-                string.Empty,
-            });
-        }
-
-        private void AppendLogbookWatchBlock(string title, IReadOnlyList<string> lines)
-        {
-            if (string.IsNullOrWhiteSpace(logbookWatchPath))
-                return;
-
-            var output = new List<string>(lines.Count + 4)
-            {
-                $"[{++logbookWatchSeq:0000}] {DateTime.Now:HH:mm:ss.fff} {title}",
-            };
-            output.AddRange(lines);
-            output.Add(string.Empty);
-            File.AppendAllLines(logbookWatchPath, output);
-        }
-
-        private LogbookWatchSnapshot BuildLogbookWatchSnapshot(IntPtr atlasPanelAddr)
-        {
-            var graph = BuildConnectionGraph(atlasPanelAddr);
-            var edges = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var (from, targets) in graph)
-            {
-                foreach (var to in targets)
-                    edges.Add(FormatEdge(from, to));
-            }
-
-            var nodes = new Dictionary<string, LogbookWatchNode>(StringComparer.Ordinal);
-            foreach (var nd in nodeCache)
-            {
-                var key = FormatGrid(nd.GridPosition);
-                var content = BuildLogbookContentSignature(nd);
-                nodes[key] = new LogbookWatchNode
-                {
-                    Key = key,
-                    MapName = nd.MapName ?? string.Empty,
-                    InternalId = nd.InternalId ?? string.Empty,
-                    State = nd.State.ToString(),
-                    BiomeId = nd.BiomeId,
-                    ChildIndex = nd.ChildIndex,
-                    ContentCount = nd.ContentCount,
-                    ContentSignature = content,
-                };
-            }
-
-            var sigParts = nodes.Values
-                .OrderBy(n => n.Key, StringComparer.Ordinal)
-                .Select(n => $"{n.Key}:{n.InternalId}:{n.State}:{n.BiomeId}:{n.ContentCount}:{n.ContentSignature}")
-                .Concat(edges.OrderBy(e => e, StringComparer.Ordinal).Select(e => $"edge:{e}"));
-
-            return new LogbookWatchSnapshot
-            {
-                Signature = string.Join(";", sigParts),
-                NodeCount = nodes.Count,
-                EdgeCount = edges.Count,
-                AccessibleCount = nodes.Values.Count(n => string.Equals(n.State, AtlasNodeState.AccessibleNow.ToString(), StringComparison.Ordinal)),
-                CompletedCount = nodes.Values.Count(n => string.Equals(n.State, AtlasNodeState.CompletedBase.ToString(), StringComparison.Ordinal)),
-                ContentNodeCount = nodes.Values.Count(n => n.ContentCount > 0 || !string.IsNullOrWhiteSpace(n.ContentSignature)),
-                Nodes = nodes,
-                Edges = edges,
-            };
-        }
-
-        private static List<string> DescribeLogbookSnapshot(LogbookWatchSnapshot snapshot) =>
-        [
-            $"nodes={snapshot.NodeCount} edges={snapshot.EdgeCount} accessible={snapshot.AccessibleCount} completed={snapshot.CompletedCount} contentNodes={snapshot.ContentNodeCount}",
-            "Sample nodes:",
-            .. snapshot.Nodes.Values
-                .OrderBy(n => n.Key, StringComparer.Ordinal)
-                .Take(25)
-                .Select(n => "  " + n.Compact),
-        ];
-
-        private List<string> DescribeLogbookSnapshotDiff(LogbookWatchSnapshot before, LogbookWatchSnapshot after)
-        {
-            if (string.Equals(before.Signature, after.Signature, StringComparison.Ordinal))
-                return [];
-
-            var lines = new List<string>
-            {
-                $"summary: nodes {before.NodeCount}->{after.NodeCount}, edges {before.EdgeCount}->{after.EdgeCount}, accessible {before.AccessibleCount}->{after.AccessibleCount}, completed {before.CompletedCount}->{after.CompletedCount}, contentNodes {before.ContentNodeCount}->{after.ContentNodeCount}",
-            };
-
-            var addedNodes = after.Nodes.Keys.Except(before.Nodes.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
-            var removedNodes = before.Nodes.Keys.Except(after.Nodes.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal).ToList();
-            var changedNodes = after.Nodes.Keys.Intersect(before.Nodes.Keys, StringComparer.Ordinal)
-                .Where(k => !SameLogbookNode(before.Nodes[k], after.Nodes[k]))
-                .OrderBy(k => k, StringComparer.Ordinal)
-                .ToList();
-
-            AppendLogbookConsumeCorrelation(lines, addedNodes.Select(k => after.Nodes[k]).ToList());
-            AppendLimited(lines, "added nodes", addedNodes.Select(k => after.Nodes[k].Compact), 40);
-            AppendLimited(lines, "removed nodes", removedNodes.Select(k => before.Nodes[k].Compact), 40);
-
-            if (changedNodes.Count > 0)
-            {
-                lines.Add($"changed nodes ({changedNodes.Count}):");
-                foreach (var key in changedNodes.Take(60))
-                {
-                    var a = before.Nodes[key];
-                    var b = after.Nodes[key];
-                    lines.Add($"  {key} '{b.MapName}' idx={b.ChildIndex}");
-                    AppendLogbookNodeFieldDiffs(lines, a, b);
-                }
-
-                if (changedNodes.Count > 60)
-                    lines.Add($"  ... {changedNodes.Count - 60} more changed node(s)");
-            }
-
-            var contentChangedNodes = changedNodes
-                .Select(k => (Before: before.Nodes[k], After: after.Nodes[k]))
-                .Where(x => x.Before.ContentCount != x.After.ContentCount ||
-                    !string.Equals(x.Before.ContentSignature, x.After.ContentSignature, StringComparison.Ordinal))
-                .ToList();
-
-            if (contentChangedNodes.Count > 0)
-            {
-                lines.Add($"content/preview candidates ({contentChangedNodes.Count}):");
-                var candidateKeys = contentChangedNodes.Select(x => x.After.Key).ToList();
-                var bounds = DescribeGridBounds(candidateKeys);
-                if (!string.IsNullOrWhiteSpace(bounds))
-                    lines.Add($"  bounds: {bounds}");
-
-                foreach (var (a, b) in contentChangedNodes
-                    .OrderBy(x => x.After.ChildIndex)
-                    .ThenBy(x => x.After.Key, StringComparer.Ordinal)
-                    .Take(120))
-                {
-                    lines.Add($"  {b.Key} idx={b.ChildIndex} '{b.MapName}' state={b.State} content={b.ContentCount}");
-                    AppendLogbookNodeFieldDiffs(lines, a, b, "    ");
-                }
-
-                if (contentChangedNodes.Count > 120)
-                    lines.Add($"  ... {contentChangedNodes.Count - 120} more content/preview candidate node(s)");
-            }
-
-            var addedEdges = after.Edges.Except(before.Edges, StringComparer.Ordinal).OrderBy(e => e, StringComparer.Ordinal).ToList();
-            var removedEdges = before.Edges.Except(after.Edges, StringComparer.Ordinal).OrderBy(e => e, StringComparer.Ordinal).ToList();
-            AppendLimited(lines, "added edges", addedEdges, 80);
-            AppendLimited(lines, "removed edges", removedEdges, 80);
-
-            return lines;
-        }
-
-        private void AppendLogbookConsumeCorrelation(List<string> lines, IReadOnlyList<LogbookWatchNode> addedNodes)
-        {
-            if (addedNodes.Count == 0)
-                return;
-
-            var expeditionNodes = addedNodes
-                .Where(IsLogbookRevealNode)
-                .OrderBy(n => n.Key, StringComparer.Ordinal)
-                .ToList();
-            if (expeditionNodes.Count == 0)
-                return;
-
-            lines.Add("consume correlation probe:");
-            if (logbookLastUseIconAnchor == null)
-            {
-                lines.Add("  remembered use icon: none");
-            }
-            else
-            {
-                var age = DateTime.UtcNow - logbookLastUseIconAnchor.SeenUtc;
-                lines.Add($"  remembered use icon age={age.TotalSeconds:F1}s: {logbookLastUseIconAnchor.Compact}");
-            }
-
-            AppendGridClusterSummary(lines, "  added nodes", addedNodes);
-            AppendGridClusterSummary(lines, "  added expedition/logbook nodes", expeditionNodes);
-
-            if (logbookLastUseIconAnchor?.HasNode == true)
-            {
-                var expeditionPoints = expeditionNodes
-                    .Select(n => ParseGridKey(n.Key))
-                    .Where(p => p.HasValue)
-                    .Select(p => p.Value)
-                    .ToList();
-                if (expeditionPoints.Count > 0)
-                {
-                    var centroidX = expeditionPoints.Average(p => p.X);
-                    var centroidY = expeditionPoints.Average(p => p.Y);
-                    lines.Add($"  anchor->expedition centroid delta: dx={centroidX - logbookLastUseIconAnchor.Grid.X:F1}, dy={centroidY - logbookLastUseIconAnchor.Grid.Y:F1}");
-
-                    var nearest = expeditionPoints
-                        .Select(p => (Point: p, Dist2: GridDistanceSquared(p, logbookLastUseIconAnchor.Grid)))
-                        .OrderBy(x => x.Dist2)
-                        .First();
-                    lines.Add($"  nearest added expedition node to anchor: grid={FormatGrid(nearest.Point)} gridDist={MathF.Sqrt(nearest.Dist2):F1}");
-                }
-            }
-
-            AppendLimited(lines, "  sample added expedition/logbook nodes", expeditionNodes.Select(n => n.Compact), 30);
-        }
-
-        private static bool IsLogbookRevealNode(LogbookWatchNode node) =>
-            node.InternalId.Contains("ExpeditionLogBook", StringComparison.OrdinalIgnoreCase) ||
-            node.InternalId.Contains("ExpeditionSubArea", StringComparison.OrdinalIgnoreCase) ||
-            node.ContentSignature.Contains("Grand Expedition", StringComparison.OrdinalIgnoreCase);
-
-        private static void AppendGridClusterSummary(List<string> lines, string label, IReadOnlyList<LogbookWatchNode> nodes)
-        {
-            var points = nodes
-                .Select(n => ParseGridKey(n.Key))
-                .Where(p => p.HasValue)
-                .Select(p => p.Value)
-                .ToList();
-            if (points.Count == 0)
-            {
-                lines.Add($"{label}: count={nodes.Count} no parseable grid points");
-                return;
-            }
-
-            var minX = points.Min(p => p.X);
-            var maxX = points.Max(p => p.X);
-            var minY = points.Min(p => p.Y);
-            var maxY = points.Max(p => p.Y);
-            var centroidX = points.Average(p => p.X);
-            var centroidY = points.Average(p => p.Y);
-            lines.Add($"{label}: count={nodes.Count} bounds=x {minX}..{maxX}, y {minY}..{maxY}, centroid={centroidX:F1},{centroidY:F1}");
-        }
-
-        private static float GridDistanceSquared(StdTuple2D<int> a, StdTuple2D<int> b)
-        {
-            var dx = a.X - b.X;
-            var dy = a.Y - b.Y;
-            return dx * dx + dy * dy;
-        }
-
-        private static bool SameLogbookNode(LogbookWatchNode a, LogbookWatchNode b) =>
-            string.Equals(a.MapName, b.MapName, StringComparison.Ordinal) &&
-            string.Equals(a.InternalId, b.InternalId, StringComparison.Ordinal) &&
-            string.Equals(a.State, b.State, StringComparison.Ordinal) &&
-            a.BiomeId == b.BiomeId &&
-            a.ChildIndex == b.ChildIndex &&
-            a.ContentCount == b.ContentCount &&
-            string.Equals(a.ContentSignature, b.ContentSignature, StringComparison.Ordinal);
-
-        private void UpdateLogbookPreviewCandidates(LogbookWatchSnapshot before, LogbookWatchSnapshot after, DateTime nowUtc)
-        {
-            var ttl = TimeSpan.FromSeconds(Math.Clamp(Settings.LogbookPreviewCandidateTtlSeconds, 5, 300));
-            foreach (var key in after.Nodes.Keys.Intersect(before.Nodes.Keys, StringComparer.Ordinal))
-            {
-                var a = before.Nodes[key];
-                var b = after.Nodes[key];
-                var reason = GetLogbookPreviewMutationReason(a, b);
-                if (string.IsNullOrWhiteSpace(reason))
-                    continue;
-
-                if (!logbookPreviewCandidates.TryGetValue(key, out var candidate))
-                {
-                    candidate = new LogbookPreviewCandidate { FirstSeenUtc = nowUtc };
-                    logbookPreviewCandidates[key] = candidate;
-                }
-
-                candidate.LastSeenUtc = nowUtc;
-                candidate.ExpiresUtc = nowUtc + ttl;
-                candidate.MapName = b.MapName;
-                candidate.InternalId = b.InternalId;
-                candidate.Reason = reason;
-                candidate.ContentCount = b.ContentCount;
-                candidate.ContentSignature = b.ContentSignature;
-            }
-
-            PurgeExpiredLogbookPreviewCandidates(nowUtc);
-        }
-
-        private static string GetLogbookPreviewMutationReason(LogbookWatchNode before, LogbookWatchNode after)
-        {
-            var reasons = new List<string>(4);
-            if (!string.Equals(before.InternalId, after.InternalId, StringComparison.Ordinal))
-                reasons.Add("ID");
-            else if (!string.Equals(before.MapName, after.MapName, StringComparison.Ordinal))
-                reasons.Add("NAME");
-            if (!string.Equals(before.State, after.State, StringComparison.Ordinal))
-                reasons.Add("STATE");
-            if (before.BiomeId != after.BiomeId)
-                reasons.Add("BIOME");
-            if (before.ContentCount != after.ContentCount ||
-                !string.Equals(before.ContentSignature, after.ContentSignature, StringComparison.Ordinal))
-                reasons.Add("CONTENT");
-
-            return string.Join("+", reasons);
-        }
-
-        private int CountActiveLogbookPreviewCandidates(DateTime nowUtc)
-        {
-            PurgeExpiredLogbookPreviewCandidates(nowUtc);
-            return logbookPreviewCandidates.Count;
-        }
-
-        private void PurgeExpiredLogbookPreviewCandidates(DateTime nowUtc)
-        {
-            if (logbookPreviewCandidates.Count == 0)
-                return;
-
-            foreach (var key in logbookPreviewCandidates
-                .Where(kv => kv.Value.ExpiresUtc <= nowUtc)
-                .Select(kv => kv.Key)
-                .ToList())
-            {
-                logbookPreviewCandidates.Remove(key);
-            }
-        }
-
-        private bool TryGetLogbookPreviewCandidate(StdTuple2D<int> grid, DateTime nowUtc, out LogbookPreviewCandidate candidate)
-        {
-            var key = FormatGrid(grid);
-            if (logbookPreviewCandidates.TryGetValue(key, out candidate) && candidate.ExpiresUtc > nowUtc)
-                return true;
-
-            candidate = null;
-            return false;
-        }
-
-        private static void AppendLogbookNodeFieldDiffs(List<string> lines, LogbookWatchNode a, LogbookWatchNode b, string indent = "    ")
-        {
-            if (!string.Equals(a.MapName, b.MapName, StringComparison.Ordinal))
-                lines.Add($"{indent}name: {a.MapName} -> {b.MapName}");
-            if (!string.Equals(a.InternalId, b.InternalId, StringComparison.Ordinal))
-                lines.Add($"{indent}id: {a.InternalId} -> {b.InternalId}");
-            if (!string.Equals(a.State, b.State, StringComparison.Ordinal))
-                lines.Add($"{indent}state: {a.State} -> {b.State}");
-            if (a.BiomeId != b.BiomeId)
-                lines.Add($"{indent}biome: {a.BiomeId} -> {b.BiomeId}");
-            if (a.ChildIndex != b.ChildIndex)
-                lines.Add($"{indent}childIndex: {a.ChildIndex} -> {b.ChildIndex}");
-            if (a.ContentCount != b.ContentCount)
-                lines.Add($"{indent}contentCount: {a.ContentCount} -> {b.ContentCount}");
-            if (!string.Equals(a.ContentSignature, b.ContentSignature, StringComparison.Ordinal))
-                lines.Add($"{indent}content: [{a.ContentSignature}] -> [{b.ContentSignature}]");
-        }
-
-        private static string DescribeGridBounds(IEnumerable<string> keys)
-        {
-            var points = keys
-                .Select(ParseGridKey)
-                .Where(p => p.HasValue)
-                .Select(p => p.Value)
-                .ToList();
-
-            if (points.Count == 0)
-                return string.Empty;
-
-            var minX = points.Min(p => p.X);
-            var maxX = points.Max(p => p.X);
-            var minY = points.Min(p => p.Y);
-            var maxY = points.Max(p => p.Y);
-            return $"x {minX}..{maxX}, y {minY}..{maxY}";
-        }
-
-        private static StdTuple2D<int>? ParseGridKey(string key)
-        {
-            var comma = key.IndexOf(',');
-            if (comma <= 0 || comma >= key.Length - 1)
-                return null;
-            if (!int.TryParse(key[..comma], out var x) || !int.TryParse(key[(comma + 1)..], out var y))
-                return null;
-            return new StdTuple2D<int>(x, y);
-        }
-
-        private static void AppendLimited(List<string> lines, string label, IEnumerable<string> values, int limit)
-        {
-            var list = values.ToList();
-            if (list.Count == 0)
-                return;
-
-            lines.Add($"{label} ({list.Count}):");
-            foreach (var value in list.Take(limit))
-                lines.Add("  " + value);
-            if (list.Count > limit)
-                lines.Add($"  ... {list.Count - limit} more");
-        }
-
-        private static string BuildLogbookContentSignature(in NodeData nd)
-        {
-            var parts = new List<string>();
-            if (nd.ContentNames is { Length: > 0 })
-                parts.AddRange(nd.ContentNames.Select(x => $"name:{x}"));
-            if (nd.RawContents is { Count: > 0 })
-                parts.AddRange(nd.RawContents.Select(x => $"raw:{x}"));
-            if (nd.ContentTokens is { Length: > 0 })
-                parts.AddRange(nd.ContentTokens.Select(x => $"token:0x{x:X8}"));
-            if (nd.BadgeContentIds is { Length: > 0 })
-                parts.AddRange(nd.BadgeContentIds.Select(x => $"badge:0x{x:X8}"));
-            return string.Join(", ", parts.Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal));
-        }
-
-        private static string FormatGrid(StdTuple2D<int> p) => $"{p.X},{p.Y}";
-
-        private static string FormatEdge(StdTuple2D<int> a, StdTuple2D<int> b)
-        {
-            var ak = FormatGrid(a);
-            var bk = FormatGrid(b);
-            return string.CompareOrdinal(ak, bk) <= 0 ? $"{ak}<->{bk}" : $"{bk}<->{ak}";
-        }
         #region Routing helpers
 
         // Adjacency graph of the revealed atlas, built from the panel's connection (edge) list at
@@ -2921,6 +1982,11 @@ namespace Atlas
             if (!list.Contains(b))
                 list.Add(b);
         }
+
+        // Keep only one direction of an undirected edge (a precedes b), so the connection graph
+        // draws each line once instead of twice.
+        private static bool IsCanonicalEdge(StdTuple2D<int> a, StdTuple2D<int> b)
+            => a.X < b.X || (a.X == b.X && a.Y <= b.Y);
 
         // Multi-source BFS over the undirected graph seeded from every accessible (frontier) node,
         // skipping blocked (failed) nodes. Returns a cameFrom tree pointing back toward the nearest
@@ -3075,6 +2141,166 @@ namespace Atlas
 
 #endregion
 
+        // ── Uncharted Waters leylines: the connection graph of the HOVERED ship's reveal ────
+        // Every uncharted sea chunk carries ship buttons, so lighting all of them at once melts
+        // into one giant mesh over the whole fog (adjacent uncharted chunks touch). Instead the
+        // overlay follows the game's own UX: hover a ship (its tooltip opens) → highlight the
+        // nodes of THAT ship's 16x16 chunk — exactly what a logbook used there reveals (their
+        // map identities are already assigned client-side). Drawn as the atlas connection edges
+        // between those nodes — same edges as "Show node connections" (panel+0x5A8 graph), just
+        // thicker — plus a dot per node so chunk nodes without an in-chunk edge still show up.
+        // Positions are read live (the atlas scrolls by moving the widgets).
+        private void DrawUnchartedLeylines(ImDrawListPtr drawList, in RectangleF panelRect, float uiScale,
+            Vector2 mousePos, Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>> graph)
+        {
+            // The ship under the cursor picks the highlighted chunk (4 edge buttons share one
+            // chunk, so whichever is hovered yields the same reveal set).
+            (int X, int Y) chunk = default;
+            bool hovered = false;
+            foreach (var (addr, _, _, cx, cy) in shipCache)
+            {
+                var ub = ReadBaseCached(addr);
+                // A culled button's own position is stale — only game-rendered ships are
+                // hit-testable here. Fog ships are covered by the fogShipIcons pass below.
+                if ((ub.Flags & IsVisibleMask) == 0)
+                    continue;
+                var sc = ComputeScalePair(in ub);
+                var tl = GetLeafTopLeft(in ub);
+                var sz = new Vector2(ub.UnscaledSize.X * sc.X, ub.UnscaledSize.Y * sc.Y);
+                if (mousePos.X >= tl.X && mousePos.X <= tl.X + sz.X
+                    && mousePos.Y >= tl.Y && mousePos.Y <= tl.Y + sz.Y)
+                {
+                    chunk = (cx, cy);
+                    hovered = true;
+                    break;
+                }
+            }
+
+            // Our fog-ship icons (drawn this frame by DrawFogShips) hit-test by their rect.
+            if (!hovered)
+            {
+                foreach (var (iconChunk, center, half) in fogShipIcons)
+                {
+                    if (mousePos.X >= center.X - half && mousePos.X <= center.X + half
+                        && mousePos.Y >= center.Y - half && mousePos.Y <= center.Y + half)
+                    {
+                        chunk = iconChunk;
+                        hovered = true;
+                        break;
+                    }
+                }
+            }
+            if (!hovered)
+                return;
+
+            // Live screen centers of the hovered chunk's nodes.
+            var centers = new Dictionary<StdTuple2D<int>, Vector2>();
+            foreach (var nd in nodeCache)
+            {
+                if ((nd.GridPosition.X >> 4, nd.GridPosition.Y >> 4) != chunk)
+                    continue;
+                var ub = Read<UiElementBaseOffset>(nd.Address);
+                var sc = ComputeScalePair(in ub);
+                var tl = GetLeafTopLeft(in ub);
+                var center = tl + new Vector2(ub.UnscaledSize.X * sc.X, ub.UnscaledSize.Y * sc.Y) * 0.5f;
+                if (panelRect.Contains(center.X, center.Y))
+                    centers[nd.GridPosition] = center;
+            }
+            if (centers.Count == 0)
+                return;
+
+            drawList.ChannelsSetCurrent(ChannelGrid);
+            uint col = ImGuiHelper.Color(Settings.UnchartedLeylineColor);
+            float th = MathF.Max(1f, uiScale * Settings.UnchartedLeylineThickness);
+            foreach (var kv in centers)
+            {
+                drawList.AddCircleFilled(kv.Value, MathF.Max(2f, th * 0.9f), col);
+                if (!graph.TryGetValue(kv.Key, out var neighbors))
+                    continue;
+                foreach (var nb in neighbors)
+                {
+                    // AddEdge stores both directions; draw each undirected edge once. Both ends
+                    // are in `centers` = the hovered chunk only — no bleed into neighbours.
+                    if (!IsCanonicalEdge(kv.Key, nb))
+                        continue;
+                    if (centers.TryGetValue(nb, out var cb))
+                        drawList.AddLine(kv.Value, cb, col, th);
+                }
+            }
+        }
+
+        // ── Fog ships: mark uncharted-water spots the game isn't rendering yet ──────────────
+        // Ship buttons exist for every streamed uncharted chunk, but the game only renders the
+        // ones near explored water; the rest sit with IsVisible clear AND a stale position (a
+        // culled button's own coordinates can't be trusted — that's why the icon is anchored
+        // differently). Anchor: a button's grid coords equal the grid of the chunk node it
+        // snapped to (createRegionActionButton min-dist snap), and fog NODES do keep live
+        // positions — so the icon is drawn at that node's center. One icon per chunk; chunks
+        // that already show a game-rendered ship are skipped. Icon = icons\UnchartedShip.png
+        // (the game's QuickUseItemIconLogbook asset); fallback ring marker when absent.
+        // Also records this frame's icon rects (fogShipIcons) for the leyline hover.
+        private void DrawFogShips(ImDrawListPtr drawList, in RectangleF panelRect, float uiScale)
+        {
+            fogShipIcons.Clear();
+
+            // Split chunks into "game already shows a ship" vs "wanted": for the latter keep
+            // one button grid per chunk — the icon anchor.
+            var chunkVisible = new HashSet<(int X, int Y)>();
+            var wanted = new Dictionary<(int X, int Y), StdTuple2D<int>>();
+            foreach (var (addr, gx, gy, cx, cy) in shipCache)
+            {
+                if ((Read<uint>(IntPtr.Add(addr, 0x180)) & IsVisibleMask) != 0)
+                    chunkVisible.Add((cx, cy));
+                else if (!wanted.ContainsKey((cx, cy)))
+                    wanted[(cx, cy)] = new StdTuple2D<int> { X = gx, Y = gy };
+            }
+            foreach (var key in chunkVisible)
+                wanted.Remove(key);
+            if (wanted.Count == 0)
+                return;
+
+            // Resolve each anchor grid to its node and read the node's LIVE screen center.
+            var iconPos = new Dictionary<(int X, int Y), Vector2>();
+            foreach (var nd in nodeCache)
+            {
+                var chunk = (nd.GridPosition.X >> 4, nd.GridPosition.Y >> 4);
+                if (!wanted.TryGetValue(chunk, out var anchor) || iconPos.ContainsKey(chunk))
+                    continue;
+                if (nd.GridPosition.X != anchor.X || nd.GridPosition.Y != anchor.Y)
+                    continue;
+                var ub = Read<UiElementBaseOffset>(nd.Address);
+                var sc = ComputeScalePair(in ub);
+                var tl = GetLeafTopLeft(in ub);
+                var center = tl + new Vector2(ub.UnscaledSize.X * sc.X, ub.UnscaledSize.Y * sc.Y) * 0.5f;
+                if (panelRect.Contains(center.X, center.Y))
+                    iconPos[chunk] = center;
+            }
+            if (iconPos.Count == 0)
+                return;
+
+            drawList.ChannelsSetCurrent(ChannelLabels);
+            float h = MathF.Max(8f, Settings.ShipIconSize * uiScale);
+            bool haveIcon = TryGetIcon(DllDirectory, FogShipIconName, out var ptr, out var iw, out var ih)
+                && ptr != IntPtr.Zero && iw > 0 && ih > 0;
+            foreach (var kv in iconPos)
+            {
+                var c = kv.Value;
+                if (haveIcon)
+                {
+                    float w = h * iw / ih;
+                    drawList.AddImage(ptr, c - new Vector2(w, h) * 0.5f, c + new Vector2(w, h) * 0.5f);
+                }
+                else
+                {
+                    // fallback marker until icons\UnchartedShip.png is provided
+                    float r = h * 0.35f;
+                    drawList.AddCircleFilled(c, r, ImGuiHelper.Color(new Vector4(0.04f, 0.08f, 0.12f, 0.9f)));
+                    drawList.AddCircle(c, r, ImGuiHelper.Color(Settings.UnchartedLeylineColor), 0, MathF.Max(1.5f, r * 0.25f));
+                }
+                fogShipIcons.Add((kv.Key, c, h * 0.5f));
+            }
+        }
+
         private void LoadBiomeMap()
         {
             var path = Path.Join(DllDirectory, "json", "biome.json");
@@ -3171,7 +2397,7 @@ namespace Atlas
             }
             ContentChoices.Sort(StringComparer.OrdinalIgnoreCase);
 
-            ApplyContentLanguage(Settings?.Language);
+            ApplyContentLanguage(EffectiveLanguage);
         }
 
         // Special map-state contents that have a VisualIdentity icon but NO EndgameMapContent row, so
@@ -3299,10 +2525,10 @@ namespace Atlas
             if (!string.IsNullOrEmpty(e.Match) && e.Match.StartsWith("id:", StringComparison.OrdinalIgnoreCase))
             {
                 var id = e.Match[3..];
-                return ResolveLocalizedName(id, GetMapInfo(id), Settings?.Language);
+                return ResolveLocalizedName(id, GetMapInfo(id), EffectiveLanguage);
             }
             if (!string.IsNullOrEmpty(e.Match) && e.Match.StartsWith("name:", StringComparison.OrdinalIgnoreCase))
-                return ResolveLocalizedMapName(e.Match[5..], Settings?.Language);
+                return ResolveLocalizedMapName(e.Match[5..], EffectiveLanguage);
             return LocalizedName(e.ContentName);
         }
 
@@ -3320,7 +2546,7 @@ namespace Atlas
         // Build/refresh the deduped, language-sorted map list backing the "Add map…" picker.
         private void EnsureMapPickCache()
         {
-            var lang = Settings?.Language ?? string.Empty;
+            var lang = EffectiveLanguage ?? string.Empty;
             if (MapPickCacheLang == lang && MapPickCache.Count > 0)
                 return;
 
@@ -3341,6 +2567,7 @@ namespace Atlas
         // so display falls back to the canonical English name/desc. Called on load and on language change.
         private static void ApplyContentLanguage(string lang)
         {
+            appliedContentLang = lang;
             NameToLocalizedName.Clear();
             NameToLocalizedDesc.Clear();
             if (string.IsNullOrWhiteSpace(lang) || lang.Equals("english", StringComparison.OrdinalIgnoreCase))
@@ -3615,6 +2842,26 @@ namespace Atlas
 
         // Draw a centered rounded pill with a label. centerX/topY = top-center anchor.
         // Returns the pill height (so callers can advance their layout cursor).
+        // Rating for a map by its canonical English display name; -1 when unrated.
+        private int GetMapRating(MapInfo info) =>
+            info?.Name != null && Settings.MapRatings.TryGetValue(info.Name, out var r) ? r : -1;
+
+        // Rating pill background: green (0 = normal) → yellow (5) → red (10 = terrible).
+        private static Vector4 RatingColor(int rating)
+        {
+            float t = Math.Clamp(rating / 10f, 0f, 1f);
+            var green = new Vector4(0.10f, 0.72f, 0.15f, 0.92f);
+            var yellow = new Vector4(0.95f, 0.80f, 0.05f, 0.92f);
+            var red = new Vector4(0.85f, 0.08f, 0.08f, 0.92f);
+            return t < 0.5f ? Vector4.Lerp(green, yellow, t * 2f) : Vector4.Lerp(yellow, red, (t - 0.5f) * 2f);
+        }
+
+        // Black text on light (yellow-ish) pills, white on dark green/red ones.
+        private static Vector4 RatingTextColor(Vector4 bg) =>
+            0.299f * bg.X + 0.587f * bg.Y + 0.114f * bg.Z > 0.55f
+                ? new Vector4(0f, 0f, 0f, 1f)
+                : new Vector4(1f, 1f, 1f, 1f);
+
         private static float DrawPill(ImDrawListPtr drawList, string label, float centerX, float topY,
             Vector4 bg, Vector4 fg, float uiScale)
         {
@@ -3936,6 +3183,1339 @@ namespace Atlas
             return Read<T>(addr);
         }
 
+        // MSVC std::wstring (SSO): length @ +0x10, capacity @ +0x18; chars inline @ +0x00 while
+        // capacity < 8, otherwise +0x00 is the heap buffer pointer. Same layout the game uses for
+        // UI label text (see docs/uitree-guide.md).
+        private static string ReadGameWString(IntPtr address)
+        {
+            if (address == IntPtr.Zero)
+                return string.Empty;
+
+            long len = Read<long>(IntPtr.Add(address, 0x10));
+            long cap = Read<long>(IntPtr.Add(address, 0x18));
+            if (len <= 0 || len > 2048 || cap < len)
+                return string.Empty;
+
+            var src = cap >= 8 ? Read<IntPtr>(address) : address;
+            return src == IntPtr.Zero ? string.Empty : ReadWideString(src, (int)len);
+        }
+
+        // Session-dedup of ritual snapshots already written (signature → skip re-append).
+        private readonly HashSet<string> ritualLogSeen = new();
+        private bool ritualLogHeaderDone;
+
+        // grid -> predicted first Rite mod for the current line's next candidates (see BuildRitualPredictions).
+        private static readonly Dictionary<StdTuple2D<int>, string> EmptyRitualPredictions = new();
+        private Dictionary<StdTuple2D<int>, string> ritualPredictions = EmptyRitualPredictions;
+        // Node under the cursor (accessible/completed only) — the hypothetical START for the
+        // pre-click ritual chain while no node is committed yet. One-frame lag by design:
+        // predictions build before the node pass hit-tests the cursor.
+        private StdTuple2D<int>? ritualHoverGrid;
+
+        // Reads the committed line grids (panel+0x660) as (x,y) int pairs.
+        private static List<StdTuple2D<int>> ReadGridVector(IntPtr vecAddr)
+        {
+            var result = new List<StdTuple2D<int>>();
+            var vec = Read<StdVector>(vecAddr);
+            if (vec.First == IntPtr.Zero || vec.Last == IntPtr.Zero)
+                return result;
+            long bytes = vec.Last.ToInt64() - vec.First.ToInt64();
+            if (bytes <= 0 || bytes % 8 != 0 || bytes > 8 * 64)
+                return result;
+            int n = (int)(bytes / 8);
+            for (int i = 0; i < n; i++)
+                result.Add(Read<StdTuple2D<int>>(IntPtr.Add(vec.First, i * 8)));
+            return result;
+        }
+
+        // Read the panel's precomputed next-candidate table (panel+0x590) into a map
+        // node(x,y) -> its raw candidate list (up to 5, (0,0) sentinels dropped). The table is what
+        // AtlasPanel_ritualLineNextCandidates looks up; the roll's candIdx is a node's rank among the
+        // frontier's candidates. We read the whole span in one cross-process read and parse locally.
+        // Cache: the neighbour table is static per atlas instance, so re-read only when its backing
+        // vector changes (atlas reload). Keyed by the (begin, end) pointer pair — begin alone can
+        // collide when the allocator reuses the base address for a different atlas's table.
+        private static IntPtr candTableCacheBegin = IntPtr.Zero;
+        private static IntPtr candTableCacheEnd = IntPtr.Zero;
+        // Span already re-read once because a frontier lookup missed (see below) — a legit
+        // dead-end frontier must not force a full re-read every frame.
+        private static IntPtr candTableHealedBegin = IntPtr.Zero;
+        private static IntPtr candTableHealedEnd = IntPtr.Zero;
+        private static Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>> candTableCache;
+
+        private static Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>> ReadCandidateTable(
+            IntPtr panel, StdTuple2D<int>? frontier = null)
+        {
+            var map = new Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>>();
+            if (panel == IntPtr.Zero)
+                return map;
+            var begin = Read<IntPtr>(IntPtr.Add(panel, PanelCandTableBeginOffset));
+            var end = Read<IntPtr>(IntPtr.Add(panel, PanelCandTableEndOffset));
+            if (begin == IntPtr.Zero || end == IntPtr.Zero)
+                return map;
+            if (begin == candTableCacheBegin && end == candTableCacheEnd && candTableCache != null)
+            {
+                // Self-heal a stale cache: the line's frontier node always belongs to its own
+                // atlas's table, so a miss means the cache was filled from another atlas instance
+                // (pointer reuse) or from a not-yet-populated load frame. Drop it and re-read —
+                // at most once per table span.
+                bool healedThisSpan = begin == candTableHealedBegin && end == candTableHealedEnd;
+                if (frontier == null || healedThisSpan || candTableCache.ContainsKey(frontier.Value))
+                    return candTableCache;
+                candTableCache = null;
+                candTableHealedBegin = begin;
+                candTableHealedEnd = end;
+            }
+            long bytes = end.ToInt64() - begin.ToInt64();
+            // The live table is ~4k nodes; allow up to 64k entries. Must be a whole number of entries.
+            if (bytes <= 0 || bytes % CandTableEntryStride != 0 || bytes > CandTableEntryStride * 65536L)
+                return map;
+            int n = (int)(bytes / CandTableEntryStride);
+
+            EnsureProcessHandle();
+            byte[] buf = new byte[bytes];
+            if (!ProcessMemoryUtilities.Managed.NativeWrapper.ReadProcessMemoryArray(Handle, begin, buf))
+                return map;
+
+            bool anyCands = false;
+            for (int e = 0; e < n; e++)
+            {
+                int o = e * CandTableEntryStride;
+                int nx = BitConverter.ToInt32(buf, o + 0);
+                int ny = BitConverter.ToInt32(buf, o + 4);
+                var cands = new List<StdTuple2D<int>>(CandTableMaxCandidates);
+                for (int c = 0; c < CandTableMaxCandidates; c++)
+                {
+                    int co = o + 8 + c * 12;      // ints [2..], 3 per candidate (x,y,extra)
+                    int cx = BitConverter.ToInt32(buf, co + 0);
+                    int cy = BitConverter.ToInt32(buf, co + 4);
+                    if (cx == 0 && cy == 0)
+                        continue;                 // empty slot sentinel
+                    cands.Add(new StdTuple2D<int> { X = cx, Y = cy });
+                }
+                if (cands.Count > 0)
+                    anyCands = true;
+                map[new StdTuple2D<int> { X = nx, Y = ny }] = cands;
+            }
+            // On an atlas-load frame the vector can exist while its entries are still zero-filled —
+            // every slot parses as the (0,0) sentinel. Never cache that: the begin/end pointers
+            // won't change afterwards, so the garbage would stick until a GH restart.
+            if (anyCands)
+            {
+                candTableCacheBegin = begin;
+                candTableCacheEnd = end;
+                candTableCache = map;
+            }
+            return map;
+        }
+
+        // ── Ritual Rite-mod PREDICTION (reversed client-side roll). See obsidian poe2/Ritual.md ──
+        // The game rolls each line node's Rite mods CLIENT-SIDE and deterministically. We reproduce
+        // the roll so a candidate's mods can be shown BEFORE it is committed. Validated exact for the
+        // first mod (single-mod nodes 6/6).
+
+        // TinyMT32 exactly as the game uses it (mat1/mat2/tmat below). init_by_array over 4 u32 seed
+        // words + an 8-step jump; then a tempered draw. Bit-exact vs TinyMT_seedAndJump (14156b620),
+        // next32 (1404e16d0) and randBelow (1404e17a0). NOTE the state transition is the binary's form
+        // (x>>1 / s3<<1), which differs from reference TinyMT (x<<1 / y>>1).
+        private static class TinyMt32
+        {
+            private const uint MAT1 = 0x8f7011eeu, MAT2 = 0xfc78ff1fu, TMAT = 0x3793fdffu;
+
+            // seed+jump; returns the 4-word state [s0,s1,s2,s3] (the binary's counter is unused here).
+            public static uint[] Seed(uint w0, uint w1, uint w2, uint w3)
+            {
+                uint[] s = { 0x40336052u, 0xCFA3723Cu, 0x3CAC5F71u, 0x3793FDFFu }; // post-pre-step consts
+                uint[] w = { w0, w1, w2, w3 };
+                int r = 1;
+                for (int i = 0; i < 4; i++)              // absorb 4 words (ini_func1)
+                {
+                    int a = (r + 1) & 3, b = r & 3, c = (r + 3) & 3;
+                    uint x = s[a] ^ s[c] ^ s[b];
+                    uint h = ((x >> 27) ^ x) * 0x19660Du;
+                    s[a] += h;
+                    uint h2 = h + w[i] + (uint)r;
+                    s[(r + 2) & 3] += h2;
+                    s[b] = h2;
+                    r = a;
+                }
+                for (int k = 0; k < 3; k++)              // 3 mix rounds (ini_func1, no input)
+                {
+                    int a = (r + 1) & 3, b = r & 3, c = (r + 3) & 3;
+                    uint x = s[a] ^ s[c] ^ s[b];
+                    uint h = ((x >> 27) ^ x) * 0x19660Du;
+                    uint h2 = h + (uint)r;
+                    s[a] += h;
+                    s[(r + 2) & 3] += h2;
+                    s[b] = h2;
+                    r = a;
+                }
+                for (int k = 0; k < 4; k++)              // 4 finalization blocks (ini_func2)
+                {
+                    int a = (r + 1) & 3, b = r & 3, c = (r + 3) & 3;
+                    uint x = s[c] + s[a] + s[b];
+                    x = ((x >> 27) ^ x) * 0x5D588B65u;
+                    uint y = x - (uint)r;
+                    s[a] ^= x;
+                    s[(r + 2) & 3] ^= y;
+                    s[b] = y;
+                    r = a;
+                }
+                for (int k = 0; k < 8; k++) NextState(s); // jump
+                return s;
+            }
+
+            private static void NextState(uint[] s)
+            {
+                uint x = (s[0] & 0x7fffffffu) ^ s[1] ^ s[2];
+                uint t = s[3] ^ (s[3] << 1);
+                x = (x >> 1) ^ x ^ t;
+                uint mag = (x & 1) != 0 ? 0xffffffffu : 0u;
+                uint oldS1 = s[1], oldS2 = s[2];
+                s[0] = oldS1;
+                s[1] = (mag & MAT1) ^ oldS2;
+                s[2] = (mag & MAT2) ^ (x << 10) ^ t;
+                s[3] = x;
+            }
+
+            // one tempered 32-bit output; advances the state (== next32 inner body).
+            public static uint Draw(uint[] s)
+            {
+                uint oldS1 = s[1], oldS2 = s[2];
+                uint x = (s[0] & 0x7fffffffu) ^ s[1] ^ s[2];
+                uint t = s[3] ^ (s[3] << 1);
+                x = (x >> 1) ^ x ^ t;
+                uint mag = (x & 1) != 0 ? 0xffffffffu : 0u;
+                uint newS2 = (mag & MAT2) ^ (x << 10) ^ t;
+                s[0] = oldS1;
+                s[1] = (mag & MAT1) ^ oldS2;
+                s[2] = newS2;
+                s[3] = x;
+                uint v = (newS2 >> 8) + oldS1;
+                uint magt = (v & 1) != 0 ? 0xffffffffu : 0u;
+                return (magt & TMAT) ^ v ^ x;
+            }
+
+            // unbiased r in [0,n) with the binary's rejection (bits=32, mask=0xffffffff).
+            public static uint RandBelow(uint[] s, uint n)
+            {
+                if (n <= 1) return 0;
+                const uint M = 0xffffffffu;
+                while (true)
+                {
+                    uint r = Draw(s);
+                    if (M / n <= r / n && M % n != n - 1) continue;
+                    return r % n;
+                }
+            }
+        }
+
+        private sealed class RitualRow
+        {
+            public int Row { get; set; }
+            public int W { get; set; }       // weighting
+            public int Cond { get; set; }    // ConditionStat FK (0 = none); binary id = Cond-1
+            public int Stat { get; set; }    // granted Stat1 FK — 2nd-pick dup exclusion (0 = none)
+            public string Text { get; set; }
+        }
+        private sealed class RitualPoolFile { public List<RitualRow> Rows { get; set; } }
+        private static List<RitualRow> ritualPool;
+
+        private void EnsureRitualPool()
+        {
+            if (ritualPool != null) return;
+            try
+            {
+                var path = Path.Join(DllDirectory, "json", "ritualmods.json");
+                ritualPool = File.Exists(path)
+                    ? (JsonConvert.DeserializeObject<RitualPoolFile>(File.ReadAllText(path))?.Rows ?? new())
+                    : new();
+            }
+            catch { ritualPool = new(); }
+        }
+
+        // Read the panel's active atlas stats (id -> value, value!=0 only). Chain from
+        // ritualLineToggleNode: panel+0x320 -> +0x1b0 -> +0x3a20 -> vector [+0x408 begin, +0x410 end],
+        // stride 0x28 (10 int32): stat id @ +0x00, value @ +0x08. Gates the reservoir pool and gives
+        // the line length (5 + map_ritual_rite_additional_maps, binary id 0x670b).
+        private static Dictionary<int, int> ReadRitualStats(IntPtr panel)
+        {
+            var stats = new Dictionary<int, int>();
+            var o1 = Read<IntPtr>(IntPtr.Add(panel, 0x320));
+            if (o1 == IntPtr.Zero) return stats;
+            var o2 = Read<IntPtr>(IntPtr.Add(o1, 0x1b0));
+            if (o2 == IntPtr.Zero) return stats;
+            var holder = Read<IntPtr>(IntPtr.Add(o2, 0x3a20));
+            if (holder == IntPtr.Zero) return stats;
+            var begin = Read<IntPtr>(IntPtr.Add(holder, 0x408));
+            var end = Read<IntPtr>(IntPtr.Add(holder, 0x410));
+            if (begin == IntPtr.Zero || end == IntPtr.Zero) return stats;
+            long bytes = end.ToInt64() - begin.ToInt64();
+            if (bytes <= 0 || bytes % 0x28 != 0 || bytes > 0x28 * 8192L) return stats;
+            int n = (int)(bytes / 0x28);
+            EnsureProcessHandle();
+            byte[] buf = new byte[bytes];
+            if (!ProcessMemoryUtilities.Managed.NativeWrapper.ReadProcessMemoryArray(Handle, begin, buf))
+                return stats;
+            for (int e = 0; e < n; e++)
+            {
+                int id = BitConverter.ToInt32(buf, e * 0x28 + 0);
+                int val = BitConverter.ToInt32(buf, e * 0x28 + 8);
+                if (val != 0) stats[id] = val;
+            }
+            return stats;
+        }
+
+        // Whether a line node ALSO gets a second Rite mod: rand(100) < chance stat 0x670C
+        // (map_ritual_rite_additional_modifier_chance_%), on a separate deterministic stream
+        // seeded [lineId, committedCount, candIdx, salt] — the salt appears ONLY in this coin
+        // flip, never in the mod-pick seed.
+        private const int StatSecondModChance = 0x670c;
+        private const uint SecondModCoinSalt = 0x91DA3AD9;
+        private const string TwoModFilterOption = "[2 mods]";  // pseudo-entry in the reward dropdown
+
+        private static bool PredictSecondModFlip(uint lineId, uint committedCount, uint candIdx, int chance)
+        {
+            if (chance <= 0)
+                return false;
+            if (chance >= 100)
+                return true;
+            var s = TinyMt32.Seed(lineId, committedCount, candIdx, SecondModCoinSalt);
+            return TinyMt32.RandBelow(s, 100) < (uint)chance;
+        }
+
+        // One reservoir pass (seed modCount = 0 first mod / 1 second). The 2nd pass SKIPS —
+        // no weight added, no draw — every row whose granted Stat the 1st pick already granted
+        // (binary dup check FUN_14064cdc0 on the out-vector; currency trios share one stat so a
+        // currency 1st mod blocks its whole trio). Validated 6/6 on logged two-mod nodes.
+        private static RitualRow PredictModPass(uint lineId, uint committedCount, uint candIdx,
+            uint modCount, List<RitualRow> pool, int grantedStat)
+        {
+            var s = TinyMt32.Seed(lineId, committedCount, candIdx, modCount);
+            long total = 0; RitualRow sel = null;
+            foreach (var row in pool)
+            {
+                if (grantedStat != 0 && row.Stat == grantedStat)
+                    continue;
+                total += row.W;
+                if (TinyMt32.RandBelow(s, (uint)total) < (uint)row.W)
+                    sel = row;
+            }
+            return sel;
+        }
+
+        // Game's AtlasPanel_ritualLineReachCheck (140b775f0), ported: a node may join the line
+        // only if FROM it the line can still be extended to its full length through eligible
+        // nodes (not committed / not already on the path / not blocked). The game refuses the
+        // click otherwise — so dead-end branches must never be offered or rolled. `need` =
+        // picks still required AFTER taking the node; first success short-circuits.
+        private static bool RitualCanComplete(
+            Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>> candTable,
+            HashSet<StdTuple2D<int>> blocked,
+            StdTuple2D<int> node,
+            HashSet<StdTuple2D<int>> visited,
+            int need)
+        {
+            if (need <= 0)
+                return true;
+            if (!candTable.TryGetValue(node, out var raw))
+                return false;
+            foreach (var c in raw)
+            {
+                if (blocked.Contains(c) || visited.Contains(c))
+                    continue;
+                visited.Add(c);
+                bool ok = RitualCanComplete(candTable, blocked, c, visited, need - 1);
+                visited.Remove(c);
+                if (ok)
+                    return true;
+            }
+
+            return false;
+        }
+
+        // Both Rite mods for a candidate: first pick, then the deterministic coin flip, then the
+        // second pick with the stat-dup exclusion. Second is null on single-mod nodes.
+        private static (string First, string Second) PredictMods(uint lineId, uint committedCount,
+            uint candIdx, List<RitualRow> pool, int secondChance)
+        {
+            var first = PredictModPass(lineId, committedCount, candIdx, 0, pool, 0);
+            if (first == null)
+                return (null, null);
+            if (!PredictSecondModFlip(lineId, committedCount, candIdx, secondChance))
+                return (first.Text, null);
+            var second = PredictModPass(lineId, committedCount, candIdx, 1, pool, first.Stat);
+            return (first.Text, second?.Text);
+        }
+
+        // ── "Select N maps" pick counter ─────────────────────────────────────────────────
+        // While drawing the ritual line the game shows a header with how many maps can still
+        // be picked (the first pick — the start node — consumes one). Authoritative live value,
+        // so it overrides the computed 5 + additional-maps stat when readable.
+        // GameUi → [22] → [2] → [0], leaf fp 0x502EE1, wstring at +0x4C0 (found via UiExplorer).
+        private static readonly int[] RitualPickCounterPath = { 22, 2, 0 };
+        private const uint RitualPickCounterFp = 0x502EE1;
+
+        // Reads the counter as the first integer in the label text (locale-independent).
+        // False when the element is absent/hidden/moved (index path or fp drifted) or the
+        // number is implausible — callers fall back to the stat-derived line length.
+        private static bool TryReadRitualPickCounter(out int remaining)
+        {
+            remaining = 0;
+            var addr = Core.States.InGameStateObject.GameUi.Address;
+            if (addr == IntPtr.Zero)
+                return false;
+            foreach (var idx in RitualPickCounterPath)
+            {
+                addr = Read<UiElement>(addr).GetChildAddress(idx);
+                if (addr == IntPtr.Zero)
+                    return false;
+            }
+
+            var leaf = Read<UiElement>(addr);
+            if ((leaf.Flags & ~IsVisibleMask) != (RitualPickCounterFp & ~IsVisibleMask)
+                || (leaf.Flags & IsVisibleMask) == 0)
+                return false;
+
+            var text = ReadGameWString(IntPtr.Add(addr, TextElementTextOffset));
+            if (string.IsNullOrEmpty(text))
+                return false;
+            int n = 0;
+            bool seen = false;
+            foreach (var ch in text)
+            {
+                if (ch >= '0' && ch <= '9') { n = (n * 10) + (ch - '0'); seen = true; }
+                else if (seen) break;
+            }
+
+            if (!seen || n <= 0 || n > 30)
+                return false;
+            remaining = n;
+            return true;
+        }
+
+        // Line-length atlas stat (binary id = tsv id - 1). map_ritual_rite_additional_maps.
+        private const int StatAdditionalMaps = 0x670b;
+        private const int RitualBaseLineLength = 5;   // AtlasPanel_ritualLineToggleNode: stat + 5
+        private const int RitualMaxLookaheadDepth = 16;
+        private const int RitualMaxPredictNodes = 4000;
+
+        // Cache: predictions only change when the line state (id + committed set) changes.
+        private string ritualPredSig;
+        private Dictionary<StdTuple2D<int>, string> ritualPredCache = EmptyRitualPredictions;
+
+        // Predict the Rite mods for EVERY node the ritual line can still reach from its current
+        // frontier, up to the line's max length.
+        // Each node's mod is rolled for the path that reaches it (committedCount = base + depth;
+        // candIdx = its rank among the frontier's candidates minus the committed path). Returns
+        // grid -> predicted first-mod text. Cached per line-state.
+        private Dictionary<StdTuple2D<int>, string> BuildRitualPredictions(IntPtr panel)
+        {
+            if (panel == IntPtr.Zero) return EmptyRitualPredictions;
+            EnsureRitualPool();
+            if (ritualPool == null || ritualPool.Count == 0) return EmptyRitualPredictions;
+
+            // Hover preview ONLY, and only BEFORE the first node is picked: once the line has a
+            // start (committed, or clicked-but-unconfirmed pending), the planner window owns the
+            // route display and the always-on green chain would just be noise on the atlas.
+            var committed = ReadGridVector(IntPtr.Add(panel, PanelCommittedVecOffset));
+            int committedReal = committed.Count;   // before a hypothetical start is inserted
+            if (committed.Count > 0)
+                return EmptyRitualPredictions;
+            // Pre-click chain. The first click adds no randomness: lineId and the candidate
+            // table exist before the line starts, and the start node itself is never rolled
+            // (ritualLineToggleNode's empty-committed branch just adds it to pending). So the
+            // whole chain from a hypothetical (hovered) start is already determined. Only while
+            // the game is actually in ritual line mode.
+            if (Read<byte>(IntPtr.Add(panel, PanelLineModeOffset)) == 0)
+                return EmptyRitualPredictions;
+            if (ReadGridVector(IntPtr.Add(panel, PanelPendingVecOffset)).Count > 0)
+                return EmptyRitualPredictions;
+            if (this.ritualHoverGrid is { } start)
+                committed.Add(start);
+            else
+                return EmptyRitualPredictions;
+
+            uint lineId = Read<uint>(IntPtr.Add(panel, PanelLineIdOffset));
+
+            // Signature — reuse the cached chain unless the line changed.
+            var sb = new StringBuilder();
+            sb.Append(lineId);
+            foreach (var g in committed) sb.Append(';').Append(g.X).Append(',').Append(g.Y);
+            var sig = sb.ToString();
+            if (sig == ritualPredSig && ritualPredCache != null)
+                return ritualPredCache;
+
+            var result = new Dictionary<StdTuple2D<int>, string>();
+            var candTable = ReadCandidateTable(panel, committed[committed.Count - 1]);
+            var stats = ReadRitualStats(panel);
+
+            var pool = new List<RitualRow>(ritualPool.Count);
+            foreach (var row in ritualPool)
+            {
+                if (row.W <= 0) continue;
+                if (row.Cond == 0 || stats.ContainsKey(row.Cond) || stats.ContainsKey(row.Cond - 1))
+                    pool.Add(row);
+            }
+
+            int addlMaps = stats.TryGetValue(StatAdditionalMaps, out var am) ? am
+                         : stats.TryGetValue(StatAdditionalMaps + 1, out var am2) ? am2 : 0;
+            int lineLen = RitualBaseLineLength + Math.Max(0, addlMaps);
+            int secondChance = stats.TryGetValue(StatSecondModChance, out var sc) ? sc
+                             : stats.TryGetValue(StatSecondModChance + 1, out var sc2) ? sc2 : 0;
+            // The in-game "Select N maps" header is the authoritative remaining-picks count
+            // (assumed to decrement as nodes commit — the roll log records it for verification);
+            // when readable it overrides the stat-derived length.
+            if (TryReadRitualPickCounter(out var picksLeft))
+                lineLen = committedReal + picksLeft;
+            int maxDepth = Math.Min(RitualMaxLookaheadDepth, Math.Max(0, lineLen - committed.Count));
+
+            // Nodes the line can never be drawn onto — the game's own reach-check rule:
+            // completed (widget state ∉ {0,1}) or special-category map (RitualSpecial: the
+            // dat-row field the game tests; uniques/towers/hideouts/citadels/bosses). The
+            // maps.json tags stay as a fallback for a cache built before the toggle came on.
+            // Blocked nodes KEEP their slot in the candidate rank space — the validated candIdx
+            // model ranks the raw table minus committed only — but they get no predicted label
+            // and the chain is not extended through them.
+            var blocked = new HashSet<StdTuple2D<int>>();
+            foreach (var nd in nodeCache)
+            {
+                if (nd.State == AtlasNodeState.CompletedBase
+                    || nd.RitualSpecial
+                    || string.Equals(nd.MapInfo?.Type, "unique", StringComparison.OrdinalIgnoreCase)
+                    || (nd.MapInfo?.HasTag("tower") ?? false)
+                    || (nd.MapInfo?.HasTag("hideout") ?? false))
+                    blocked.Add(nd.GridPosition);
+            }
+
+            if (pool.Count > 0 && maxDepth > 0)
+            {
+                var frontier = committed[committed.Count - 1];
+                var visited = new HashSet<StdTuple2D<int>>(committed);   // never revisit committed
+                int budget = RitualMaxPredictNodes;
+                // BFS by depth so each node is reached via its shallowest (most direct) path, giving
+                // the committedCount/candIdx of that path. Recomputed live as the line is drawn, so the
+                // chosen path stays exact; branches are a guide.
+                var queue = new Queue<(StdTuple2D<int> node, HashSet<StdTuple2D<int>> cset, int depth)>();
+                queue.Enqueue((frontier, new HashSet<StdTuple2D<int>>(committed), 0));
+                while (queue.Count > 0 && budget > 0)
+                {
+                    var (node, cset, depth) = queue.Dequeue();
+                    if (depth >= maxDepth) continue;
+                    if (!candTable.TryGetValue(node, out var raw) || raw.Count == 0) continue;
+                    var cands = raw.Where(c => !cset.Contains(c))
+                                   .OrderBy(c => c.X).ThenBy(c => c.Y).ToList();
+                    uint cc = (uint)cset.Count;   // = committed.Count + depth
+                    for (int i = 0; i < cands.Count; i++)
+                    {
+                        if (budget <= 0) break;
+                        var cand = cands[i];
+                        if (visited.Contains(cand)) continue;   // reached already via a shallower path
+                        if (blocked.Contains(cand)) { visited.Add(cand); continue; }  // holds rank i, can't join
+                        // Game reach check (ritualLineReachCheck 140b775f0): a node is clickable
+                        // only if the line can still be COMPLETED through it — a dead-end branch
+                        // is refused by the game and must not be labeled (its roll never happens).
+                        var reachSet = new HashSet<StdTuple2D<int>>(cset) { cand };
+                        if (!RitualCanComplete(candTable, blocked, cand, reachSet, maxDepth - depth - 1))
+                            continue;
+                        visited.Add(cand);
+                        var (first, second) = PredictMods(lineId, cc, (uint)i, pool, secondChance);
+                        if (!string.IsNullOrEmpty(first))
+                        {
+                            result[cand] = second == null ? first : first + "\n" + second;
+                            budget--;
+                        }
+                        var childSet = new HashSet<StdTuple2D<int>>(cset) { cand };
+                        queue.Enqueue((cand, childSet, depth + 1));
+                    }
+                }
+            }
+
+            ritualPredSig = sig;
+            ritualPredCache = result;
+            return result;
+        }
+
+        // ── "Head of the King Rewards" planner (ritual line mode, page mode 6) ────────────────────────
+        // Enumerates every chain the ritual line can take from EVERY eligible start node at once
+        // (or only from the committed frontier while a line is being drawn), with each node's
+        // predicted first Rite mod (exact, same roll as BuildRitualPredictions but per-path).
+        // Shown as a window with a persisted multi-select reward filter (a chain matches when ANY
+        // selected reward is in it); a ticked chain draws a ray from the player to its start plus
+        // the highlighted route with reward labels — that's how you find WHERE the rewards you
+        // filtered for are. See obsidian poe2/Ritual.md.
+        private sealed class PlannerChain
+        {
+            public string Key;                    // stable id: root-onward grids joined
+            public List<StdTuple2D<int>> Nodes;   // root (start/frontier) + picked nodes
+            public List<string> ShortMods;        // 1st mod per picked node (aligned with Nodes[i+1])
+            public List<string> ShortMods2;       // 2nd mod per picked node (null = single-mod)
+            public string PathLine;               // "Bastille  >  Headland  >  …"
+            public string ModsLine;               // "+25% Tribute   -   Exalted Orbs x2 + Omen: … "
+            public int Weight;                    // sum of user reward weights over the chain's mods
+        }
+
+        private readonly List<PlannerChain> plannerChains = new();
+        private string plannerSig;
+        private int plannerStartCount;                 // eligible start nodes in the last rebuild
+        private bool plannerLineActive;                // committed non-empty: root = the line's frontier
+        private readonly Dictionary<string, int> plannerSelected = new();  // chain key -> palette slot
+        private int plannerEnumerated;                 // paths found (incl. beyond the caps)
+        private bool plannerCapped;
+        private static List<string> plannerRewardOptions;  // distinct ShortModLabel values of the pool
+        // Reward-weight edits bump the version; the planner re-weighs + re-sorts its cached
+        // chains when the versions diverge (so edits apply live without a full re-enumeration).
+        private int plannerWeightsVersion;
+        private int plannerChainsWeightsVersion = -1;
+
+        private static readonly Vector4[] PlannerPalette =
+        {
+            new(1f, 0.85f, 0.2f, 1f),   // yellow
+            new(1f, 0.5f, 0.15f, 1f),   // orange
+            new(1f, 0.3f, 0.3f, 1f),    // red
+            new(0.3f, 0.85f, 1f, 1f),   // cyan
+            new(0.45f, 1f, 0.45f, 1f),  // green
+            new(0.9f, 0.45f, 1f, 1f),   // violet
+        };
+        private const int PlannerMaxPaths = 8192;  // global enumeration cap, fair-shared across starts
+        private const int PlannerMaxRows = 200;    // rows drawn per frame (matches beyond it still counted)
+
+        // Compact reward label for chain rows / route pills ("4 Exalted Orbs" → "Exalted Orbs x4").
+        // Pattern-based over the known RitualAtlasLineMods texts; unknown texts pass through.
+        private static readonly Dictionary<string, string> shortModCache = new();
+
+        private static string ShortModLabel(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+            if (shortModCache.TryGetValue(text, out var cached))
+                return cached;
+
+            string r;
+            var m = System.Text.RegularExpressions.Regex.Match(text, @"^(\d+) (.+?Orbs?.*)$");
+            if (m.Success)
+                r = $"{m.Groups[2].Value} x{m.Groups[1].Value}";
+            else if (text.StartsWith("Omen of ", StringComparison.OrdinalIgnoreCase))
+                r = "Omen: " + text["Omen of ".Length..];
+            else if (text.StartsWith("Contains a very rare Unique", StringComparison.OrdinalIgnoreCase))
+                r = "Very Rare Unique";
+            else if (text.StartsWith("Contains ", StringComparison.OrdinalIgnoreCase))
+                r = text["Contains ".Length..];
+            else if (text.Contains("additional pack", StringComparison.OrdinalIgnoreCase))
+                r = "+Monster Packs";
+            else if (text.Contains("no Cost the first time", StringComparison.OrdinalIgnoreCase))
+                r = "+Free Reroll";
+            else if (text.Contains("additional Favour reroll", StringComparison.OrdinalIgnoreCase))
+                r = "+1 Reroll";
+            else if (text.Contains("reduced Tribute", StringComparison.OrdinalIgnoreCase))
+                r = "-Reroll Cost";
+            else if (text.Contains("increased Tribute", StringComparison.OrdinalIgnoreCase))
+                r = "+25% Tribute";
+            else if (text.Contains("increased number of Favours", StringComparison.OrdinalIgnoreCase))
+                r = "+Favours";
+            else
+                r = text;
+            shortModCache[text] = r;
+            return r;
+        }
+
+        private string GridDisplayName(StdTuple2D<int> g)
+        {
+            foreach (var nd in nodeCache)
+                if (nd.GridPosition.Equals(g))
+                    return nd.Drawable ? nd.MapName : $"({g.X},{g.Y})";
+            return $"({g.X},{g.Y})";
+        }
+
+        // Every distinct reward the pool can roll, as the short labels the rows display —
+        // the option list for the filter dropdown. Built once (the json pool is static).
+        private void EnsureRewardOptions()
+        {
+            if (plannerRewardOptions != null)
+                return;
+            EnsureRitualPool();
+            var set = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in ritualPool)
+                if (row.W > 0 && !string.IsNullOrEmpty(row.Text))
+                    set.Add(ShortModLabel(row.Text));
+            plannerRewardOptions = set.ToList();
+            // Pseudo-entry: match chains containing a two-mod node (both mods are predicted).
+            plannerRewardOptions.Insert(0, TwoModFilterOption);
+        }
+
+        // Settings-window table of per-reward weights (shown while the planner toggle is on).
+        // The planner sorts its route list by the summed weight of each chain's mods, highest
+        // first, so weighted rewards float the best routes to the top. 0 (the default) keeps a
+        // reward neutral; negatives push routes down. Stored sparsely (only nonzero).
+        private void DrawRewardWeightsTable()
+        {
+            EnsureRewardOptions();
+            ImGui.Indent();
+            ImGui.TextUnformatted(this.L("atlas.ritual_weights", "Reward weights"));
+            ImGuiHelper.ToolTip(this.L("atlas.ritual_weights_hint",
+                "Planner routes are sorted by the sum of these weights over the route's predicted " +
+                "rewards, highest first. 0 = neutral; negative pushes a route down the list."));
+            if (ImGui.BeginChild("##ritualWeights", new Vector2(0, 240), ImGuiChildFlags.Borders))
+            {
+                if (ImGui.BeginTable("##ritualWeightsTable", 2,
+                    ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+                {
+                    ImGui.TableSetupColumn(this.L("atlas.weights_reward_col", "Reward"), ImGuiTableColumnFlags.WidthStretch);
+                    ImGui.TableSetupColumn(this.L("atlas.weights_weight_col", "Weight"), ImGuiTableColumnFlags.WidthFixed, 220f);
+                    ImGui.TableHeadersRow();
+                    foreach (var opt in plannerRewardOptions)
+                    {
+                        if (opt == TwoModFilterOption)
+                            continue;   // filter pseudo-entry, not a rollable reward
+                        ImGui.TableNextRow();
+                        ImGui.TableNextColumn();
+                        ImGui.TextUnformatted(opt);
+                        ImGui.TableNextColumn();
+                        int w = Settings.RitualRewardWeights.TryGetValue(opt, out var cur) ? cur : 0;
+                        ImGui.SetNextItemWidth(-1);
+                        if (ImGui.InputInt($"##rw_{opt}", ref w))
+                        {
+                            if (w == 0)
+                                Settings.RitualRewardWeights.Remove(opt);
+                            else
+                                Settings.RitualRewardWeights[opt] = w;
+                            plannerWeightsVersion++;
+                        }
+                    }
+
+                    ImGui.EndTable();
+                }
+            }
+
+            ImGui.EndChild();
+            ImGui.Unindent();
+        }
+
+        // Chain weight = sum of the user's reward weights over every predicted mod on the chain
+        // (both mods of a two-mod node count). Recomputed + re-sorted only when the weights or
+        // the chain set change; ordering is weight DESC, then the path text for stability.
+        private void SortPlannerChains()
+        {
+            var weights = Settings.RitualRewardWeights;
+            foreach (var c in plannerChains)
+            {
+                int w = 0;
+                for (int k = 0; k < c.ShortMods.Count; k++)
+                {
+                    if (weights.TryGetValue(c.ShortMods[k], out var w1))
+                        w += w1;
+                    if (c.ShortMods2[k] != null && weights.TryGetValue(c.ShortMods2[k], out var w2))
+                        w += w2;
+                }
+
+                c.Weight = w;
+            }
+
+            plannerChains.Sort((a, b) => a.Weight != b.Weight
+                ? b.Weight.CompareTo(a.Weight)
+                : string.Compare(a.PathLine, b.PathLine, StringComparison.OrdinalIgnoreCase));
+            plannerChainsWeightsVersion = plannerWeightsVersion;
+        }
+
+        // Enumerate all chains from every root. Cached by (lineId, depth, committed, roots);
+        // rebuilt when the committed line or the eligible-start set changes.
+        private void BuildPlannerChains(IntPtr panel)
+        {
+            if (panel == IntPtr.Zero)
+                return;
+            EnsureRitualPool();
+            if (ritualPool == null || ritualPool.Count == 0)
+                return;
+
+            // Roots: while a line is being drawn its committed frontier is the only root; before
+            // the first pick EVERY node the line could start from (accessible, not blocked) is a
+            // root, so the window lists the whole atlas worth of options at once — no hover
+            // needed, the selected row's ray shows where that start is.
+            var committed = ReadGridVector(IntPtr.Add(panel, PanelCommittedVecOffset));
+            int committedReal = committed.Count;
+            plannerLineActive = committedReal > 0;
+
+            // Ineligible nodes (same game-rule set as BuildRitualPredictions — completed state
+            // or special-category dat row): they keep their candIdx rank but can't join the
+            // line — nor start it. Also grid → display name.
+            var blocked = new HashSet<StdTuple2D<int>>();
+            var gridName = new Dictionary<StdTuple2D<int>, string>(nodeCache.Count);
+            var roots = new List<StdTuple2D<int>>();
+            foreach (var nd in nodeCache)
+            {
+                gridName[nd.GridPosition] = nd.Drawable ? nd.MapName : "???";
+                if (nd.State == AtlasNodeState.CompletedBase
+                    || nd.RitualSpecial
+                    || string.Equals(nd.MapInfo?.Type, "unique", StringComparison.OrdinalIgnoreCase)
+                    || (nd.MapInfo?.HasTag("tower") ?? false)
+                    || (nd.MapInfo?.HasTag("hideout") ?? false))
+                    blocked.Add(nd.GridPosition);
+                else if (!plannerLineActive && nd.State == AtlasNodeState.AccessibleNow)
+                    roots.Add(nd.GridPosition);
+            }
+
+            if (plannerLineActive)
+                roots.Add(committed[^1]);
+            roots.Sort((a, b) => a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
+            plannerStartCount = roots.Count;
+            if (roots.Count == 0)
+            {
+                plannerChains.Clear();
+                plannerSig = null;
+                return;
+            }
+
+            int prefixCount = plannerLineActive ? committedReal : 1;
+            uint lineId = Read<uint>(IntPtr.Add(panel, PanelLineIdOffset));
+
+            var stats = ReadRitualStats(panel);
+            int addl = stats.TryGetValue(StatAdditionalMaps, out var am) ? am
+                     : stats.TryGetValue(StatAdditionalMaps + 1, out var am2) ? am2 : 0;
+            int lineLen = RitualBaseLineLength + Math.Max(0, addl);
+            if (TryReadRitualPickCounter(out var picksLeft))
+                lineLen = committedReal + picksLeft;
+            int maxDepth = Math.Max(0, lineLen - prefixCount);
+            int secondChance = stats.TryGetValue(StatSecondModChance, out var sc) ? sc
+                             : stats.TryGetValue(StatSecondModChance + 1, out var sc2) ? sc2 : 0;
+
+            var sigSb = new StringBuilder();
+            sigSb.Append(lineId).Append('#').Append(maxDepth);
+            foreach (var g in committed)
+                sigSb.Append(';').Append(g.X).Append(',').Append(g.Y);
+            foreach (var g in roots)
+                sigSb.Append('|').Append(g.X).Append(',').Append(g.Y);
+            var sig = sigSb.ToString();
+            if (sig == plannerSig)
+                return;
+            plannerSig = sig;
+            plannerChains.Clear();
+            plannerEnumerated = 0;
+            plannerCapped = false;
+
+            var candTable = ReadCandidateTable(panel,
+                plannerLineActive ? committed[^1] : (StdTuple2D<int>?)null);
+
+            var pool = new List<RitualRow>(ritualPool.Count);
+            foreach (var row in ritualPool)
+            {
+                if (row.W <= 0) continue;
+                if (row.Cond == 0 || stats.ContainsKey(row.Cond) || stats.ContainsKey(row.Cond - 1))
+                    pool.Add(row);
+            }
+
+            if (pool.Count == 0 || maxDepth <= 0)
+            {
+                PrunePlannerSelection();
+                return;
+            }
+
+            // Every start shares the same lineId + pool, and a roll depends only on
+            // (committedCount, candIdx) — memoized, the whole enumeration rolls ≤ ~40 times.
+            var rollMemo = new Dictionary<(uint cc, uint ci), (string First, string Second)>();
+            (string First, string Second) Roll(uint cc, uint ci)
+            {
+                if (!rollMemo.TryGetValue((cc, ci), out var t))
+                    rollMemo[(cc, ci)] = t = PredictMods(lineId, cc, ci, pool, secondChance);
+                return t;
+            }
+
+            // Fair share of the global cap per start, so a branchy early start can't starve
+            // the rest of the atlas out of the list.
+            int perStart = Math.Max(32, PlannerMaxPaths / roots.Count);
+            int startEmitted = 0;
+
+            var path = new List<StdTuple2D<int>>(prefixCount + maxDepth);
+            var mods = new List<(string First, string Second)>();
+            var visited = new HashSet<StdTuple2D<int>>();
+
+            void Emit()
+            {
+                // Game reach check (ritualLineReachCheck 140b775f0): a node is clickable only if
+                // the line can still be completed through it — so a branch that dead-ends short
+                // of full length can never be walked in-game and must not be listed.
+                if (mods.Count < maxDepth)
+                    return;
+                plannerEnumerated++;
+                if (plannerChains.Count >= PlannerMaxPaths || startEmitted >= perStart)
+                {
+                    plannerCapped = true;
+                    return;
+                }
+
+                startEmitted++;
+
+                var nodes = path.GetRange(prefixCount - 1, path.Count - prefixCount + 1);
+                var keySb = new StringBuilder();
+                var nameSb = new StringBuilder();
+                foreach (var g in nodes)
+                {
+                    keySb.Append(g.X).Append(',').Append(g.Y).Append('|');
+                    if (nameSb.Length > 0) nameSb.Append("  >  ");
+                    nameSb.Append(gridName.TryGetValue(g, out var nm) ? nm : "???");
+                }
+
+                var shorts = new List<string>(mods.Count);
+                var shorts2 = new List<string>(mods.Count);
+                var modSb = new StringBuilder();
+                for (int k = 0; k < mods.Count; k++)
+                {
+                    var s = ShortModLabel(mods[k].First);
+                    var s2 = mods[k].Second == null ? null : ShortModLabel(mods[k].Second);
+                    shorts.Add(s);
+                    shorts2.Add(s2);
+                    if (modSb.Length > 0) modSb.Append("   -   ");
+                    modSb.Append(s);
+                    if (s2 != null) modSb.Append(" + ").Append(s2);
+                }
+
+                plannerChains.Add(new PlannerChain
+                {
+                    Key = keySb.ToString(),
+                    Nodes = nodes,
+                    ShortMods = shorts,
+                    ShortMods2 = shorts2,
+                    PathLine = nameSb.ToString(),
+                    ModsLine = modSb.ToString(),
+                });
+            }
+
+            void Dfs(StdTuple2D<int> node, int depth)
+            {
+                if (depth >= maxDepth || plannerChains.Count >= PlannerMaxPaths
+                    || startEmitted >= perStart)
+                {
+                    Emit();
+                    return;
+                }
+
+                if (!candTable.TryGetValue(node, out var raw) || raw.Count == 0)
+                {
+                    Emit();
+                    return;
+                }
+
+                var cands = raw.Where(c => !visited.Contains(c))
+                               .OrderBy(c => c.X).ThenBy(c => c.Y).ToList();
+                uint cc = (uint)(prefixCount + depth);
+                bool any = false;
+                for (int i = 0; i < cands.Count && plannerChains.Count < PlannerMaxPaths
+                    && startEmitted < perStart; i++)
+                {
+                    var cand = cands[i];
+                    if (blocked.Contains(cand))
+                        continue;                 // holds rank i, but can't join the line
+                    var roll = Roll(cc, (uint)i);
+                    if (string.IsNullOrEmpty(roll.First))
+                        continue;
+                    any = true;
+                    path.Add(cand);
+                    mods.Add(roll);
+                    visited.Add(cand);
+                    Dfs(cand, depth + 1);
+                    visited.Remove(cand);
+                    mods.RemoveAt(mods.Count - 1);
+                    path.RemoveAt(path.Count - 1);
+                }
+
+                if (!any)
+                    Emit();
+            }
+
+            foreach (var root in roots)
+            {
+                path.Clear();
+                mods.Clear();
+                visited.Clear();
+                if (plannerLineActive)
+                {
+                    path.AddRange(committed);
+                    visited.UnionWith(committed);
+                }
+                else
+                {
+                    path.Add(root);
+                    visited.Add(root);
+                }
+
+                startEmitted = 0;
+                Dfs(root, 0);
+                if (plannerChains.Count >= PlannerMaxPaths)
+                    break;
+            }
+
+            this.SortPlannerChains();
+            PrunePlannerSelection();
+        }
+
+        // Re-home selections whose chain key vanished. When the line advances ALONG a selected
+        // route, the re-enumeration roots at the new frontier so the same remaining route gets a
+        // shorter key (the old key minus its walked prefix) — carry the palette slot onto that
+        // suffix chain instead of dropping it, so the highlight survives drawing the line.
+        // Selections with no suffix heir (different start / route broken) are dropped.
+        private void PrunePlannerSelection()
+        {
+            if (plannerSelected.Count == 0)
+                return;
+            var alive = new HashSet<string>(plannerChains.Count);
+            foreach (var c in plannerChains)
+                alive.Add(c.Key);
+            var dead = plannerSelected.Keys.Where(k => !alive.Contains(k)).ToList();
+            foreach (var k in dead)
+            {
+                var slot = plannerSelected[k];
+                plannerSelected.Remove(k);
+
+                string heir = null;
+                foreach (var c in plannerChains)
+                {
+                    // Suffix match on whole "x,y|" tokens (guard against "12,3|" vs "2,3|").
+                    if (c.Key.Length >= k.Length || !k.EndsWith(c.Key, StringComparison.Ordinal))
+                        continue;
+                    if (k[k.Length - c.Key.Length - 1] != '|')
+                        continue;
+                    if (plannerSelected.ContainsKey(c.Key))
+                        continue;
+                    if (heir == null || c.Key.Length > heir.Length)
+                        heir = c.Key;
+                }
+
+                if (heir != null)
+                    plannerSelected[heir] = slot;
+            }
+        }
+
+        private int NextPaletteSlot()
+        {
+            var used = new HashSet<int>(plannerSelected.Values);
+            for (int s = 0; ; s++)
+                if (!used.Contains(s))
+                    return s;
+        }
+
+        // Map overlay for the selected chains: a ray from the player marker to the chain's start,
+        // the route polyline, and a reward pill at every picked node.
+        private void DrawPlannerOverlay(ImDrawListPtr drawList, Vector2 playerLocation, float uiScale)
+        {
+            if (plannerSelected.Count == 0 || plannerChains.Count == 0)
+                return;
+
+            var needed = new HashSet<StdTuple2D<int>>();
+            foreach (var c in plannerChains)
+                if (plannerSelected.ContainsKey(c.Key))
+                    foreach (var g in c.Nodes)
+                        needed.Add(g);
+            if (needed.Count == 0)
+                return;
+
+            var centers = new Dictionary<StdTuple2D<int>, Vector2>(needed.Count);
+            foreach (var nd in nodeCache)
+            {
+                if (!needed.Contains(nd.GridPosition))
+                    continue;
+                var ub = Read<UiElementBaseOffset>(nd.Address);
+                var sc = ComputeScalePair(in ub);
+                var tl = GetLeafTopLeft(in ub);
+                centers[nd.GridPosition] = tl + new Vector2(
+                    ub.UnscaledSize.X * sc.X, ub.UnscaledSize.Y * sc.Y) * 0.5f;
+            }
+
+            drawList.ChannelsSetCurrent(ChannelLines);
+            float th = MathF.Max(2f, 2.5f * uiScale);
+            // The ray is a "where to go" pointer for far-off starts; once the start is near
+            // (< 70% of the screen away — the route lines themselves are already in view)
+            // it is just clutter, so only long rays draw.
+            var disp = ImGui.GetIO().DisplaySize;
+            float rayMinLen = 0.7f * MathF.Min(disp.X, disp.Y);
+            foreach (var c in plannerChains)
+            {
+                if (!plannerSelected.TryGetValue(c.Key, out var slot))
+                    continue;
+                var col = ImGuiHelper.Color(PlannerPalette[slot % PlannerPalette.Length]);
+                if (!centers.TryGetValue(c.Nodes[0], out var startC))
+                    continue;
+                if (Vector2.Distance(playerLocation, startC) >= rayMinLen)
+                    drawList.AddLine(playerLocation, startC, col, th);   // ray to the chain's start
+
+                // Ring on the start node — otherwise the route polyline has no readable direction.
+                drawList.AddCircle(startC, 16f * uiScale, col, 0, th);
+                drawList.AddCircle(startC, 20f * uiScale, col, 0, MathF.Max(1f, th * 0.5f));
+                var prev = startC;
+                for (int i = 1; i < c.Nodes.Count; i++)
+                {
+                    if (!centers.TryGetValue(c.Nodes[i], out var pc))
+                        continue;
+                    drawList.AddLine(prev, pc, col, th);
+                    prev = pc;
+                }
+            }
+
+            drawList.ChannelsSetCurrent(ChannelLabels);
+            var pillBg = ImGuiHelper.Color(new Vector4(0.05f, 0.05f, 0.05f, 0.92f));
+            foreach (var c in plannerChains)
+            {
+                if (!plannerSelected.TryGetValue(c.Key, out var slot))
+                    continue;
+                var colV = PlannerPalette[slot % PlannerPalette.Length];
+                var col = ImGuiHelper.Color(colV);
+                for (int i = 1; i < c.Nodes.Count; i++)
+                {
+                    if (!centers.TryGetValue(c.Nodes[i], out var pc))
+                        continue;
+                    var label = c.ShortMods2[i - 1] == null
+                        ? c.ShortMods[i - 1]
+                        : c.ShortMods[i - 1] + " + " + c.ShortMods2[i - 1];
+                    var ts = ImGui.CalcTextSize(label);
+                    var pad = new Vector2(4, 2) * uiScale;
+                    var pos = new Vector2(pc.X - ts.X * 0.5f, pc.Y - ts.Y - 12f * uiScale);
+                    drawList.AddRectFilled(pos - pad, pos + ts + pad, pillBg, 3f * uiScale);
+                    drawList.AddRect(pos - pad, pos + ts + pad, col, 3f * uiScale);
+                    drawList.AddText(pos, col, label);
+                }
+            }
+        }
+
+        // The planner window itself (normal-sized font — drawn outside the FontScaleScope).
+        private void DrawPlannerWindow()
+        {
+            ImGui.SetNextWindowSize(new Vector2(760, 500), ImGuiCond.FirstUseEver);
+            bool open = true;
+            if (!ImGui.Begin(this.Loc.Title("atlas.planner_title", "Head of the king Rewards", "AtlasRitualPlanner"), ref open))
+            {
+                ImGui.End();
+                return;
+            }
+
+            if (!open)
+                Settings.ShowRitualPlanner = false;   // X closes until re-enabled in settings
+
+            // Persisted reward filter: a multi-select dropdown over every reward the pool can
+            // roll; a chain matches when ANY selected reward is in it. Stored as '|'-joined
+            // short labels so it survives restarts.
+            EnsureRewardOptions();
+            if (plannerChainsWeightsVersion != plannerWeightsVersion)
+                this.SortPlannerChains();   // weights edited in settings — re-rank the cached chains
+            var selected = new HashSet<string>(
+                (Settings.RitualRewardFilter ?? string.Empty)
+                    .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                StringComparer.OrdinalIgnoreCase);
+            string preview = selected.Count == 0
+                ? this.L("atlas.planner_filter_hint", "filter by desired rewards (any match shows the path)…")
+                : string.Join(", ", plannerRewardOptions.Where(selected.Contains));
+            ImGui.SetNextItemWidth(MathF.Max(120f, ImGui.GetContentRegionAvail().X - 70f));
+            bool filterChanged = false;
+            if (ImGui.BeginCombo("##plannerFilter", preview, ImGuiComboFlags.HeightLargest))
+            {
+                foreach (var opt in plannerRewardOptions)
+                {
+                    bool on = selected.Contains(opt);
+                    if (ImGui.Checkbox(opt, ref on))
+                    {
+                        if (on) selected.Add(opt);
+                        else selected.Remove(opt);
+                        filterChanged = true;
+                    }
+                }
+
+                ImGui.EndCombo();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button(this.L("atlas.planner_clear", "Clear")) && selected.Count > 0)
+            {
+                selected.Clear();
+                filterChanged = true;
+            }
+
+            if (filterChanged)
+                Settings.RitualRewardFilter = string.Join("|", plannerRewardOptions.Where(selected.Contains));
+
+            // Root summary: the drawn line's frontier, or how many possible starts are listed.
+            if (plannerLineActive && plannerChains.Count > 0)
+                ImGui.TextUnformatted($"{this.L("atlas.planner_start", "Start:")} {GridDisplayName(plannerChains[0].Nodes[0])}");
+            else
+                ImGui.TextDisabled($"{this.L("atlas.planner_starts", "Possible starts:")} {plannerStartCount}");
+
+            // Filter + count, then rows.
+            var visible = new List<PlannerChain>(Math.Min(plannerChains.Count, PlannerMaxRows));
+            int matchTotal = 0;
+            foreach (var c in plannerChains)
+            {
+                // Ticked chains always stay listed — a route being walked must not drop out when
+                // the reward that matched the filter was on an already-committed node.
+                bool isSelected = plannerSelected.ContainsKey(c.Key);
+                if (!isSelected && selected.Count > 0)
+                {
+                    bool wantTwo = selected.Contains(TwoModFilterOption);
+                    bool ok = false;
+                    for (int k = 0; k < c.ShortMods.Count && !ok; k++)
+                        ok = selected.Contains(c.ShortMods[k])
+                            || (c.ShortMods2[k] != null
+                                && (wantTwo || selected.Contains(c.ShortMods2[k])));
+
+                    if (!ok)
+                        continue;
+                }
+
+                matchTotal++;
+                if (visible.Count < PlannerMaxRows)
+                    visible.Add(c);
+                else if (isSelected)
+                    visible.Add(c);   // never row-cap a ticked chain out of sight
+            }
+
+            var counts = $"{this.L("atlas.planner_shown", "Shown:")} {visible.Count}"
+                + (matchTotal > visible.Count ? $" ({this.L("atlas.planner_of", "of")} {matchTotal})" : string.Empty)
+                + $"  |  {this.L("atlas.planner_chains", "chains:")} {plannerChains.Count}"
+                + (plannerCapped ? $" ({this.L("atlas.planner_capped", "capped")})" : string.Empty);
+            ImGui.TextDisabled(counts);
+            ImGui.Separator();
+
+            ImGui.BeginChild("##plannerRows");
+            var modColor = new Vector4(0.45f, 0.75f, 1f, 1f);
+            for (int i = 0; i < visible.Count; i++)
+            {
+                var c = visible[i];
+                bool sel = plannerSelected.ContainsKey(c.Key);
+                if (ImGui.Checkbox($"##plannerSel{i}", ref sel))
+                {
+                    if (sel)
+                        plannerSelected[c.Key] = NextPaletteSlot();
+                    else
+                        plannerSelected.Remove(c.Key);
+                }
+
+                ImGui.SameLine();
+                if (plannerSelected.TryGetValue(c.Key, out var slot))
+                {
+                    ImGui.ColorButton($"##plannerCol{i}", PlannerPalette[slot % PlannerPalette.Length],
+                        ImGuiColorEditFlags.NoTooltip | ImGuiColorEditFlags.NoDragDrop, new Vector2(14, 14));
+                    ImGui.SameLine();
+                }
+
+                ImGui.BeginGroup();
+                ImGui.TextUnformatted(c.PathLine);
+                if (c.Weight != 0)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled($"[{c.Weight:+0;-0}]");
+                }
+
+                ImGui.TextColored(modColor, c.ModsLine);
+                ImGui.EndGroup();
+                ImGui.Separator();
+            }
+
+            ImGui.EndChild();
+            ImGui.End();
+        }
+
+        // RE ground-truth collector: snapshot the ritual atlas line to config/ritual_roll_log.jsonl.
+        // One JSON line per distinct (lineId + committed grids + each line-node's rolled mod text)
+        // state. Committed nodes carry posIdx = their index; the pending set are the next candidates
+        // (posIdx = committed count). Only runs while a line exists, so idle frames cost one read.
+        private void LogRitualSnapshot(IntPtr panel)
+        {
+            if (panel == IntPtr.Zero)
+                return;
+
+            var committed = ReadGridVector(IntPtr.Add(panel, PanelCommittedVecOffset));
+            var pending = ReadGridVector(IntPtr.Add(panel, PanelPendingVecOffset));
+            if (committed.Count == 0 && pending.Count == 0)
+                return; // no active line — nothing to log
+
+            uint lineId = Read<uint>(IntPtr.Add(panel, PanelLineIdOffset));
+
+            // Precomputed next-candidate table: node(x,y) -> its raw ≤5 candidates. Lets the offline
+            // solver reconstruct the exact candIdx (rank among a frontier's candidates), which the
+            // clicked-only pending set can't (an unclicked candidate still shifts every rank).
+            var candTable = ReadCandidateTable(panel,
+                committed.Count > 0 ? committed[committed.Count - 1] : (StdTuple2D<int>?)null);
+            List<int[]> CandsOf(StdTuple2D<int> g) =>
+                candTable.TryGetValue(g, out var cs)
+                    ? cs.Select(c => new[] { c.X, c.Y }).ToList()
+                    : new List<int[]>();
+
+            // grid → node address (from the already-built cache).
+            var gridToAddr = new Dictionary<StdTuple2D<int>, IntPtr>(nodeCache.Count);
+            foreach (var nd in nodeCache)
+                gridToAddr[nd.GridPosition] = nd.Address;
+
+            var entries = new List<object>();
+            void Collect(List<StdTuple2D<int>> grids, string vecName, int basePos)
+            {
+                for (int i = 0; i < grids.Count; i++)
+                {
+                    var g = grids[i];
+                    string text = null;
+                    if (gridToAddr.TryGetValue(g, out var addr) && addr != IntPtr.Zero)
+                    {
+                        var child = Read<IntPtr>(IntPtr.Add(addr, RitualModsChildOffset));
+                        if (child != IntPtr.Zero)
+                            text = ReadGameWString(IntPtr.Add(child, TextElementTextOffset));
+                    }
+                    entries.Add(new
+                    {
+                        vec = vecName,
+                        idx = i,
+                        posIdx = basePos + i,
+                        x = g.X,
+                        y = g.Y,
+                        text = string.IsNullOrWhiteSpace(text) ? null : text,
+                        cands = CandsOf(g),
+                    });
+                }
+            }
+
+            Collect(committed, "committed", 0);
+            Collect(pending, "pending", committed.Count);
+
+            // Only snapshots where at least one node has rolled text are useful ground truth.
+            if (!entries.Any(e => ((dynamic)e).text != null))
+                return;
+
+            // The frontier ritualLineToggleNode enumerates from = the LAST committed node; its raw
+            // candidate set is what the next clicked node is ranked within.
+            var frontierCands = committed.Count > 0 ? CandsOf(committed[committed.Count - 1])
+                                                    : new List<int[]>();
+
+            // "Select N maps" header — logged to verify it really decrements per committed pick
+            // (the prediction depth override assumes it does).
+            int? pickCounter = TryReadRitualPickCounter(out var pc) ? pc : null;
+
+            var snapshot = new
+            {
+                lineId,
+                committedCount = committed.Count,
+                pendingCount = pending.Count,
+                pickCounter,
+                frontierCands,
+                entries,
+            };
+
+            // Signature = lineId + every (posIdx,x,y,text): dedup identical states across frames.
+            var sig = new StringBuilder();
+            sig.Append(lineId).Append('|').Append(committed.Count).Append('|').Append(pickCounter ?? -1);
+            foreach (dynamic e in entries)
+                sig.Append(';').Append(e.posIdx).Append(',').Append(e.x).Append(',').Append(e.y)
+                   .Append('=').Append((string)e.text ?? "");
+            if (!ritualLogSeen.Add(sig.ToString()))
+                return;
+
+            try
+            {
+                var dir = Path.GetDirectoryName(RitualRollLogPathname);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+                if (!ritualLogHeaderDone && !File.Exists(RitualRollLogPathname))
+                    File.AppendAllText(RitualRollLogPathname,
+                        "// Ritual Rite-mod roll ground-truth. One JSON snapshot per line state.\n");
+                ritualLogHeaderDone = true;
+                File.AppendAllText(RitualRollLogPathname,
+                    JsonConvert.SerializeObject(snapshot) + "\n");
+            }
+            catch { /* logging must never break the overlay */ }
+        }
+
         public static string ReadWideString(nint address, int stringLength)
         {
             if (address == IntPtr.Zero || stringLength <= 0)
@@ -4066,8 +4646,13 @@ namespace Atlas
 
         private static IntPtr WalkFp(IntPtr parentAddr, uint[] fps, int gateStep, int step)
         {
+            // Terminal step: the fp triplet Panel→Gate→NodeList is NOT unique to the endgame
+            // atlas — the campaign world-map screen has a same-shaped visible branch whose leaf
+            // holds a few non-node children, and reading atlas state (e.g. the ritual line-mode
+            // byte at +0x637) off that stranger container yields garbage (planner window popping
+            // up on an act map). A real atlas node list is recognized by its children.
             if (step == fps.Length)
-                return parentAddr;
+                return HasAtlasNodeChild(parentAddr) ? parentAddr : IntPtr.Zero;
 
             var parent = Read<UiElement>(parentAddr);
             int n = parent.Length;
@@ -4102,6 +4687,28 @@ namespace Atlas
                 }
             }
             return IntPtr.Zero;
+        }
+
+        // True when the container holds at least one atlas map node (fp 0x542EF3) or mist node
+        // (fp 0x442EF3) among its first children — the leaf check that tells the real endgame
+        // atlas node list apart from same-fp-shaped containers on other world-map pages. The
+        // real list is ~470+ nodes, so scanning a small prefix is enough (and a loading-frame
+        // list with no nodes yet is correctly rejected until it fills).
+        private static bool HasAtlasNodeChild(IntPtr containerAddr)
+        {
+            var container = Read<UiElement>(containerAddr);
+            int n = Math.Min(container.Length, 64);
+            for (int i = 0; i < n; i++)
+            {
+                var childAddr = container.GetChildAddress(i);
+                if (childAddr == IntPtr.Zero)
+                    continue;
+                uint f = Read<uint>(IntPtr.Add(childAddr, 0x180)) & ~IsVisibleMask;
+                if (f == (AtlasMapNodeFp & ~IsVisibleMask) || f == (AtlasMistNodeFp & ~IsVisibleMask))
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool InventoryPanel()

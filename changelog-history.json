@@ -1,28 +1,47 @@
 ﻿{
     "releases":  [
                      {
-                         "version":  "1.4.5",
-                         "published":  "2026-07-05T06:25:06.0656389Z",
+                         "version":  "1.4.6",
+                         "published":  "2026-07-07T14:32:49.4336390Z",
                          "changelog":  [
-                                           "Port MordWraith v1.4.5 Runecraft Expedition planner updates",
-                                           "Add GameHelper localization framework and plugin language assets",
-                                           "Update StashUtility filters and in-game safety checks",
-                                           "Preserve fork-specific ClientPatches and Atlas research behavior"
+                                           "New: PickupHelper (Gordin)",
+                                           "Atlas: 0.3.0 (yokkenUA)"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.5",
+                         "published":  "2026-07-05T04:46:46.1503054Z",
+                         "changelog":  [
+                                           "Update: RuneCrafthelper",
+                                           "Gordin Merge for localization",
+                                           "RunecraftHelper/ Atlas / SekhemaHelper / Atlas: UI localization  11 languages",
+                                           "RunecraftHelper:   Expedition planner fixes"
                                        ]
                      },
                      {
                          "version":  "1.4.4",
-                         "published":  "2026-07-03T04:14:47.8988796Z",
+                         "published":  "2026-07-02T15:06:45.3658571Z",
                          "changelog":  [
-                                           "Port MordWraith v1.4.4 LootTracker and StashUtility updates",
-                                           "Include Atlas logbook preview research changes"
+                                           "[Fix] hides Radar/Health Bars correctly when Atlas skill tree is opened (Gordin)",
+                                           "New: StashUtility (Tenchi)"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.3",
+                         "published":  "2026-06-29T16:36:39.1970826Z",
+                         "changelog":  [
+                                           "Atlas: Sea node content detection fixed; Overlapping routes stay readable",
+                                           "Controller support for Autopot (NicoFasho)",
+                                           "New Offsets by Immo",
+                                           "New:  LootTracker: Big quality-of-life drop for LootTracker (yokkenUA)"
                                        ]
                      },
                      {
                          "version":  "1.4.2",
-                         "published":  "2026-06-25T14:02:15.7394075Z",
+                         "published":  "2026-06-26T12:18:26.0552997Z",
                          "changelog":  [
-                                           "Version 1.4.2 release || Version 1.4.2 Release"
+                                           "Gordin core 2.4.2: MouseOverEntity, Expedition Radar icons",
+                                           "New: fixed overlay price issue on non-english game clients by yokkenUA"
                                        ]
                      },
                      {

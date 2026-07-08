@@ -104,7 +104,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         public EntitySubtypes EntitySubtype { get; protected set; }
 
         /// <summary>
-        ///     Gets the custom group given to a <see cref="EntityTypes.Monster"/> entity type by the user.
+        ///     Gets the custom group given to a watched entity by the user.
         /// </summary>
         public int EntityCustomGroup => this.EntitySubtype == EntitySubtypes.POIMonster ||
             this.EntityType == EntityTypes.OtherImportantObjects ? this.customGroup : 0;
@@ -566,6 +566,12 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             {
                 return false;
             }
+            else if (this.IsInSpecialMiscObjPaths())
+            {
+                // User watched paths win over built-in type classifiers so a custom
+                // group can force an icon for chests, NPCs, monsters, or renderables.
+                this.EntityType = EntityTypes.OtherImportantObjects;
+            }
             else if (this.TryGetComponent<Chest>(out var _))
             {
                 this.EntityType = EntityTypes.Chest;
@@ -577,10 +583,6 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             else if (this.TryGetComponent<Shrine>(out var _))
             {
                 this.EntityType = EntityTypes.Shrine;
-            }
-            else if (this.IsInSpecialMiscObjPaths())
-            {
-                this.EntityType = EntityTypes.OtherImportantObjects;
             }
             else if (this.TryGetComponent<Life>(out var _))
             {
@@ -794,7 +796,22 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         private void CalculateEntityState()
         {
-            if (this.EntityType == EntityTypes.Chest)
+            if (this.EntityType == EntityTypes.OtherImportantObjects)
+            {
+                if (this.TryGetComponent<Chest>(out var chestComp) && chestComp.IsOpened)
+                {
+                    this.EntityState = EntityStates.Useless;
+                }
+                else if (this.TryGetComponent<Life>(out var lifeComp, false) && !lifeComp.IsAlive)
+                {
+                    this.EntityState = EntityStates.Useless;
+                }
+                else
+                {
+                    this.EntityState = EntityStates.None;
+                }
+            }
+            else if (this.EntityType == EntityTypes.Chest)
             {
                 if (this.TryGetComponent<Chest>(out var chestComp) && chestComp.IsOpened)
                 {

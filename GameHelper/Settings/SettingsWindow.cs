@@ -1,4 +1,4 @@
-﻿// <copyright file="SettingsWindow.cs" company="None">
+// <copyright file="SettingsWindow.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -6,6 +6,7 @@ namespace GameHelper.Settings
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.Linq;
     using System.Numerics;
     using ClickableTransparentOverlay;
@@ -29,7 +30,11 @@ namespace GameHelper.Settings
         private static Vector4 color = new(1f, 1f, 0f, 1f);
         private static bool isOverlayRunningLocal = true;
         private static bool isSettingsWindowVisible = true;
-
+        private static bool settingsDirty;
+        private static bool shutdownSaveCompleted;
+        private static DateTime lastSettingsSavedUtc = DateTime.MinValue;
+        private static string lastSettingsSaveReason = "never";
+        private static string lastSettingsSaveError = string.Empty;
         private static EntityFilterType efilterType = EntityFilterType.PATH;
         private static string filterText = string.Empty;
         private static Rarity erarity = Rarity.Normal;
@@ -41,6 +46,31 @@ namespace GameHelper.Settings
         private static string specialMiscObjPath = string.Empty;
 
         private static string monterPathToIgnore = string.Empty;
+
+        private static readonly Dictionary<string, string> PluginSources = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["AmanamuVoidAlert"] = "MordWraith/AmanamuVoidAlert",
+            ["Atlas"] = "yokkenUA/Atlas",
+            ["AuraTracker"] = "MordWraith/AuraTracker",
+            ["AutoHotKeyTrigger"] = "GameHelper2 upstream",
+            ["AutoPot"] = "MordWraith/Autopot",
+            ["Autopot"] = "MordWraith/Autopot",
+            ["ClientPatches"] = "GameHelper2 upstream",
+            ["HealthBars"] = "GameHelper2 upstream",
+            ["Hiveblood"] = "MordWraith/Hiveblood",
+            ["LootTracker"] = "yokkenUA/LootTracker",
+            ["LootValue"] = "GameHelper2 upstream",
+            ["PickupHelper"] = "GameHelper2 upstream",
+            ["PlayerBuffBar"] = "MordWraith/PlayerBuffBar",
+            ["PreloadAlert"] = "GameHelper2 upstream",
+            ["Radar"] = "GameHelper2 upstream",
+            ["RitualHelper"] = "MordWraith/RitualHelper",
+            ["RunecraftHelper"] = "yokkenUA/RunecraftHelper",
+            ["SekhemaHelper"] = "yokkenUA/SekhemaHelper",
+            ["SimpleBars"] = "MordWraith/SimpleBars",
+            ["StashUtility"] = "GameHelper2 upstream",
+            ["StashValueByZx0"] = "zx0CF1/StashValue",
+        };
 
 #if DEBUG
         private static string pluginForHotReload = string.Empty;
@@ -75,7 +105,10 @@ namespace GameHelper.Settings
             ImGui.TextDisabled("|");
             ImGui.SameLine();
             ImGui.TextDisabled(L.F("settings.menu.hide_show", "Hide/show menu: {0}", Core.GHSettings.MainMenuHotKey));
-
+            ImGui.SameLine();
+            ImGui.TextDisabled("|");
+            ImGui.SameLine();
+            DrawSaveStatusMenuBar();
 #if DEBUG
             ImGui.SameLine();
             ImGui.Checkbox(L.Label("settings.debug.imgui_demo", "ImGui Demo", "ImGuiDemo"), ref showImGuiDemo);
@@ -88,6 +121,39 @@ namespace GameHelper.Settings
             ImGui.EndMenuBar();
         }
 
+
+        private static void DrawSaveStatusMenuBar()
+        {
+            var savedText = lastSettingsSavedUtc == DateTime.MinValue
+                ? L.T("settings.save.not_saved", "not saved this run")
+                : L.F("settings.save.saved_time", "saved {0}", lastSettingsSavedUtc.ToLocalTime().ToString("HH:mm:ss"));
+            var status = settingsDirty
+                ? L.F("settings.save.unsaved_status", "unsaved changes, {0}", savedText)
+                : savedText;
+
+            if (!string.IsNullOrEmpty(lastSettingsSaveError))
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.Danger);
+                ImGui.TextDisabled(L.F("settings.save.error", "save error: {0}", lastSettingsSaveError));
+                ImGui.PopStyleColor();
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, settingsDirty ? new Vector4(1f, 0.75f, 0.25f, 1f) : ImGuiTheme.Success);
+                ImGui.TextDisabled(status);
+                ImGui.PopStyleColor();
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip(L.F("settings.save.last_reason", "Last save reason: {0}", lastSettingsSaveReason));
+                }
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton(L.Label("settings.save.now", "Save now", "SaveNow")))
+            {
+                ForceSaveAllSettings("manual");
+            }
+        }
         private static void DrawTabs()
         {
             if (ImGui.BeginTabBar("settingsTabBar", ImGuiTabBarFlags.AutoSelectNewTabs | ImGuiTabBarFlags.Reorderable))
@@ -178,14 +244,15 @@ namespace GameHelper.Settings
 
             if (!ImGui.BeginTable(
                 "pluginTable",
-                4,
+                5,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersOuter | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY,
                 new Vector2(0, 0)))
             {
                 return;
             }
 
-            ImGui.TableSetupColumn(L.T("settings.plugin.column.plugin", "Plugin"), ImGuiTableColumnFlags.WidthStretch, 0.45f);
+            ImGui.TableSetupColumn(L.T("settings.plugin.column.plugin", "Plugin"), ImGuiTableColumnFlags.WidthStretch, 0.35f);
+            ImGui.TableSetupColumn(L.T("settings.plugin.column.source", "Source"), ImGuiTableColumnFlags.WidthStretch, 0.42f);
             ImGui.TableSetupColumn(L.T("settings.plugin.column.description", "Description"), ImGuiTableColumnFlags.WidthStretch, 1.0f);
             ImGui.TableSetupColumn(L.T("settings.plugin.column.status", "Status"), ImGuiTableColumnFlags.WidthFixed, 70f);
             ImGui.TableSetupColumn(L.T("settings.plugin.column.enable", "Enable"), ImGuiTableColumnFlags.WidthFixed, 60f);
@@ -197,6 +264,16 @@ namespace GameHelper.Settings
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
                 ImGui.Text(container.Name);
+                ImGui.TableNextColumn();
+                ImGui.AlignTextToFramePadding();
+                if (!PluginSources.TryGetValue(container.Name, out var source) || string.IsNullOrWhiteSpace(source))
+                {
+                    ImGui.TextDisabled("-");
+                }
+                else
+                {
+                    DrawPluginSourceLink(container.Name, source, compact: true);
+                }
 
                 ImGui.TableNextColumn();
                 ImGui.AlignTextToFramePadding();
@@ -241,6 +318,68 @@ namespace GameHelper.Settings
             ImGui.EndTable();
         }
 
+
+        private static void DrawPluginSourceLink(string pluginName, string source, bool compact = false)
+        {
+            var url = GetPluginSourceUrl(pluginName, source);
+            if (string.IsNullOrEmpty(url))
+            {
+                ImGui.TextDisabled(source);
+                return;
+            }
+
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGuiTheme.Accent);
+            ImGui.TextUnformatted(compact ? source : url);
+            ImGui.PopStyleColor();
+
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                ImGui.SetTooltip(url);
+            }
+
+            if (ImGui.IsItemClicked())
+            {
+                OpenUrl(url);
+            }
+        }
+
+        private static string GetPluginSourceUrl(string pluginName, string source)
+        {
+            if (source.Contains("/", StringComparison.Ordinal))
+            {
+                return $"https://github.com/{source}";
+            }
+
+            if (source.Equals("GameHelper2 upstream", StringComparison.OrdinalIgnoreCase))
+            {
+                return "https://github.com/Gordin/GameHelper2";
+            }
+
+            var normalized = pluginName.Replace(" ", string.Empty, StringComparison.OrdinalIgnoreCase);
+            if (PluginSources.TryGetValue(normalized, out var normalizedSource) && normalizedSource.Contains("/", StringComparison.Ordinal))
+            {
+                return $"https://github.com/{normalizedSource}";
+            }
+
+            return string.Empty;
+        }
+
+        private static void OpenUrl(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SettingsWindow] Failed to open plugin source URL '{url}': {ex.Message}");
+            }
+        }
         private static void SetAllPlugins(bool enabled)
         {
             foreach (var container in PManager.Plugins)
@@ -267,7 +406,7 @@ namespace GameHelper.Settings
                 container.Plugin.OnDisable();
             }
 
-            CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
+            QueueSettingsSave("plugin toggle");
         }
 
         /// <summary>
@@ -302,7 +441,7 @@ namespace GameHelper.Settings
             DrawPoiWidget();
             DrawMonstersToIgnore();
             DrawNPCWidget();
-            DrawMiscObjWidget();
+            DrawWatchedEntityWidget();
 
             ImGuiTheme.SectionHeader(L.T("settings.advanced.title", "Advanced"));
             DrawMiscConfig();
@@ -338,7 +477,7 @@ namespace GameHelper.Settings
                     if (ImGui.Selectable(L.DisplayName(language), selected))
                     {
                         Core.GHSettings.UiLanguage = language;
-                        CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
+                        QueueSettingsSave("language changed");
                     }
 
                     if (selected)
@@ -624,11 +763,11 @@ namespace GameHelper.Settings
         }
 
         /// <summary>
-        ///     Draws the ImGui widget for defining important MiscellaneousObjects.
+        ///     Draws the ImGui widget for defining watched entities.
         /// </summary>
-        private static void DrawMiscObjWidget()
+        private static void DrawWatchedEntityWidget()
         {
-            var isOpened = ImGui.CollapsingHeader(L.Title("settings.object.title", "Special Objects Metadata Paths", "SpecialObjectsMetadataPaths"));
+            var isOpened = ImGui.CollapsingHeader(L.Title("settings.object.title", "Universal Entity Watch List", "UniversalEntityWatchList"));
             ImGuiHelper.ToolTip(
                 L.T(
                     "settings.object.tooltip",
@@ -636,7 +775,7 @@ namespace GameHelper.Settings
             if (isOpened)
             {
                 ImGui.TextWrapped(L.T("settings.common.restart_or_zone", "Please restart gamehelper or change area/zone if you make any changes over here."));
-                ImGui.InputText(L.Label("settings.object.path", "Object Path", "MiscObjWidgetPath"), ref specialMiscObjPath, 200);
+                ImGui.InputText(L.Label("settings.object.path", "Entity Path", "WatchedEntityPath"), ref specialMiscObjPath, 200);
                 ImGuiHelper.ToolTip(
                     L.T(
                         "settings.common.path_match.tooltip",
@@ -868,6 +1007,8 @@ namespace GameHelper.Settings
                 ImGui.Separator();
                 if (ImGui.Button(L.Label("settings.confirm.yes", "Yes", "ConfirmQuitYes"), new Vector2(ImGui.GetContentRegionAvail().X / 2f, ImGui.GetTextLineHeight() * 2)))
                 {
+                    ForceSaveAllSettings("exit confirmed");
+                    shutdownSaveCompleted = true;
                     Core.GHSettings.IsOverlayRunning = false;
                     ImGui.CloseCurrentPopup();
                     isOverlayRunningLocal = true;
@@ -910,7 +1051,7 @@ namespace GameHelper.Settings
                     ImGui.GetIO().WantCaptureMouse = true;
                     if (!isSettingsWindowVisible)
                     {
-                        CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
+                        QueueSettingsSave("menu hidden");
                     }
                 }
 
@@ -928,13 +1069,15 @@ namespace GameHelper.Settings
 
                 if (!isOverlayRunningLocal)
                 {
+                    ForceSaveAllSettings("window close requested");
                     ImGui.OpenPopup("GameHelperCloseConfirmation");
                 }
 
                 DrawConfirmationPopup();
-                if (!Core.GHSettings.IsOverlayRunning)
+                if (!Core.GHSettings.IsOverlayRunning && !shutdownSaveCompleted)
                 {
-                    CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
+                    ForceSaveAllSettings("overlay shutdown");
+                    shutdownSaveCompleted = true;
                 }
 
                 if (!isMainMenuExpanded)
@@ -949,6 +1092,31 @@ namespace GameHelper.Settings
             }
         }
 
+        private static void QueueSettingsSave(string reason)
+        {
+            settingsDirty = true;
+            lastSettingsSaveReason = reason;
+            CoroutineHandler.RaiseEvent(GameHelperEvents.TimeToSaveAllSettings);
+        }
+
+        private static void ForceSaveAllSettings(string reason)
+        {
+            try
+            {
+                JsonHelper.SafeToFile(Core.GHSettings, State.CoreSettingFile);
+                PManager.ForceSaveAllPluginSettings();
+                lastSettingsSavedUtc = DateTime.UtcNow;
+                lastSettingsSaveReason = reason;
+                lastSettingsSaveError = string.Empty;
+                settingsDirty = false;
+            }
+            catch (Exception ex)
+            {
+                lastSettingsSaveError = ex.Message;
+                Console.WriteLine($"[SettingsWindow.ForceSaveAllSettings] {reason}: {ex}");
+            }
+        }
+
         /// <summary>
         ///     Saves the GameHelper settings to disk.
         /// </summary>
@@ -958,7 +1126,7 @@ namespace GameHelper.Settings
             while (true)
             {
                 yield return new Wait(GameHelperEvents.TimeToSaveAllSettings);
-                JsonHelper.SafeToFile(Core.GHSettings, State.CoreSettingFile);
+                ForceSaveAllSettings("save event");
             }
         }
     }

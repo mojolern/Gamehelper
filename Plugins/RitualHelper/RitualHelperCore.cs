@@ -31,7 +31,7 @@ namespace RitualHelper
         private const int UiElementTextOffset = 0x390;
 
         // Signature strings that only render while the ritual tribute shop is open.
-        private static readonly string[] RitualSignatureTexts = { "Rituals Remaining", "tribute to the king" };
+        private static readonly string[] RitualSignatureTexts = { "Rituals Remaining", "tribute to the king", "Favours", "Reroll Rewards", "Defer Reward", "Defer" };
 
         private MethodInfo? readUiOffsetMethod;
         private MethodInfo? readStdVectorMethod;
@@ -48,12 +48,18 @@ namespace RitualHelper
         private readonly Dictionary<string, double> sessionStablePriceChaos = new(StringComparer.OrdinalIgnoreCase);
         private object? uiParentsObj;
         private DateTime nextPriceRecomputeUtc = DateTime.MinValue;
+        private DateTime nextDetectionErrorLogUtc = DateTime.MinValue;
+        private DateTime nextStatusLogUtc = DateTime.MinValue;
+        private bool loggedFirstInGameDraw;
+        private DateTime nextPriceSummaryLogUtc = DateTime.MinValue;
 
-        // BFS fallback: only runs when the fast index chain is structurally broken (post-patch).
+        // BFS fallback: runs when the fast index chain is broken or no longer points at the reward grid.
         private IntPtr scannedGridAddr = IntPtr.Zero;
         private DateTime nextScanUtc = DateTime.MinValue;
 
         private string SettingPathname => Path.Join(this.DllDirectory, "config", "settings.txt");
+
+        private string LogPathname => Path.Join(this.DllDirectory, "config", "ritualhelper.log");
 
         public override void DrawSettings()
         {
@@ -255,8 +261,23 @@ namespace RitualHelper
         {
             try
             {
-            if (!this.Settings.ShowOverlay && !this.Settings.DebugMode) return;
-            if (Core.States.GameCurrentState != GameStateTypes.InGameState) return;
+            if (!this.Settings.ShowOverlay && !this.Settings.DebugMode)
+            {
+                this.LogStatusThrottled("DrawUI skipped: ShowOverlay=false and DebugMode=false.", 30);
+                return;
+            }
+
+            if (Core.States.GameCurrentState != GameStateTypes.InGameState)
+            {
+                this.LogStatusThrottled($"DrawUI waiting: GameCurrentState={Core.States.GameCurrentState}.", 30);
+                return;
+            }
+
+            if (!this.loggedFirstInGameDraw)
+            {
+                this.loggedFirstInGameDraw = true;
+                this.LogStatus("DrawUI active in game; starting ritual window scan.");
+            }
 
             PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League ?? string.Empty, this.Settings.RefreshIntervalMin);
             PoeNinjaPriceFetcher.RefreshIfNeeded();
@@ -277,7 +298,11 @@ namespace RitualHelper
 
                     var handleProp = typeof(GameProcess).GetProperty("Handle", BindingFlags.Instance | BindingFlags.NonPublic);
                     this.handleObj = handleProp?.GetValue(Core.Process);
-                    if (this.handleObj == null) return;
+                    if (this.handleObj == null)
+                    {
+                        this.LogStatusThrottled("GameProcess handle unavailable; cannot scan UI yet.", 15);
+                        return;
+                    }
 
                     var methods = this.handleObj.GetType().GetMethods(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
                     var readMemMethod = System.Linq.Enumerable.First(methods, m => m.Name == "ReadMemory" && m.IsGenericMethod && m.GetParameters().Length == 1);
@@ -321,17 +346,19 @@ namespace RitualHelper
                 var ritualWindowOpen = false;
                 UiElementBaseOffset ritualWindowOffset = default;
 
-                if (!this.Settings.ForceBfsFallback && fastChainValid &&
-                    this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { ritualWindowAddr }) is UiElementBaseOffset fastOffset)
+                if (!this.Settings.ForceBfsFallback &&
+                    fastChainValid &&
+                    this.TryResolveFastPathRitualWindow(ritualWindowAddr, out ritualWindowOffset))
                 {
-                    ritualWindowOffset = fastOffset;
                     haveWindow = true;
-                    ritualWindowOpen = UiElementBaseFuncs.IsVisibleChecker(fastOffset.Flags);
+                    ritualWindowOpen = true;
                 }
-                else if (this.TryScanRitualWindowThrottled(gameUiAddr, out var scanAddr) &&
-                         this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { scanAddr }) is UiElementBaseOffset scanOffset)
+
+                if (!ritualWindowOpen &&
+                    this.TryScanRitualWindowThrottled(gameUiAddr, out var scanAddr) &&
+                    this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { scanAddr }) is UiElementBaseOffset scanOffset)
                 {
-                    // Fast chain broke (post-patch); the BFS located the reward grid by signature text.
+                    // Fast path missed or pointed at the wrong UI element; the BFS located the reward grid by signature text.
                     ritualWindowOffset = scanOffset;
                     haveWindow = true;
                     ritualWindowOpen = true; // a grid with reward items was found -> shop is open
@@ -347,10 +374,23 @@ namespace RitualHelper
 
                 this.wasRitualWindowOpen = ritualWindowOpen;
 
+                if (!ritualWindowOpen)
+                {
+                    this.LogStatusThrottled(
+                        $"Ritual window not found. mainChildren={mainChildren.Length}, fastChainValid={fastChainValid}, forceBfs={this.Settings.ForceBfsFallback}, cachedGrid=0x{this.scannedGridAddr.ToInt64():X}.",
+                        5);
+                }
+
                 if (haveWindow && ritualWindowOpen && this.Settings.ShowOverlay)
+                {
+                    this.LogStatusThrottled("Ritual window detected; drawing prices.", 10);
                     this.DrawRitualPrices(ritualWindowOffset);
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                this.LogDetectionError(ex);
+            }
 
             if (this.Settings.DebugMode)
             {
@@ -383,8 +423,17 @@ namespace RitualHelper
             var itemUiElementsObj = this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { ritualWindowOffset.ChildrensPtr });
             if (itemUiElementsObj is not IntPtr[] itemUiElements)
             {
+                this.LogPriceSummary(0, 0, 0, 0, 0, 0, "item-ui-vector-read-failed");
                 return;
             }
+
+            var visibleSlots = 0;
+            var itemPointers = 0;
+            var namedItems = 0;
+            var pricedItems = 0;
+            var noPriceItems = 0;
+            var filteredByMinValue = 0;
+            var skippedNoUiElement = 0;
 
             var priceLabels = this.cachedPriceLabels;
             priceLabels.Clear();
@@ -401,6 +450,7 @@ namespace RitualHelper
                 }
 
                 if (!UiElementBaseFuncs.IsVisibleChecker(itemUiOffset.Flags)) continue;
+                visibleSlots++;
 
                 object? uiElementObj = parentsObj == null
                     ? null
@@ -419,6 +469,7 @@ namespace RitualHelper
 
                 if (ptr != IntPtr.Zero)
                 {
+                    itemPointers++;
                     var itemInstance = ItemModHelper.ReadFreshItem(ptr);
                     if (itemInstance != null && !string.IsNullOrEmpty(itemInstance.Path))
                     {
@@ -426,6 +477,7 @@ namespace RitualHelper
                         var parts = itemInstance.Path.Split('/');
                         if (parts.Length > 0)
                         {
+                            namedItems++;
                             internalNameOnly = parts[^1];
                             itemName = this.GetPrettyName(internalNameOnly, out _);
                         }
@@ -487,7 +539,11 @@ namespace RitualHelper
                     }
                 }
 
-                if (uiElementObj == null) continue;
+                if (uiElementObj == null)
+                {
+                    skippedNoUiElement++;
+                    continue;
+                }
 
                 var screenPos = (Vector2)PluginUiElementReflection.UiElementPositionProperty!.GetValue(uiElementObj)!;
                 var size = (Vector2)PluginUiElementReflection.UiElementSizeProperty!.GetValue(uiElementObj)!;
@@ -499,6 +555,10 @@ namespace RitualHelper
                 var diagFontSize = ImGui.GetFontSize() * this.Settings.PriceFontScale * 0.8f;
                 if (priceInfo == null)
                 {
+                    if (!string.IsNullOrEmpty(internalNameOnly))
+                    {
+                        noPriceItems++;
+                    }
                     // Only diagnose slots that actually hold an item — empty/stale tiles (e.g. when the
                     // window is closed but its element still reads visible) have no internal name.
                     if (this.Settings.DiagnosePricing && !string.IsNullOrEmpty(internalNameOnly))
@@ -523,8 +583,13 @@ namespace RitualHelper
                     var (exValue, _) = PoeNinjaPriceFetcher.GetDisplayPrice(
                         new PoeNinjaPrice { PriceChaos = priceChaos }, 1);
                     if (exValue < this.Settings.MinDisplayExalted)
+                        {
+                        filteredByMinValue++;
                         continue;
+                    }
                 }
+
+                pricedItems++;
 
                 var (displayValue, displayCurrency) = PoeNinjaPriceFetcher.GetDisplayPrice(
                     new PoeNinjaPrice { PriceChaos = priceChaos },
@@ -577,7 +642,32 @@ namespace RitualHelper
                 });
             }
 
+            this.LogPriceSummary(
+                itemUiElements.Length,
+                visibleSlots,
+                itemPointers,
+                namedItems,
+                pricedItems,
+                priceLabels.Count,
+                $"noPrice={noPriceItems}, filtered={filteredByMinValue}, noUi={skippedNoUiElement}, loadedPrices={PoeNinjaPriceFetcher.LoadedItemCount}, fetching={PoeNinjaPriceFetcher.IsFetching}");
             this.DrawPriceLabels(fgDraw, font, shadowColor, priceLabels);
+        }
+
+        private void LogPriceSummary(
+            int slots,
+            int visibleSlots,
+            int itemPointers,
+            int namedItems,
+            int pricedItems,
+            int labels,
+            string extra)
+        {
+            var now = DateTime.UtcNow;
+            if (now < this.nextPriceSummaryLogUtc) return;
+
+            this.nextPriceSummaryLogUtc = now.AddSeconds(5);
+            this.LogStatus(
+                $"Price summary: slots={slots}, visible={visibleSlots}, itemPtrs={itemPointers}, named={namedItems}, priced={pricedItems}, labels={labels}, {extra}.");
         }
 
         private void DrawPriceLabels(ImDrawListPtr fgDraw, ImFontPtr font, uint shadowColor, List<PriceLabelDraw> priceLabels)
@@ -619,6 +709,52 @@ namespace RitualHelper
             AlertSoundPlayer.Play(soundType);
         }
 
+        private bool TryResolveFastPathRitualWindow(IntPtr fastAddr, out UiElementBaseOffset gridOffset)
+        {
+            gridOffset = default;
+            if (fastAddr == IntPtr.Zero ||
+                this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { fastAddr }) is not UiElementBaseOffset fastOffset ||
+                !UiElementBaseFuncs.IsVisibleChecker(fastOffset.Flags))
+            {
+                return false;
+            }
+
+            var gridAddr = this.ResolveRewardGridNear(fastAddr);
+            if (gridAddr != IntPtr.Zero &&
+                this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { gridAddr }) is UiElementBaseOffset resolvedOffset &&
+                UiElementBaseFuncs.IsVisibleChecker(resolvedOffset.Flags))
+            {
+                gridOffset = resolvedOffset;
+                return true;
+            }
+
+            this.LogStatusThrottled("Fast ritual path is visible, but no reward grid was found near it; trying BFS scan.", 5);
+            return false;
+        }
+
+        private IntPtr ResolveRewardGridNear(IntPtr addr)
+        {
+            if (this.IsValidRewardGrid(addr)) return addr;
+
+            var descendant = this.FindRewardGridDescendant(addr, 4);
+            if (descendant != IntPtr.Zero) return descendant;
+
+            var cur = addr;
+            for (var up = 0; up < 6; up++)
+            {
+                if (this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { cur }) is not UiElementBaseOffset off ||
+                    off.ParentPtr == IntPtr.Zero)
+                {
+                    break;
+                }
+
+                cur = off.ParentPtr;
+                var grid = this.FindRewardGridDescendant(cur, 4);
+                if (grid != IntPtr.Zero) return grid;
+            }
+
+            return IntPtr.Zero;
+        }
         // FALLBACK window finder, used only when the fast index chain is broken (post-patch) or when
         // ForceBfsFallback is set. The expensive BFS runs ONCE; the found grid address is then reused
         // every frame for as long as it keeps validating (no errors, still visible, still holds items).
@@ -654,20 +790,21 @@ namespace RitualHelper
                 if (this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { gridAddr }) is not UiElementBaseOffset off ||
                     !UiElementBaseFuncs.IsVisibleChecker(off.Flags) ||
                     this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { off.ChildrensPtr }) is not IntPtr[] tiles ||
-                    tiles.Length is < 1 or > 16)
+                    tiles.Length is < 2 or > 24)
                 {
                     return false;
                 }
 
+                var itemPointers = 0;
                 foreach (var t in tiles)
                 {
                     if (this.readIntPtrMethod!.Invoke(this.handleObj, new object[] { t + 0x4F8 }) is IntPtr p && p != IntPtr.Zero)
                     {
-                        return true;
+                        itemPointers++;
                     }
                 }
 
-                return false;
+                return itemPointers >= 2 && itemPointers * 2 >= tiles.Length;
             }
             catch
             {
@@ -713,7 +850,7 @@ namespace RitualHelper
             var cur = sigEl;
             for (var up = 0; up < 8; up++)
             {
-                var grid = this.FindRewardGridChild(cur);
+                var grid = this.FindRewardGridDescendant(cur, 4);
                 if (grid != IntPtr.Zero) return grid;
                 if (this.readUiOffsetMethod.Invoke(this.handleObj, new object[] { cur }) is not UiElementBaseOffset o ||
                     o.ParentPtr == IntPtr.Zero)
@@ -739,6 +876,42 @@ namespace RitualHelper
             return false;
         }
 
+        private IntPtr FindRewardGridDescendant(IntPtr parent, int maxDepth)
+        {
+            if (parent == IntPtr.Zero) return IntPtr.Zero;
+
+            var queue = new Queue<(IntPtr Addr, int Depth)>();
+            var visited = new HashSet<IntPtr>();
+            queue.Enqueue((parent, 0));
+
+            while (queue.Count > 0 && visited.Count < 2000)
+            {
+                var (addr, depth) = queue.Dequeue();
+                if (addr == IntPtr.Zero || !visited.Add(addr)) continue;
+
+                if (depth > 0 && this.IsValidRewardGrid(addr))
+                {
+                    return addr;
+                }
+
+                if (depth >= maxDepth ||
+                    this.readUiOffsetMethod!.Invoke(this.handleObj, new object[] { addr }) is not UiElementBaseOffset off ||
+                    this.readStdVectorMethod!.Invoke(this.handleObj, new object[] { off.ChildrensPtr }) is not IntPtr[] children)
+                {
+                    continue;
+                }
+
+                foreach (var child in children)
+                {
+                    if (child != IntPtr.Zero)
+                    {
+                        queue.Enqueue((child, depth + 1));
+                    }
+                }
+            }
+
+            return IntPtr.Zero;
+        }
         // Among a parent's direct children, the one whose own children are mostly item-slot tiles
         // (item entity at +0x4F8). Returns the best (>=2 tiles) or zero. Excludes the flask bar by
         // virtue of being reached from the shop-signature ancestor, not the HUD.
@@ -778,6 +951,54 @@ namespace RitualHelper
             }
 
             return best;
+        }
+
+        private void LogDetectionError(Exception ex)
+        {
+            var now = DateTime.UtcNow;
+            if (now < this.nextDetectionErrorLogUtc) return;
+
+            this.nextDetectionErrorLogUtc = now.AddSeconds(5);
+            this.LogStatus($"UI detection failed: {ex.Message}");
+        }
+
+        private void LogStatusThrottled(string message, int seconds)
+        {
+            var now = DateTime.UtcNow;
+            if (now < this.nextStatusLogUtc) return;
+
+            this.nextStatusLogUtc = now.AddSeconds(seconds);
+            this.LogStatus(message);
+        }
+
+        private void LogStatus(string message)
+        {
+            var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+            Console.WriteLine($"[RitualHelper] {line}");
+            this.AppendLogLine(line);
+        }
+
+        private void AppendLogLine(string line)
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(this.LogPathname);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                if (File.Exists(this.LogPathname) && new FileInfo(this.LogPathname).Length > 256 * 1024)
+                {
+                    File.WriteAllText(this.LogPathname, string.Empty);
+                }
+
+                File.AppendAllText(this.LogPathname, line + Environment.NewLine);
+            }
+            catch
+            {
+                // Logging must never break overlay rendering.
+            }
         }
 
         private string ReadUiElementText(IntPtr element)
@@ -981,6 +1202,7 @@ namespace RitualHelper
             }
 
             this.NormalizePriceSourceSetting();
+            this.LogStatus($"OnEnable: isGameOpened={isGameOpened}, ShowOverlay={this.Settings.ShowOverlay}, DebugMode={this.Settings.DebugMode}, ForceBfsFallback={this.Settings.ForceBfsFallback}, League={this.Settings.League}, PriceSource={this.Settings.PriceSource}.");
             LeagueProvider.EnsureLoaded();
             PoeNinjaPriceFetcher.Configure(this.Settings.PriceSource, this.Settings.League ?? string.Empty, this.Settings.RefreshIntervalMin);
             PoeNinjaPriceFetcher.Initialize(this.DllDirectory);

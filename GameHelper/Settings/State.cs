@@ -238,7 +238,7 @@ namespace GameHelper.Settings
         public List<(EntityFilterType filtertype, string filter, Rarity rarity, GameStats stat, int group)> PoiMonstersCategories2 = new();
 
         /// <summary>
-        ///     Gets or sets the custom categories (and its defination) for MiscellaneousObjects in the game.
+        ///     Gets or sets universal watched entity path prefixes and their Radar icon group ids.
         /// </summary>
         public List<(string path, int group)> SpecialMiscObjPaths = new()
         {

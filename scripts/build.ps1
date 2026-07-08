@@ -162,16 +162,11 @@ function Get-BlockingGameHelperProcesses {
     if (-not (Test-Path $DeployDir)) {
         return @()
     }
-
     $deployRoot = [System.IO.Path]::GetFullPath($DeployDir).TrimEnd('\')
-    $processNames = @('GameHelper', 'GameHelper.App')
+    $deployPrefix = $deployRoot + '\'
     $blocking = @()
 
     foreach ($proc in Get-Process -ErrorAction SilentlyContinue) {
-        if ($processNames -notcontains $proc.ProcessName) {
-            continue
-        }
-
         try {
             $exePath = $proc.MainModule.FileName
         }
@@ -183,8 +178,8 @@ function Get-BlockingGameHelperProcesses {
             continue
         }
 
-        $exeDir = [System.IO.Path]::GetFullPath((Split-Path $exePath -Parent)).TrimEnd('\')
-        if ($exeDir.Equals($deployRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $fullExePath = [System.IO.Path]::GetFullPath($exePath)
+        if ($fullExePath.StartsWith($deployPrefix, [StringComparison]::OrdinalIgnoreCase)) {
             $blocking += $proc
         }
     }
@@ -361,13 +356,14 @@ try {
 
     $defaultPublish = Join-Path $Root "publish"
     $testUserBackup = Join-Path $Root "test-runtime-backup"
+    $testUserBackupStaging = Join-Path $Root "test-runtime-backup.staging"
     if ($PublishDir -ne $defaultPublish -and (Test-Path $PublishDir)) {
         Write-Host "Sichere Test-Einstellungen vor dem Neu-Deploy ..." -ForegroundColor DarkGray
-        if (Test-Path $testUserBackup) {
-            Remove-Item $testUserBackup -Recurse -Force
+        if (Test-Path $testUserBackupStaging) {
+            Remove-Item $testUserBackupStaging -Recurse -Force
         }
 
-        Save-DeployUserData -SourceDir $PublishDir -BackupDir $testUserBackup
+        Save-DeployUserData -SourceDir $PublishDir -BackupDir $testUserBackupStaging
     }
 
     Remove-DeployDirectory -TargetDir $PublishDir
@@ -394,7 +390,10 @@ try {
     }
 
     if ($PublishDir -ne $defaultPublish) {
-        if (Restore-DeployUserData -TargetDir $PublishDir -BackupDir $testUserBackup) {
+        $stagingHasConfigs = Test-Path (Join-Path $testUserBackupStaging "configs")
+        $stableBackupExists = Test-Path $testUserBackup
+        $restoreBackup = if ($stagingHasConfigs -or -not $stableBackupExists) { $testUserBackupStaging } else { $testUserBackup }
+        if (Restore-DeployUserData -TargetDir $PublishDir -BackupDir $restoreBackup) {
             Repair-PluginsJson -JsonPath (Join-Path $PublishDir "configs\plugins.json")
             Write-Host "  Test-Einstellungen wiederhergestellt." -ForegroundColor DarkGray
         }
@@ -419,6 +418,18 @@ try {
                 Invoke-Robocopy $srcConfig, $dstConfig, "/E", "/NFL", "/NDL", "/NJH", "/NJS"
                 Write-Host "  Plugin-Config aus publish\: $($plugin.Name)" -ForegroundColor DarkGray
             }
+        }
+
+        if ($stagingHasConfigs -and (Test-Path $testUserBackupStaging)) {
+            if (Test-Path $testUserBackup) {
+                Remove-Item $testUserBackup -Recurse -Force
+            }
+
+            Move-Item $testUserBackupStaging $testUserBackup -Force
+        }
+        elseif (Test-Path $testUserBackupStaging) {
+            Remove-Item $testUserBackupStaging -Recurse -Force
+            Write-Host "  Test-Backup ohne configs verworfen; vorhandenes Backup bleibt erhalten." -ForegroundColor DarkYellow
         }
     }
 

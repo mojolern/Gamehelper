@@ -60,6 +60,6 @@ namespace RitualHelper
         public Vector4 PriceTextColor = new Vector4(1f, 235f / 255f, 140f / 255f, 1f);
 
         /// <summary>Hide price labels for items below this value in Exalted orbs. Set to 0 to show all prices.</summary>
-        public float MinDisplayExalted = 50f;
+        public float MinDisplayExalted = 0f;
     }
 }

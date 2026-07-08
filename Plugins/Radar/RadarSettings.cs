@@ -595,12 +595,12 @@ namespace Radar
         }
 
         /// <summary>
-        ///     draws the OtherImportantObjects setting widget.
+        ///     draws the universal watched entity group icon setting widget.
         /// </summary>
         /// <param name="dllDirectory">directory where the plugin dll is located.</param>
         public void OtherImportantObjectsSettingToImGui(string dllDirectory)
         {
-            if (ImGui.TreeNode($"Special Objects Icons"))
+            if (ImGui.TreeNode($"Watched Entity Group Icons"))
             {
                 ImGui.Columns(2, $"icons columns##SpecialObjects", false);
                 foreach (var obj in this.OtherImportantObjects)
