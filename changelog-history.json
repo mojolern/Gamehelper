@@ -2,11 +2,11 @@
     "releases":  [
                      {
                          "version":  "1.4.7",
-                         "published":  "2026-07-13T06:07:51.0038158Z",
+                         "published":  "2026-07-13T11:53:47.3624658Z",
                          "changelog":  [
-                                           "Ported MordWraith GameHelper v1.4.7 upstream updates.",
-                                           "Added Atlas2, WorldDrawing, core OffsetHelper support, Atlas/StashUtility/Radar updates.",
-                                           "Preserved fork patchwork: universal entity watch list, watched entity group icons, save UI, plugin source list, and RitualHelper logging."
+                                           "Corrected upstream Atlas port: removed accidental Atlas2 fork plugin from shipped build.",
+                                           "Kept upstream WorldDrawing in place but disabled by default because it is currently a no-op shell upstream.",
+                                           "Fixed Atlas ImGui channel split cleanup that could trigger the nested splitter assertion."
                                        ]
                      },
                      {
