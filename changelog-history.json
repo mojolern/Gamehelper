@@ -2,11 +2,11 @@
     "releases":  [
                      {
                          "version":  "1.4.7",
-                         "published":  "2026-07-12T15:55:39.6013016Z",
+                         "published":  "2026-07-13T06:07:51.0038158Z",
                          "changelog":  [
-                                           "Atlas new update (yokkenUA)",
-                                           "Core update from Gordin",
-                                           "Stashutility update (Tenchi)"
+                                           "Ported MordWraith GameHelper v1.4.7 upstream updates.",
+                                           "Added Atlas2, WorldDrawing, core OffsetHelper support, Atlas/StashUtility/Radar updates.",
+                                           "Preserved fork patchwork: universal entity watch list, watched entity group icons, save UI, plugin source list, and RitualHelper logging."
                                        ]
                      },
                      {
