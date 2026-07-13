@@ -51,6 +51,7 @@ namespace GameHelper.Settings
         {
             ["AmanamuVoidAlert"] = "MordWraith/AmanamuVoidAlert",
             ["Atlas"] = "yokkenUA/Atlas",
+            ["Atlas2"] = "yokkenUA/Atlas",
             ["AuraTracker"] = "MordWraith/AuraTracker",
             ["AutoHotKeyTrigger"] = "GameHelper2 upstream",
             ["AutoPot"] = "MordWraith/Autopot",
@@ -70,6 +71,7 @@ namespace GameHelper.Settings
             ["SimpleBars"] = "MordWraith/SimpleBars",
             ["StashUtility"] = "GameHelper2 upstream",
             ["StashValueByZx0"] = "zx0CF1/StashValue",
+            ["WorldDrawing"] = "GameHelper2 upstream",
         };
 
 #if DEBUG
@@ -856,6 +858,7 @@ namespace GameHelper.Settings
                 ImGui.Checkbox(L.Label("settings.tools.data_visualization", "Data Visualization (DV)", "DataVisualization"), ref Core.GHSettings.ShowDataVisualization);
                 ImGui.Checkbox(L.Label("settings.tools.performance_profiler", "Performance Profiler", "PerformanceProfiler"), ref Core.GHSettings.ShowPerfProfiler);
                 ImGui.Checkbox(L.Label("settings.tools.memory_read_diagnostics", "Memory Read Diagnostics", "MemoryReadDiagnostics"), ref Core.GHSettings.ShowMemoryDiagnostics);
+                ImGui.Checkbox(L.Label("settings.tools.offset_helper", "OffsetHelper (OH)", "OffsetHelper"), ref Core.GHSettings.ShowOffsetHelper);
 #if DEBUG
                 ImGui.Checkbox(L.Label("settings.tools.krangled_passive_detector", "Krangled Passive Detector", "KrangledPassiveDetector"), ref Core.GHSettings.ShowKrangledPassiveDetector);
 #endif
