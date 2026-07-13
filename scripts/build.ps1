@@ -16,6 +16,7 @@ else {
     Join-Path $Root $OutputDir
 }
 . (Join-Path $PSScriptRoot "set-version.ps1")
+$UnshippedStandalonePlugins = @("Atlas2")
 
 function Invoke-Robocopy {
     param([string[]]$Arguments)
@@ -187,6 +188,18 @@ function Get-BlockingGameHelperProcesses {
     return $blocking
 }
 
+function Remove-UnshippedPluginArtifacts {
+    param([string]$TargetDir)
+
+    foreach ($pluginName in $UnshippedStandalonePlugins) {
+        $pluginDir = Join-Path $TargetDir "Plugins\$pluginName"
+        if (Test-Path $pluginDir) {
+            Remove-Item $pluginDir -Recurse -Force
+            Write-Host "  Removed unshipped plugin artifact: $pluginName" -ForegroundColor DarkYellow
+        }
+    }
+}
+
 function Remove-DeployDirectory {
     param([string]$TargetDir)
 
@@ -279,7 +292,7 @@ function Repair-PluginsJson {
     }
 
     $raw = Get-Content $JsonPath -Raw
-    if ($raw -notmatch 'Autopot') {
+    if ([string]::IsNullOrWhiteSpace($raw)) {
         return
     }
 
@@ -325,6 +338,16 @@ function Repair-PluginsJson {
         $changed = $true
     }
 
+    if ($json.PSObject.Properties.Name -contains "Atlas2") {
+        $json.PSObject.Properties.Remove("Atlas2")
+        $changed = $true
+    }
+
+    if ($json.PSObject.Properties.Name -notcontains "WorldDrawing") {
+        $json | Add-Member -NotePropertyName "WorldDrawing" -NotePropertyValue @{ Enable = $false; AutoStart = $false } -Force
+        $changed = $true
+    }
+
     if (-not $changed) {
         return
     }
@@ -353,6 +376,8 @@ try {
     if (-not (Test-Path $outDir)) {
         throw "Build-Ausgabe nicht gefunden: $outDir"
     }
+
+    Remove-UnshippedPluginArtifacts -TargetDir $outDir
 
     $defaultPublish = Join-Path $Root "publish"
     $testUserBackup = Join-Path $Root "test-runtime-backup"
@@ -434,6 +459,8 @@ try {
     }
 
     Seed-PluginDefaultConfigs -ProjectRoot $Root -TargetPublishDir $PublishDir
+    Remove-UnshippedPluginArtifacts -TargetDir $PublishDir
+    Repair-PluginsJson -JsonPath (Join-Path $PublishDir "configs\plugins.json")
     Test-LauncherDeploy -TargetPublishDir $PublishDir
     Test-PluginDeploy -TargetPublishDir $PublishDir
 

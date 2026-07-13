@@ -51,7 +51,6 @@ namespace GameHelper.Settings
         {
             ["AmanamuVoidAlert"] = "MordWraith/AmanamuVoidAlert",
             ["Atlas"] = "yokkenUA/Atlas",
-            ["Atlas2"] = "yokkenUA/Atlas",
             ["AuraTracker"] = "MordWraith/AuraTracker",
             ["AutoHotKeyTrigger"] = "GameHelper2 upstream",
             ["AutoPot"] = "MordWraith/Autopot",

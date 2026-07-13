@@ -1034,8 +1034,6 @@ namespace Atlas
 
             var drawList = ImGui.GetBackgroundDrawList();
 
-            drawList.ChannelsSplit(4);
-
             var atlasPanelAddr = GetAtlasPanelAddress();
             var atlasUi = atlasPanelAddr == IntPtr.Zero ? default : Read<UiElement>(atlasPanelAddr);
             if (!atlasUi.IsVisible)
@@ -1088,7 +1086,6 @@ namespace Atlas
             {
                 // cacheFrameCounter is left past the threshold (not incremented) so a re-enable
                 // triggers a fresh read on the very next frame instead of waiting an interval.
-                drawList.ChannelsMerge();
                 return;
             }
 
@@ -1141,6 +1138,10 @@ namespace Atlas
                 if (!(Core.GHSettings.EnableControllerMode || Settings.ControllerMode))
                     if (inventoryPanel)
                         return;
+
+                // Split only after all early-return guards above have passed. Leaving the
+                // shared background draw list split trips ImGui's nested splitter assertion.
+                drawList.ChannelsSplit(4);
 
                 // ── Route planning (shortest hops over the revealed atlas edges) ──────────
                 // Built once per frame when a routed target is wanted: the edge graph from

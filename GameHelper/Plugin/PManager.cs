@@ -1,4 +1,4 @@
-﻿// <copyright file="PManager.cs" company="None">
+// <copyright file="PManager.cs" company="None">
 // Copyright (c) None. All rights reserved.
 // </copyright>
 
@@ -255,6 +255,11 @@ namespace GameHelper.Plugin
 
         private static void LoadPluginMetadata(IEnumerable<PluginWithName> plugins)
         {
+            static PluginMetadata CreateDefaultPluginMetadata(string pluginName) =>
+                string.Equals(pluginName, "WorldDrawing", StringComparison.OrdinalIgnoreCase)
+                    ? new PluginMetadata { Enable = false }
+                    : new PluginMetadata();
+
             var metadata = JsonHelper.CreateOrLoadJsonFile<Dictionary<string, PluginMetadata>>(State.PluginsMetadataFile);
             var newContainers = plugins.Select(
                 x => new PluginContainer(
@@ -262,7 +267,7 @@ namespace GameHelper.Plugin
                     x.Plugin,
                     metadata.GetValueOrDefault(
                         x.Name,
-                        new PluginMetadata()),
+                        CreateDefaultPluginMetadata(x.Name)),
                     x.Alc)).ToList();
 
             lock (Plugins)
