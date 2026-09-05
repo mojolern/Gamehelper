@@ -39,8 +39,11 @@ namespace Atlas
 
         // Atlas connection (edge) list — a flat StdVector on the atlas-panel UiElement. Each entry
         // is {int unknown; grid Source; grid Target}; Source/Target are grid coords matched against
-        // each node's grid (node+0x320). Verified live in GameHelper2-main for PoE2 0.5.x.
-        private const int AtlasConnectionsVectorOffset = 0x5A8;
+        // each node's grid (0.5.5: node+0x310, was 0x320 -- see the core reader for the proof).
+        // NOTE: this plugin takes GridPosition from GameHelper's AtlasMapNode, so the core fix covers it.
+        // 0.5.5: 0x5A8 -> 0x590 (the panel took a plain -0x18; see the core's ImportantUiElements for
+        // the evidence, including why 0x578 is the ritual candidate table and not this).
+        private const int AtlasConnectionsVectorOffset = 0x590;
 
         // fp of the "you are here" marker child (shares the node-list container fp, not the
         // map-node fp 0x542EF3). Used to locate the player's current atlas node by screen position.
@@ -60,9 +63,18 @@ namespace Atlas
         // the hidden nodes of that chunk are already materialized client-side with their map
         // assigned — so the reveal set is known in advance. Verified live 0.5.4BHF3 (2026-07);
         // see obsidian poe2/Atlas.md §"Sea / ships".
-        private const int RegionButtonRowPtrOffset = 0x320;   // ptr → EndgameRegionActionButtons row
-        private const int RegionButtonGridOffset = 0x330;     // int32 x, int32 y (button grid coords)
-        private const int RegionButtonRowIndexOffset = 0x338; // int32 row index; 2 = Ocean/ship
+        // 0.5.5: all three moved -0x18 (the region button is a UiElement, and UiElementBase lost 0x18
+        // this patch). With the stale values nothing matched the Ocean row check, shipCache stayed
+        // empty, and both ship features silently did nothing -- no ship icons in fog and no reveal
+        // lines on hover. Verified on live tower buttons (the same widget class, easier to find than a
+        // ship): +0x308 holds an odd-aligned pointer shared by every tower (a packed dat row), +0x318
+        // holds plausible atlas grid pairs like (-24,33) and (31,24), and +0x320 reads 3 -- which is
+        // Tower's row in EndgameRegionActionButtons (0=Breach, 1=Forest, 2=Ocean, 3=Tower, unchanged
+        // in the 0.5.5 dump). Map nodes still read 0 at both +0x320 and +0x308, so the discriminator
+        // below keeps separating them.
+        private const int RegionButtonRowPtrOffset = 0x308;   // ptr → EndgameRegionActionButtons row
+        private const int RegionButtonGridOffset = 0x318;     // int32 x, int32 y (button grid coords)
+        private const int RegionButtonRowIndexOffset = 0x320; // int32 row index; 2 = Ocean/ship
         private const int RegionButtonOceanRow = 2;
         // icons\UnchartedShip.png — the ship graphic drawn on fog ships. Game asset:
         // Art/2DArt/UIImages/InGame/MapQuickUseButton/QuickUseItemIconLogbook (the dat row's
@@ -74,21 +86,31 @@ namespace Atlas
         // attaches a text child at +0x3B8 whose label already holds the LOCALIZED Rite-mod lines
         // (rolled client-side, translated via stat_descriptions.csd). We just read that text.
         // See obsidian poe2/Ritual.md; Ghidra AtlasPanel_ritualLineToggleNode / FUN_140b18010.
-        private const uint RitualLineFlagMask = 0x100000u;  // node widget +0x180 bit 20 = "on the ritual line"
+        // The flag WORD moved 0x180 -> 0x168 on 0.5.5. This constant is only a bit MASK, so it is
+        // unaffected; the three places that read the word raw use NodeFlagsOffset (see below).
+        private const uint RitualLineFlagMask = 0x100000u;  // node widget +0x168 (was 0x180) bit 20 = "on the ritual line"
         private const int RitualModsChildOffset = 0x3B8;    // ptr → text child carrying the Rite-mod lines
-        private const int TextElementTextOffset = 0x4C0;    // std::wstring on a game text element (uitree guide)
+        // 0.5.5: 0x4C0 -> 0x490. The wstrings on a derived TEXT element moved -0x30 (UiElementBase lost
+        // 0x18 and the text class another 0x18 of its own). Measured by reading content back, not shifted.
+        private const int TextElementTextOffset = 0x490;    // std::wstring on a game text element (uitree guide)
         // Ritual-line state on the atlas panel (== the node-list container, verified live 0.5.4):
-        private const int PanelLineModeOffset = 0x637;      // u8 bool: ritual line mode (page mode 6) active
-        private const int PanelLineIdOffset = 0x63C;        // u32 line id/seed word (TinyMT input word 0)
-        private const int PanelPendingVecOffset = 0x648;    // std::vector<(i32,i32)> candidate grids
-        private const int PanelCommittedVecOffset = 0x660;  // std::vector<(i32,i32)> committed line grids
+        // 0.5.5: all -0x18. The panel's shift is established by TWO independently identified vectors
+        // (connections 0x5A8 -> 0x590 and the candidate table 0x590 -> 0x578), so carrying the rest of
+        // the panel's fields by the same delta rests on measured evidence rather than a guess -- but
+        // these four only populate in ritual line mode and have NOT been observed live yet.
+        private const int PanelLineModeOffset = 0x61F;      // u8 bool: ritual line mode (page mode 6) active
+        private const int PanelLineIdOffset = 0x624;        // u32 line id/seed word (TinyMT input word 0)
+        private const int PanelPendingVecOffset = 0x630;    // std::vector<(i32,i32)> candidate grids
+        private const int PanelCommittedVecOffset = 0x648;  // std::vector<(i32,i32)> committed line grids
         // Precomputed next-candidate table (AtlasPanel_ritualLineNextCandidates does a binary search
         // here): std::vector begin@+0x590 / end@+0x598, entry stride 0x44 = 17 int32:
         //   [0]=nodeX [1]=nodeY, then 5 candidates × (x,y,extra) = ints [2..16]. Sorted by x<<16|y.
         // The roll's candIdx = the clicked node's rank among these 5 (minus (0,0) / already-committed)
         // sorted lexicographically by (x,y). See obsidian poe2/Ritual.md.
-        private const int PanelCandTableBeginOffset = 0x590;
-        private const int PanelCandTableEndOffset = 0x598;
+        // 0.5.5: 0x590/0x598 -> 0x578/0x580. Identified by content: real entries in this vector sit
+        // 17 int32 (0x44) apart, which is what distinguishes it from the edge vector now at 0x590.
+        private const int PanelCandTableBeginOffset = 0x578;
+        private const int PanelCandTableEndOffset = 0x580;
         private const int CandTableEntryStride = 0x44;   // bytes; 17 int32
         private const int CandTableMaxCandidates = 5;
         // Node widget +0x300 → per-map dat-row ptr; row +0x7C = special-map category id
@@ -1694,7 +1716,7 @@ namespace Atlas
                 if (addr == IntPtr.Zero)
                     continue;
 
-                uint f = Read<uint>(IntPtr.Add(addr, 0x180));
+                uint f = Read<uint>(IntPtr.Add(addr, NodeFlagsOffset));
                 if ((f & ~IsVisibleMask) != (AtlasMistNodeFp & ~IsVisibleMask))
                     continue;
 
@@ -1748,8 +1770,8 @@ namespace Atlas
                 if (addr == IntPtr.Zero)
                     continue;
 
-                // Cheap discriminator first: map nodes keep zeros at +0x338, the other button
-                // kinds (Breach 0 / Forest 1 / Tower 3) fail the exact Ocean row-index check.
+                // Cheap discriminator first: map nodes keep zeros at the row-index slot, the other
+                // button kinds (Breach 0 / Forest 1 / Tower 3) fail the exact Ocean row-index check.
                 if (Read<int>(IntPtr.Add(addr, RegionButtonRowIndexOffset)) != RegionButtonOceanRow)
                     continue;
                 if (Read<IntPtr>(IntPtr.Add(addr, RegionButtonRowPtrOffset)) == IntPtr.Zero)
@@ -2257,7 +2279,7 @@ namespace Atlas
             var wanted = new Dictionary<(int X, int Y), StdTuple2D<int>>();
             foreach (var (addr, gx, gy, cx, cy) in shipCache)
             {
-                if ((Read<uint>(IntPtr.Add(addr, 0x180)) & IsVisibleMask) != 0)
+                if ((Read<uint>(IntPtr.Add(addr, NodeFlagsOffset)) & IsVisibleMask) != 0)
                     chunkVisible.Add((cx, cy));
                 else if (!wanted.ContainsKey((cx, cy)))
                     wanted[(cx, cy)] = new StdTuple2D<int> { X = gx, Y = gy };
@@ -3005,8 +3027,13 @@ namespace Atlas
             }
             public void Dispose()
             {
-                ImGui.PopFont();
+                // Order MIRRORS the ctor and must not be swapped: PopFont() re-binds the previous
+                // font through SetCurrentFont, which recomputes its size from font->Scale. Popping
+                // while the scale is still multiplied bakes OUR scale into the restored context, so
+                // everything drawn afterwards -- GameHelper's own windows included -- came out
+                // resized. Restore the shared font's scale first, then pop.
                 _font.Scale = _prevScale;
+                ImGui.PopFont();
             }
         }
 
@@ -3443,13 +3470,32 @@ namespace Atlas
         }
 
         // Read the panel's active atlas stats (id -> value, value!=0 only). Chain from
-        // ritualLineToggleNode: panel+0x320 -> +0x1b0 -> +0x3a20 -> vector [+0x408 begin, +0x410 end],
+        // ritualLineToggleNode: panel+X -> +0x1b0 -> +0x3a20 -> vector [+0x408 begin, +0x410 end],
         // stride 0x28 (10 int32): stat id @ +0x00, value @ +0x08. Gates the reservoir pool and gives
-        // the line length (5 + map_ritual_rite_additional_maps, binary id 0x670b).
+        // the line length (5 + map_ritual_rite_additional_maps, runtime stat id 0x670d).
+        //
+        // The first hop is a field of the panel, which is a UiElement, so 0.5.5's -0x18 of everything
+        // after UiElementBase.ParentPtr applies: 0x320 -> 0x308. It was a raw literal and got missed
+        // when the named panel offsets were shifted. Both are probed and the read self-validates
+        // (a wrong base yields either null or a span that is not a whole number of 0x28 entries),
+        // so this keeps working whichever base is live.
+        private static readonly int[] RitualStatsBaseOffsets = { 0x308, 0x320 };
+
         private static Dictionary<int, int> ReadRitualStats(IntPtr panel)
         {
+            foreach (var baseOffset in RitualStatsBaseOffsets)
+            {
+                var got = ReadRitualStatsAt(panel, baseOffset);
+                if (got.Count > 0) return got;
+            }
+
+            return new Dictionary<int, int>();
+        }
+
+        private static Dictionary<int, int> ReadRitualStatsAt(IntPtr panel, int baseOffset)
+        {
             var stats = new Dictionary<int, int>();
-            var o1 = Read<IntPtr>(IntPtr.Add(panel, 0x320));
+            var o1 = Read<IntPtr>(IntPtr.Add(panel, baseOffset));
             if (o1 == IntPtr.Zero) return stats;
             var o2 = Read<IntPtr>(IntPtr.Add(o1, 0x1b0));
             if (o2 == IntPtr.Zero) return stats;
@@ -3474,11 +3520,11 @@ namespace Atlas
             return stats;
         }
 
-        // Whether a line node ALSO gets a second Rite mod: rand(100) < chance stat 0x670C
-        // (map_ritual_rite_additional_modifier_chance_%), on a separate deterministic stream
-        // seeded [lineId, committedCount, candIdx, salt] — the salt appears ONLY in this coin
-        // flip, never in the mod-pick seed.
-        private const int StatSecondModChance = 0x670c;
+        // Whether a line node ALSO gets a second Rite mod: rand(100) < chance stat 0x670E
+        // (map_ritual_rite_additional_modifier_chance_%, Stats.dat row 26381 in 0.5.5; was 0x670c),
+        // on a separate deterministic stream seeded [lineId, committedCount, candIdx, salt] — the
+        // salt appears ONLY in this coin flip, never in the mod-pick seed.
+        private const int StatSecondModChance = 0x670e;
         private const uint SecondModCoinSalt = 0x91DA3AD9;
         private const string TwoModFilterOption = "[2 mods]";  // pseudo-entry in the reward dropdown
 
@@ -3602,8 +3648,11 @@ namespace Atlas
             return true;
         }
 
-        // Line-length atlas stat (binary id = tsv id - 1). map_ritual_rite_additional_maps.
-        private const int StatAdditionalMaps = 0x670b;
+        // Line-length atlas stat. Runtime stat id = Stats.dat row + 1 (confirmed live in 0.5.5:
+        // token 0x65D1 == row 26064 map_is_rite_of_the_nameless). 0.5.5 moved
+        // map_ritual_rite_additional_maps from row 26378 to 26380, so 0x670b -> 0x670d; the old id
+        // now names arbiter_of_divinity_player_divinity.
+        private const int StatAdditionalMaps = 0x670d;
         private const int RitualBaseLineLength = 5;   // AtlasPanel_ritualLineToggleNode: stat + 5
         private const int RitualMaxLookaheadDepth = 16;
         private const int RitualMaxPredictNodes = 4000;
@@ -3662,7 +3711,8 @@ namespace Atlas
             foreach (var row in ritualPool)
             {
                 if (row.W <= 0) continue;
-                if (row.Cond == 0 || stats.ContainsKey(row.Cond) || stats.ContainsKey(row.Cond - 1))
+                // ConditionStat is a Stats.dat ROW; the panel's table is keyed by runtime id = row + 1.
+                if (row.Cond == 0 || stats.ContainsKey(row.Cond + 1))
                     pool.Add(row);
             }
 
@@ -4007,7 +4057,8 @@ namespace Atlas
             foreach (var row in ritualPool)
             {
                 if (row.W <= 0) continue;
-                if (row.Cond == 0 || stats.ContainsKey(row.Cond) || stats.ContainsKey(row.Cond - 1))
+                // ConditionStat is a Stats.dat ROW; the panel's table is keyed by runtime id = row + 1.
+                if (row.Cond == 0 || stats.ContainsKey(row.Cond + 1))
                     pool.Add(row);
             }
 
@@ -4619,6 +4670,16 @@ namespace Atlas
         private const uint AtlasMapNodeFp = 0x00542EF3;
         private const uint IsVisibleMask = 0x800u;
 
+        // 0.5.5: the UiElement flag word moved 0x180 -> 0x168 (UiElementBase's tail lost 0x18).
+        // Most of this plugin reads Flags through GameHelper's UiElementBaseOffset and so was
+        // carried by the core fix, but three places read the word RAW off a child address to avoid
+        // materialising a whole UiElement -- and those kept reading 0x180. That is what blanked the
+        // overlay: HasAtlasNodeChild below is the TERMINAL check of the fingerprint walk, so with a
+        // stale flag word no candidate container ever looked like a node list, GetAtlasPanelAddress
+        // returned Zero, and DrawUI bailed at `!atlasUi.IsVisible` before reading a single node.
+        // Nothing logged an error and the core's own node data was perfect the whole time.
+        private const int NodeFlagsOffset = 0x168;
+
         // KB/Mouse: the panel is a DIRECT child of GameUi → Panel→Gate→NodeList (3 hops).
         // Controller: GameHelper auto-detects controller mode (InGameState.UiRootStructPtr == 0) and
         // swaps GameUi.Address to the gamepad UI manager (fp 0x502EF0); under it the SAME
@@ -4714,7 +4775,7 @@ namespace Atlas
                 var childAddr = container.GetChildAddress(i);
                 if (childAddr == IntPtr.Zero)
                     continue;
-                uint f = Read<uint>(IntPtr.Add(childAddr, 0x180)) & ~IsVisibleMask;
+                    uint f = Read<uint>(IntPtr.Add(childAddr, NodeFlagsOffset)) & ~IsVisibleMask;
                 if (f == (AtlasMapNodeFp & ~IsVisibleMask) || f == (AtlasMistNodeFp & ~IsVisibleMask))
                     return true;
             }
@@ -4806,8 +4867,24 @@ namespace Atlas
         //   • the 5 atlas mechanics OVERRIDE with their dedicated map_atlas_node_has_* display stat
         //     (delirium/abyss/ritual/incursion→"Vaal Beacons"/breach)
         //   • map_spawn_atlas_point_doodad_after_boss_kill → "(atlas skill point)" (suppressed marker)
-        // Cross-checked LIVE on 8 nodes: boss 0x4C59, Delirium 0x6871, Abyss 0x6872, Ritual 0x6873,
-        // Vaal Beacons 0x6874, Breach 0x6875, Notable Location 0x3A5E, skill-point 0x65F7 — all match.
+        // Cross-checked on 8 nodes for the 0.5.4 build: boss 0x4C59, Delirium 0x6871, Abyss 0x6872,
+        // Ritual 0x6873, Vaal Beacons 0x6874, Breach 0x6875, Notable Location 0x3A5E, skill-point
+        // 0x65F7. ALL OF THOSE ARE STALE as of 0.5.5 -- the table below is the regenerated one.
+        //
+        // The id is `Stats row + 1`, so every insertion into Stats shifts everything after it. 0.5.5
+        // added 106 rows in several places, so the shift GROWS along the table: +1 by the boss, +2 by
+        // the atlas-content block. Verified directly in the 0.5.5 Stats dump:
+        //     row 19545 map_contains_powerful_map_boss   -> 0x4C5A  (was 0x4C59)
+        //     row 26738 map_atlas_node_has_delirium      -> 0x6873  (0x6873 used to be Ritual)
+        //     row 26740 map_atlas_node_has_ritual        -> 0x6875  (0x6875 used to be Breach)
+        // and live on a node the player confirmed as Ritual, whose only token is 0x65D1 = row 26064
+        // map_is_rite_of_the_nameless.
+        //
+        // DO NOT verify this table against GameHelper core's AtlasMapNode / AtlasMapNodeContent id
+        // tables: those are a SEPARATE hardcoded copy carrying the 0.5.4 ids, so the effect
+        // descriptions they hand out (and everything downstream of them, including McpBridge's
+        // `effects` field) name 0.5.4 content for a 0.5.5 id. Reading them as ground truth is what
+        // made this table look wrong when it is right; the client's own Stats rows are the source.
         //
         // REGENERATE PER PATCH (ids are Stats rows, which drift — e.g. Vaal Beacons 0x686D→0x6874 since
         // the previous build): re-dump EndgameMapContent.tsv + Stats.tsv and remap Stats[0]+1.
@@ -4835,50 +4912,52 @@ namespace Atlas
             [0x3252] = "Surprising Alliances",
             [0x336E] = "Ritual",
             [0x3411] = "Expedition",
-            [0x3898] = "Azmeri Champion",
-            [0x3A5E] = "Notable Location",
-            [0x3DCB] = "Crystalised Twinning",
-            [0x4C59] = "Powerful Map Boss",
-            [0x4E89] = "Energized Ley Lines",
-            [0x5477] = "Mirage of Riches",
-            [0x55C1] = "Immured Fury",
-            [0x592C] = "Overrun by the Abyssal",
-            [0x5DFC] = "Breach",
-            [0x5DFD] = "Irradiated",
-            [0x5E2B] = "Scattered Stones",
-            [0x60C4] = "Breach Hive",
-            [0x6112] = "Azmeri Energisation",
-            [0x613B] = "Tight Pockets",
-            [0x615A] = "Grand Mirror",     // stat-based (map_delirium_has_giga_mirror+1), no EndgameMapContent row
-            [0x61CA] = "Twinned Terrors",
-            [0x6206] = "Rites of the Rogues",
-            [0x6229] = "Stolen Power",
-            [0x622F] = "Large Congregation",
-            [0x6247] = "Nature Shrines",
-            [0x6301] = "Hunting Grounds",
-            [0x634D] = "Power Struggle",
-            [0x6350] = "Indomitable Essence",
-            [0x6355] = "Azmeri Bloodline",
-            [0x6361] = "Exceptional Find",
-            [0x64E3] = "Essence Trove",
-            [0x64E4] = "Spirit Guide",
-            [0x6504] = "Water Influence",
-            [0x6505] = "Mountain Influence",
-            [0x6506] = "Grass Influence",
-            [0x6507] = "Forest Influence",
-            [0x6508] = "Swamp Influence",
-            [0x6509] = "Desert Influence",
-            [0x653D] = "Persistent Devotion",
-            [0x65F7] = "(atlas skill point)",
-            [0x6762] = "Trialmaster's Trainee",
-            [0x6763] = "Sekhema's Student",
-            [0x6764] = "Gigantic Uprising",
-            [0x6765] = "Glimmering Mutation",
-            [0x6871] = "Delirium",
-            [0x6872] = "Abyss",
-            [0x6873] = "Ritual",
-            [0x6874] = "Vaal Beacons",
-            [0x6875] = "Breach",
+            [0x3899] = "Azmeri Champion",
+            [0x3A5F] = "Notable Location",
+            [0x3DCC] = "Crystalised Twinning",
+            [0x4C5A] = "Powerful Map Boss",
+            [0x4E8A] = "Energized Ley Lines",
+            [0x5479] = "Mirage of Riches",
+            [0x55C3] = "Immured Fury",
+            [0x592E] = "Overrun by the Abyssal",
+            [0x5DFE] = "Breach",
+            [0x5DFF] = "Irradiated",
+            [0x5E2D] = "Scattered Stones",
+            [0x60C6] = "Breach Hive",
+            [0x6114] = "Azmeri Energisation",
+            [0x613D] = "Tight Pockets",
+            [0x615C] = "Grand Mirror",
+            [0x61CC] = "Twinned Terrors",
+            [0x6208] = "Rites of the Rogues",
+            [0x622B] = "Stolen Power",
+            [0x6231] = "Large Congregation",
+            [0x6249] = "Nature Shrines",
+            [0x6303] = "Hunting Grounds",
+            [0x634F] = "Power Struggle",
+            [0x6352] = "Indomitable Essence",
+            [0x6357] = "Azmeri Bloodline",
+            [0x6363] = "Exceptional Find",
+            [0x64E5] = "Essence Trove",
+            [0x64E6] = "Spirit Guide",
+            [0x6506] = "Water Influence",
+            [0x6507] = "Mountain Influence",
+            [0x6508] = "Grass Influence",
+            [0x6509] = "Forest Influence",
+            [0x650A] = "Swamp Influence",
+            [0x650B] = "Desert Influence",
+            [0x653F] = "Persistent Devotion",
+            [0x65F9] = "(atlas skill point)",
+            [0x6764] = "Trialmaster's Trainee",
+            [0x6765] = "Sekhema's Student",
+            [0x6766] = "Gigantic Uprising",
+            [0x6767] = "Glimmering Mutation",
+            [0x6873] = "Delirium",
+            [0x6874] = "Abyss",
+            [0x6875] = "Ritual",
+            [0x6876] = "Vaal Beacons",
+            [0x6877] = "Breach",
+            [0x6A75] = "Viridian Wildwood",
+            [0x6A86] = "Abyssal Fissure",
         };
 
         // Resolve a content token to its display name via its LOW16 id (see ContentTokenNames). Unknown

@@ -77,6 +77,15 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         public string Path { get; private set; }
 
         /// <summary>
+        ///     Gets the <see cref="RemoteEnums.MonsterCategory" /> flags for this entity's monster
+        ///     variety (Beast, Humanoid, Undead, …), resolved from its <see cref="Path" /> via the
+        ///     shipped data table. A monster can belong to several categories (a werewolf is
+        ///     <c>Humanoid | Beast</c>); non-monsters / unknown paths return
+        ///     <see cref="RemoteEnums.MonsterCategory.None" />. Test with <c>HasFlag</c>.
+        /// </summary>
+        public MonsterCategory MonsterCategory => MonsterCategories.Get(this.Path);
+
+        /// <summary>
         ///     Gets the Id associated to the entity. This is unique per map/Area.
         /// </summary>
         public uint Id { get; private set; }
@@ -104,7 +113,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         public EntitySubtypes EntitySubtype { get; protected set; }
 
         /// <summary>
-        ///     Gets the custom group given to a watched entity by the user.
+        ///     Gets the custom group given to a <see cref="EntityTypes.Monster"/> entity type by the user.
         /// </summary>
         public int EntityCustomGroup => this.EntitySubtype == EntitySubtypes.POIMonster ||
             this.EntityType == EntityTypes.OtherImportantObjects ? this.customGroup : 0;
@@ -576,12 +585,6 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             {
                 return false;
             }
-            else if (this.IsInSpecialMiscObjPaths())
-            {
-                // User watched paths win over built-in type classifiers so a custom
-                // group can force an icon for chests, NPCs, monsters, or renderables.
-                this.EntityType = EntityTypes.OtherImportantObjects;
-            }
             else if (this.TryGetComponent<Chest>(out var _))
             {
                 this.EntityType = EntityTypes.Chest;
@@ -593,6 +596,10 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             else if (this.TryGetComponent<Shrine>(out var _))
             {
                 this.EntityType = EntityTypes.Shrine;
+            }
+            else if (this.IsInSpecialMiscObjPaths())
+            {
+                this.EntityType = EntityTypes.OtherImportantObjects;
             }
             else if (this.TryGetComponent<Life>(out var _))
             {
@@ -806,22 +813,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         private void CalculateEntityState()
         {
-            if (this.EntityType == EntityTypes.OtherImportantObjects)
-            {
-                if (this.TryGetComponent<Chest>(out var chestComp) && chestComp.IsOpened)
-                {
-                    this.EntityState = EntityStates.Useless;
-                }
-                else if (this.TryGetComponent<Life>(out var lifeComp, false) && !lifeComp.IsAlive)
-                {
-                    this.EntityState = EntityStates.Useless;
-                }
-                else
-                {
-                    this.EntityState = EntityStates.None;
-                }
-            }
-            else if (this.EntityType == EntityTypes.Chest)
+            if (this.EntityType == EntityTypes.Chest)
             {
                 if (this.TryGetComponent<Chest>(out var chestComp) && chestComp.IsOpened)
                 {

@@ -1,21 +1,96 @@
 ﻿{
     "releases":  [
                      {
-                         "version":  "1.4.7",
-                         "published":  "2026-07-13T11:53:47.3624658Z",
+                         "version":  "1.5.6",
+                         "published":  "2026-09-05T13:27:24.9828405Z",
                          "changelog":  [
-                                           "Corrected upstream Atlas port: removed accidental Atlas2 fork plugin from shipped build.",
-                                           "Kept upstream WorldDrawing in place but disabled by default because it is currently a no-op shell upstream.",
-                                           "Fixed Atlas ImGui channel split cleanup that could trigger the nested splitter assertion."
+                                           "update"
+                                       ]
+                     },
+                     {
+                         "version":  "1.5.5",
+                         "published":  "2026-09-05T12:20:37.9068141Z",
+                         "changelog":  [
+                                           "Update"
+                                       ]
+                     },
+                     {
+                         "version":  "1.5.4",
+                         "published":  "2026-09-05T01:51:16.8680564Z",
+                         "changelog":  [
+                                           "Gordin and Yokken thx for this awesome work :)"
+                                       ]
+                     },
+                     {
+                         "version":  "1.5.3",
+                         "published":  "2026-09-04T23:45:51.5931322Z",
+                         "changelog":  [
+                                           "Version 1.5.3 release || Version 1.5.3 Release"
+                                       ]
+                     },
+                     {
+                         "version":  "1.5.2",
+                         "published":  "2026-09-04T23:14:13.0261040Z",
+                         "changelog":  [
+                                           "Yokken Sync"
+                                       ]
+                     },
+                     {
+                         "version":  "1.5.1",
+                         "published":  "2026-09-04T22:15:52.2702127Z",
+                         "changelog":  [
+                                           "Gordin Sync",
+                                           "and various updates"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.12",
+                         "published":  "2026-08-08T22:21:34.8933940Z",
+                         "changelog":  [
+                                           "Gordin Sync"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.11",
+                         "published":  "2026-08-07T05:12:49.6568700Z",
+                         "changelog":  [
+                                           "Gordin Sync"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.10",
+                         "published":  "2026-07-28T15:16:37.2883574Z",
+                         "changelog":  [
+                                           "Gordin Merge"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.9",
+                         "published":  "2026-07-22T15:18:37.2886880Z",
+                         "changelog":  [
+                                           "Gordin Sync"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.8",
+                         "published":  "2026-07-17T13:25:49.2293818Z",
+                         "changelog":  [
+                                           "Gordin Sync (New offsets)"
+                                       ]
+                     },
+                     {
+                         "version":  "1.4.7",
+                         "published":  "2026-07-14T14:55:08.6995944Z",
+                         "changelog":  [
+                                           "x"
                                        ]
                      },
                      {
                          "version":  "1.4.6",
-                         "published":  "2026-07-08T01:58:10.4127462Z",
+                         "published":  "2026-07-07T14:32:49.4336390Z",
                          "changelog":  [
-                                           "New: PickupHelper plugin from Gordin",
-                                           "Atlas: 0.3.0 with Uncharted Waters fog ships/leylines, map ratings, and Head of the King ritual planner",
-                                           "Fork: kept restored save status/manual save, clickable plugin sources, universal watched entities, RitualHelper detection/logging fixes, and safer GH-Test publishing"
+                                           "New: PickupHelper (Gordin)",
+                                           "Atlas: 0.3.0 (yokkenUA)"
                                        ]
                      },
                      {

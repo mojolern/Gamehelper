@@ -51,6 +51,8 @@ namespace Radar
         private ActiveCoroutine? onForegroundChange;
         private ActiveCoroutine? onGameClose;
         private ActiveCoroutine? onAreaChange;
+        private IntPtr observedAreaInstanceAddress;
+        private string observedAreaHash = string.Empty;
 
         private string currentAreaName = string.Empty;
         private string tmpTileName = string.Empty;
@@ -380,6 +382,8 @@ namespace Radar
                 return;
             }
 
+            this.RefreshAreaIfIdentityChanged();
+
             if (this.Settings.DrawWhenForeground && !Core.Process.Foreground)
             {
                 return;
@@ -434,7 +438,13 @@ namespace Radar
                     this.UpdateLargeMapDetails();
                 }
 
-                var largeMapRealCenter = largeMap.Center + largeMap.Shift + largeMap.DefaultShift;
+                // The current client anchors both map widgets through layout data that is no
+                // longer exposed by UiElementBase.RelativePosition.  The large map itself is
+                // viewport-centred, so use the client centre directly instead of the stale
+                // UiElement position (which incorrectly pins the radar to the top-left).
+                var clientSize = Core.Process.WindowArea.Size;
+                var largeMapRealCenter = new Vector2(clientSize.Width * 0.5f, clientSize.Height * 0.5f) +
+                    largeMap.Shift + largeMap.DefaultShift;
                 // Calibrated biases baked in so LargeMapXOffset/LargeMapYOffset default to 0.
                 const float LargeMapXBias = 0.6f;
                 const float LargeMapYBias = 0.3f;
@@ -471,22 +481,28 @@ namespace Radar
                 // Calibrated baseline baked in so MiniMapZoomMultiplier = 1.0 produces correct placement.
                 const float MiniMapZoomBaseline = 0.748f;
                 Helper.Scale = miniMap.Zoom * this.Settings.MiniMapZoomMultiplier * MiniMapZoomBaseline;
-                var miniMapCenter = miniMap.Position +
-                    (miniMap.Size / 2) +
+                var clientSize = Core.Process.WindowArea.Size;
+                var miniMapCenter = new Vector2(
+                        clientSize.Width - (miniMap.Size.X / 2),
+                        miniMap.Size.Y / 2) +
                     miniMap.DefaultShift +
                     miniMap.Shift;
+                var miniMapTopLeft = miniMapCenter - (miniMap.Size / 2);
                 // Calibrated X bias baked in so MiniMapXOffset defaults to 0.
                 const float MiniMapXBias = -5f;
                 miniMapCenter.X += MiniMapXBias + this.Settings.MiniMapXOffset;
-                ImGui.SetNextWindowPos(miniMap.Position);
+                ImGui.SetNextWindowPos(miniMapTopLeft);
                 ImGui.SetNextWindowSize(miniMap.Size);
                 ImGui.SetNextWindowBgAlpha(0f);
                 ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize, 0f);
                 ImGui.Begin("###minimapRadar", ImGuiHelper.TransparentWindowFlags);
                 ImGui.PopStyleVar();
+                this.DrawLargeMap(miniMapCenter, trackingPos, trackingHeight, true);
+                this.DrawTgtFiles(miniMapCenter, trackingPos, trackingHeight, true);
+                this.DrawDirectionLines(miniMapCenter, trackingPos, trackingHeight, true);
                 this.DrawTgtIcons(miniMapCenter, trackingPos, trackingHeight, miniMap.Zoom);
                 this.DrawMapIcons(miniMapCenter, trackingPos, trackingHeight, miniMap.Zoom);
-                this.DrawEntityPaths(miniMapCenter, trackingPos, trackingHeight);
+                this.DrawEntityPaths(miniMapCenter, trackingPos, trackingHeight, true);
                 ImGui.End();
             }
         }
@@ -584,7 +600,11 @@ namespace Radar
             }
         }
 
-        private void DrawLargeMap(Vector2 mapCenter, Vector2 trackingPos, float trackingHeight)
+        private void DrawLargeMap(
+            Vector2 mapCenter,
+            Vector2 trackingPos,
+            float trackingHeight,
+            bool forceWindowDrawList = false)
         {
             if (!this.Settings.DrawWalkableMap)
             {
@@ -615,7 +635,7 @@ namespace Radar
             p3 += mapCenter;
             p4 += mapCenter;
 
-            if (this.Settings.DrawMapInCull)
+            if (forceWindowDrawList || this.Settings.DrawMapInCull)
             {
                 ImGui.GetWindowDrawList().AddImageQuad(this.walkableMapTexture, p1, p2, p3, p4);
             }
@@ -625,7 +645,11 @@ namespace Radar
             }
         }
 
-        private void DrawTgtFiles(Vector2 mapCenter, Vector2 trackingPos, float trackingHeight)
+        private void DrawTgtFiles(
+            Vector2 mapCenter,
+            Vector2 trackingPos,
+            float trackingHeight,
+            bool forceWindowDrawList = false)
         {
             var col = ImGuiHelper.Color(
                 (uint)(this.Settings.POIColor.X * 255),
@@ -634,7 +658,7 @@ namespace Radar
                 (uint)(this.Settings.POIColor.W * 255));
 
             ImDrawListPtr fgDraw;
-            if (this.Settings.DrawPOIInCull)
+            if (forceWindowDrawList || this.Settings.DrawPOIInCull)
             {
                 fgDraw = ImGui.GetWindowDrawList();
             }
@@ -739,7 +763,11 @@ namespace Radar
             }
         }
 
-        private void DrawDirectionLines(Vector2 mapCenter, Vector2 trackingPos, float trackingHeight)
+        private void DrawDirectionLines(
+            Vector2 mapCenter,
+            Vector2 trackingPos,
+            float trackingHeight,
+            bool forceWindowDrawList = false)
         {
             var showStraight = this.Settings.ShowStraightLine;
             var showSmooth = this.Settings.ShowSmoothPath;
@@ -769,7 +797,7 @@ namespace Radar
             var doorOverrides = LineWalker.BuildDoorOverrideMap(currentAreaInstance);
 
             ImDrawListPtr fgDraw;
-            if (this.Settings.DrawPOIInCull)
+            if (forceWindowDrawList || this.Settings.DrawPOIInCull)
             {
                 fgDraw = ImGui.GetWindowDrawList();
             }
@@ -1885,7 +1913,11 @@ namespace Radar
         /// <summary>
         /// Draws cached entity paths. Must be called after CollectEntityPaths.
         /// </summary>
-        private void DrawEntityPaths(Vector2 mapCenter, Vector2 trackingPos, float trackingHeight)
+        private void DrawEntityPaths(
+            Vector2 mapCenter,
+            Vector2 trackingPos,
+            float trackingHeight,
+            bool forceWindowDrawList = false)
         {
             if (!this.Settings.ShowEntityPaths ||
                 (this.entityPathSnapshot.Count == 0 && this.tileIconPathSnapshot.Count == 0))
@@ -1897,7 +1929,7 @@ namespace Radar
             var gridHeightData = currentAreaInstance.GridHeightData;
 
             ImDrawListPtr fgDraw;
-            if (this.Settings.DrawPOIInCull)
+            if (forceWindowDrawList || this.Settings.DrawPOIInCull)
             {
                 fgDraw = ImGui.GetWindowDrawList();
             }
@@ -2252,12 +2284,36 @@ namespace Radar
             while (true)
             {
                 yield return new Wait(RemoteEvents.AreaChanged);
-                this.CleanUpRadarPluginCaches();
-                this.currentAreaName = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.Id;
-                this.SwitchReachedPathsToCurrentArea();
-                this.GenerateMapTexture();
-                this.LogBossArenaTgtMatches();
+                this.RefreshAreaInfo();
             }
+        }
+
+        private void RefreshAreaIfIdentityChanged()
+        {
+            var instance = Core.States.InGameStateObject.CurrentAreaInstance;
+            if (instance.Address == IntPtr.Zero ||
+                (instance.Address == this.observedAreaInstanceAddress &&
+                 instance.AreaHash == this.observedAreaHash))
+            {
+                return;
+            }
+
+            Console.WriteLine(
+                $"[Radar] Area identity changed to 0x{instance.Address.ToInt64():X} " +
+                $"(hash {instance.AreaHash}); refreshing map caches.");
+            this.RefreshAreaInfo();
+        }
+
+        private void RefreshAreaInfo()
+        {
+            this.CleanUpRadarPluginCaches();
+            var instance = Core.States.InGameStateObject.CurrentAreaInstance;
+            this.observedAreaInstanceAddress = instance.Address;
+            this.observedAreaHash = instance.AreaHash;
+            this.currentAreaName = Core.States.InGameStateObject.CurrentWorldInstance.AreaDetails.Id;
+            this.SwitchReachedPathsToCurrentArea();
+            this.GenerateMapTexture();
+            this.LogBossArenaTgtMatches();
         }
 
         private void LogBossArenaTgtMatches()
@@ -2610,6 +2666,8 @@ namespace Radar
             this.tileIconPathSnapshot.Clear();
             this.RemoveMapTexture();
             this.currentAreaName = string.Empty;
+            this.observedAreaInstanceAddress = IntPtr.Zero;
+            this.observedAreaHash = string.Empty;
         }
 
         private bool IsLocalCoopActive(Render playerRender, bool hasOtherPlayer)

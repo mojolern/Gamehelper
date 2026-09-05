@@ -28,6 +28,30 @@ namespace RunecraftHelper
 
         private static readonly HttpClient http = CreateHttpClient();
 
+        // poe.ninja quotes every `primaryValue` in the league's OWN base currency -- named by
+        // `core.primary` -- and `core.rates` says how many of each OTHER currency one base unit buys,
+        // so the base currency itself is absent from `rates`. The base is per league, not fixed:
+        //   Runes of Aldur   primary="divine"   rates={exalted:520.2, chaos:10.4}
+        //   Forbidden Rites  primary="exalted"  rates={divine:0.02028, chaos:0.5905}   <- no "exalted"
+        // Reading rates.exalted unconditionally therefore returned 0 in Forbidden Rites, every price
+        // became primaryValue * 0, and the panel showed no prices at all while the requests all
+        // answered 200 with full rows -- nothing in the fetch path looked wrong.
+        private static void ReadRates(JObject parsed, out double baseToEx, out double divToEx)
+        {
+            var core = parsed["core"];
+            var rates = core?["rates"];
+            var primary = core?["primary"]?.Value<string>() ?? string.Empty;
+
+            // Units of `ccy` per one base unit. The base currency is implicitly 1 and never listed.
+            double Per(string ccy) => string.Equals(primary, ccy, StringComparison.OrdinalIgnoreCase)
+                ? 1.0
+                : rates?[ccy]?.Value<double>() ?? 0;
+
+            baseToEx = Per("exalted");
+            var divPerBase = Per("divine");
+            divToEx = divPerBase > 0 ? baseToEx / divPerBase : 0;
+        }
+
         private static HttpClient CreateHttpClient()
         {
             var c = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
@@ -98,7 +122,13 @@ namespace RunecraftHelper
         // Load a previously-saved snapshot. Returns true if the file existed AND its data is
         // within the TTL — caller skips a network refresh in that case. A return of false with
         // a populated Status (Ready) means stale data is loaded and usable while a refresh runs.
-        public bool TryLoadFromDisk(string filePath, int ttlMinutes)
+        //
+        // `expectedLeague` guards against showing another league's prices: the snapshot records the
+        // league it was fetched for, and a mismatch is rejected BEFORE the dictionaries are filled,
+        // so the overlay never gets a chance to render foreign prices as fresh. A pre-League cache
+        // file deserializes to "" and therefore never matches — one extra price reload on the first
+        // launch of this version, deliberately preferred over trusting an unlabeled cache.
+        public bool TryLoadFromDisk(string filePath, int ttlMinutes, string expectedLeague)
         {
             try
             {
@@ -106,6 +136,10 @@ namespace RunecraftHelper
                 var content = File.ReadAllText(filePath);
                 var dto = JsonConvert.DeserializeObject<PriceCacheDto>(content);
                 if (dto == null || dto.Prices == null) return false;
+                if (!string.Equals(dto.League ?? string.Empty, expectedLeague ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
 
                 lock (this.gate)
                 {
@@ -155,11 +189,21 @@ namespace RunecraftHelper
                 var aggregatedArtNames = new Dictionary<string, string>(StringComparer.Ordinal);
                 double divToEx = 0;
 
-                var leagueParam = Uri.EscapeDataString(league.Trim()).Replace("%20", "+");
+                // The API expects the economyLeagues `name` verbatim ("Runes of Aldur"), NOT the web
+                // slug ("runesofaldur") — the slug yields 200 with an empty body.
+                var leagueName = league.Trim();
+                var leagueParam = Uri.EscapeDataString(leagueName).Replace("%20", "+");
 
                 // One bad overview type (404 / renamed slug) must not nuke every other price, so
                 // each type is fetched independently and failures are collected, not thrown.
                 var failedTypes = new List<string>();
+
+                // Tally of "answered 200 and parsed" vs "actually carried rows". Every type here comes
+                // from ONE endpoint family (exchange), which answers a wrong league with 200 + an empty
+                // lines[] rather than an error — so without counting rows a bogus league name is
+                // indistinguishable from "no HTTP failures at all".
+                var typesOk = 0;
+                var rowsTotal = 0;
                 foreach (var type in OverviewTypes)
                 {
                     try
@@ -170,8 +214,10 @@ namespace RunecraftHelper
                         var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
 
                         var parsed = JObject.Parse(json);
-                        var localRate = parsed["core"]?["rates"]?["exalted"]?.Value<double>() ?? 0;
-                        if (localRate > 0) divToEx = localRate;
+                        typesOk++;
+                        rowsTotal += (parsed["lines"] as JArray)?.Count ?? 0;
+                        ReadRates(parsed, out var localRate, out var localDivToEx);
+                        if (localDivToEx > 0) divToEx = localDivToEx;
 
                         var nameById = new Dictionary<string, string>(StringComparer.Ordinal);
                         // {ninjaId → composite key (art-id + grade suffix when grade>1)}. The composite
@@ -261,8 +307,15 @@ namespace RunecraftHelper
                 }
 
                 if (aggregated.Count == 0)
-                    throw new InvalidOperationException(
-                        $"no prices fetched — all overview types failed ({string.Join("; ", failedTypes)})");
+                {
+                    var breakdown = $"{typesOk} ok/{rowsTotal} rows";
+                    throw new InvalidOperationException(typesOk > 0 && rowsTotal == 0
+                        ? $"league \"{leagueName}\": API answered 200 for {typesOk} type(s) but returned 0 rows " +
+                          $"— wrong league name (use the API name, not the web slug) or no economy data " +
+                          $"for this league [{breakdown}]"
+                        : $"league \"{leagueName}\": no prices fetched — {typesOk} type(s) answered, " +
+                          $"{rowsTotal} row(s) total [{breakdown}]; failures: {string.Join("; ", failedTypes)}");
+                }
 
                 // Ensure the reference currencies themselves are queryable. lines[] for Currency
                 // includes them (their primaryValue is their own price in Divine), but defending
@@ -288,6 +341,7 @@ namespace RunecraftHelper
 
                 var dto = new PriceCacheDto
                 {
+                    League = leagueName,
                     LastSyncUtc = this.LastSyncUtc,
                     DivineToExaltedRate = divToEx,
                     Prices = aggregated,
@@ -371,6 +425,10 @@ namespace RunecraftHelper
         {
             public DateTime LastSyncUtc { get; set; }
             public double DivineToExaltedRate { get; set; }
+            // League this snapshot was fetched for (poe.ninja API `name`). Empty in files written by
+            // a pre-2026-09 build → treated as "unknown league" and rejected on load.
+            public string League { get; set; } = string.Empty;
+
             public Dictionary<string, double> Prices { get; set; } = new();
             public Dictionary<string, double> ArtPrices { get; set; } = new();
             public Dictionary<string, string> ArtNames { get; set; } = new();

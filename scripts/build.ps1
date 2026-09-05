@@ -347,6 +347,10 @@ function Repair-PluginsJson {
         $json | Add-Member -NotePropertyName "WorldDrawing" -NotePropertyValue @{ Enable = $false; AutoStart = $false } -Force
         $changed = $true
     }
+    elseif ($json.WorldDrawing.Enable -ne $false) {
+        $json.WorldDrawing.Enable = $false
+        $changed = $true
+    }
 
     if (-not $changed) {
         return

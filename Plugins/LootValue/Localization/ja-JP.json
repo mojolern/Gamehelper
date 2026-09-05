@@ -1,5 +1,5 @@
 {
-  "plugin.description": "価値のある地面アイテムに市場価値ラベルを表示します。",
+  "plugin.description": "地面、スタッシュ、インベントリのアイテムに市場価値を表示します。",
   "button.refresh_prices_now": "今すぐ価格を更新してください",
   "currency.chaos": "カオス",
   "currency.divine": "神聖な",
@@ -22,6 +22,7 @@
   "settings.highlight_color": "ハイライトカラー",
   "settings.highlight_font_size": "ハイライトのフォントサイズ",
   "settings.highlight_from": "ハイライト（例）",
+  "settings.hide_when_game_unfocused": "ゲームが非アクティブのとき値を非表示にする",
   "settings.jitter_filter": "ジッターフィルター (低いほど強力、遅延なし)",
   "settings.league": "リーグ",
   "settings.min_value_to_show": "表示する最小値 (例)",

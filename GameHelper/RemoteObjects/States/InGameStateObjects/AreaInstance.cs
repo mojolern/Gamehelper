@@ -30,6 +30,20 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
     /// </summary>
     public class AreaInstance : RemoteObjectBase
     {
+        // Large composite areas such as the Trial of the Sekhemas foyer legitimately exceed the
+        // old 25-million-cell ceiling. The exact TileDetails vector-shape check below remains the
+        // primary guard against shifted metadata causing multi-gigabyte allocations.
+        private const long MaxTerrainGridCells = 50_000_000;
+        private const int TerrainTileStructureSize = 0x38;
+
+        private static readonly EntityBackedBuffDefinition[] EntityBackedPlayerBuffs =
+        {
+            new(
+                "Metadata/Effects/Spells/sandstorm_swipe/sandstorm_swipe_storm",
+                "spear_sandstorm",
+                rawStage => Math.Max(0, ((int)rawStage - 15) / 3)),
+        };
+
         private int uselesssEntities;
         private int totalEntityRemoved;
         private string entityIdFilter;
@@ -247,16 +261,76 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 this.TerrainMetadata = data.TerrainMetadata;
                 this.CurrentAreaLevel = data.CurrentAreaLevel;
                 this.AreaHash = $"{data.CurrentAreaHash:X}";
-                this.GridWalkableData = reader.ReadStdVector<byte>(
-                    this.TerrainMetadata.GridWalkableData);
-                this.GridHeightData = this.GetTerrainHeight();
-                this.TgtTilesLocations = this.GetTgtFileData();
+                if (this.TryGetTerrainDimensions(out _, out _, out _, out _))
+                {
+                    this.GridWalkableData = reader.ReadStdVector<byte>(
+                        this.TerrainMetadata.GridWalkableData);
+                    this.GridHeightData = this.GetTerrainHeight();
+                    this.TgtTilesLocations = this.GetTgtFileData();
+                }
+                else
+                {
+                    this.GridWalkableData = Array.Empty<byte>();
+                    this.GridHeightData = Array.Empty<float[]>();
+                    this.TgtTilesLocations = new();
+                    Console.WriteLine(
+                        $"[AreaInstance] Rejected invalid terrain metadata at 0x{this.Address.ToInt64():X}: " +
+                        $"TotalTiles={this.TerrainMetadata.TotalTiles}, " +
+                        $"TileDetails={this.TerrainMetadata.TileDetailsPtr}. " +
+                        "The AreaInstance/TerrainMetadata offsets may have shifted.");
+                }
             }
 
             this.UpdateEnvironmentAndCaches(data.Environments);
             this.ServerDataObject.Address = data.PlayerInfo.ServerDataPtr;
             this.Player.Address = data.PlayerInfo.LocalPlayerPtr;
             this.UpdateEntities(data.Entities.AwakeEntities, this.AwakeEntities, true);
+            this.AddEntityBackedPlayerBuffs();
+        }
+
+        private void AddEntityBackedPlayerBuffs()
+        {
+            if (!this.Player.TryGetComponent<Buffs>(out var playerBuffs))
+            {
+                return;
+            }
+
+            foreach (var entity in this.AwakeEntities.Values)
+            {
+                if (!entity.IsValid)
+                {
+                    continue;
+                }
+
+                foreach (var definition in EntityBackedPlayerBuffs)
+                {
+                    if (!entity.Path.Contains(definition.EntityPathFragment, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // Effect entities can be classified as useless and therefore stop refreshing
+                    // cached components. Read a fresh component so changing stages remain live.
+                    if (!entity.TryGetComponent<Buffs>(out var entityBuffs, false))
+                    {
+                        break;
+                    }
+
+                    foreach (var statusEffect in entityBuffs.StatusEffects)
+                    {
+                        if (!statusEffect.Key.Contains(definition.BuffNameFragment, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        var syntheticEffect = statusEffect.Value;
+                        syntheticEffect.Charges = (short)Math.Min(
+                            short.MaxValue,
+                            definition.StageToStacks(syntheticEffect.RawStage));
+                        playerBuffs.AddSyntheticStatusEffect(statusEffect.Key, syntheticEffect);
+                    }
+                }
+            }
         }
 
         private void UpdateEnvironmentAndCaches(StdVector environments)
@@ -386,6 +460,11 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         private Dictionary<string, List<Vector2>> GetTgtFileData()
         {
+            if (!this.TryGetTerrainDimensions(out var tileCountX, out _, out _, out _))
+            {
+                return new();
+            }
+
             var reader = Core.Process.Handle;
             var tileData = reader.ReadStdVector<TileStructure>(this.TerrainMetadata.TileDetailsPtr);
             var ret = new Dictionary<string, List<Vector2>>();
@@ -417,8 +496,8 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
                     var loc = new Vector2
                     {
-                        Y = (tileNumber / this.TerrainMetadata.TotalTiles.X) * TileStructure.TileToGridConversion,
-                        X = (tileNumber % this.TerrainMetadata.TotalTiles.X) * TileStructure.TileToGridConversion
+                        Y = (tileNumber / tileCountX) * TileStructure.TileToGridConversion,
+                        X = (tileNumber % tileCountX) * TileStructure.TileToGridConversion
                     };
 
                     if (localstate.ContainsKey(tgtName))
@@ -454,6 +533,15 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         private float[][] GetTerrainHeight()
         {
+            if (!this.TryGetTerrainDimensions(
+                    out var tileCountX,
+                    out _,
+                    out var gridSizeX,
+                    out var gridSizeY))
+            {
+                return Array.Empty<float[]>();
+            }
+
             var rotationHelper = Core.RotationSelector.Values;
             var rotatorMetrixHelper = Core.RotatorHelper.Values;
             var reader = Core.Process.Handle;
@@ -473,18 +561,16 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                     (addr, data) => data);
             });
 
-            var gridSizeX = (int)this.TerrainMetadata.TotalTiles.X * TileStructure.TileToGridConversion;
-            var gridSizeY = (int)this.TerrainMetadata.TotalTiles.Y * TileStructure.TileToGridConversion;
             var result = new float[gridSizeY][];
             Parallel.For(0, gridSizeY, y =>
             {
                 result[y] = new float[gridSizeX];
                 for (var x = 0; x < gridSizeX; x++)
                 {
-                    var tileDataIndex = (y / TileStructure.TileToGridConversion) * ((int)this.TerrainMetadata.TotalTiles.X);
+                    var tileDataIndex = (y / TileStructure.TileToGridConversion) * tileCountX;
                     tileDataIndex += x / TileStructure.TileToGridConversion;
                     var subTileHeight = 0;
-                    if (tileDataIndex < tileData.Length)
+                    if (tileDataIndex >= 0 && tileDataIndex < tileData.Length)
                     {
                         var mytiledata = tileData[tileDataIndex];
                         if (subTileHeightCache.TryGetValue(mytiledata.SubTileDetailsPtr, out var subTileHeightsArray))
@@ -526,6 +612,52 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             });
 
             return result;
+        }
+
+        private bool TryGetTerrainDimensions(
+            out int tileCountX,
+            out int tileCountY,
+            out int gridSizeX,
+            out int gridSizeY)
+        {
+            tileCountX = 0;
+            tileCountY = 0;
+            gridSizeX = 0;
+            gridSizeY = 0;
+
+            var totalTilesX = this.TerrainMetadata.TotalTiles.X;
+            var totalTilesY = this.TerrainMetadata.TotalTiles.Y;
+            var conversion = TileStructure.TileToGridConversion;
+            if (conversion <= 0 ||
+                totalTilesX <= 0 || totalTilesY <= 0 ||
+                totalTilesX > int.MaxValue / conversion ||
+                totalTilesY > int.MaxValue / conversion)
+            {
+                return false;
+            }
+
+            var candidateGridSizeX = totalTilesX * conversion;
+            var candidateGridSizeY = totalTilesY * conversion;
+            if (candidateGridSizeY > MaxTerrainGridCells / candidateGridSizeX)
+            {
+                return false;
+            }
+
+            var tileDetails = this.TerrainMetadata.TileDetailsPtr;
+            var tileDetailsBytes = tileDetails.Last.ToInt64() - tileDetails.First.ToInt64();
+            var expectedTileDetailsBytes = totalTilesX * totalTilesY * TerrainTileStructureSize;
+            if (tileDetails.First == IntPtr.Zero || tileDetails.Last.ToInt64() < tileDetails.First.ToInt64() ||
+                tileDetails.End.ToInt64() < tileDetails.Last.ToInt64() ||
+                tileDetailsBytes != expectedTileDetailsBytes)
+            {
+                return false;
+            }
+
+            tileCountX = (int)totalTilesX;
+            tileCountY = (int)totalTilesY;
+            gridSizeX = (int)candidateGridSizeX;
+            gridSizeY = (int)candidateGridSizeY;
+            return true;
         }
 
         private int GetSubTerrainHeight(sbyte[] subterrainheightarray, int y, int x)
@@ -1048,5 +1180,10 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 }
             }
         }
+
+        private readonly record struct EntityBackedBuffDefinition(
+            string EntityPathFragment,
+            string BuffNameFragment,
+            Func<uint, int> StageToStacks);
     }
 }

@@ -1,5 +1,5 @@
 {
-  "plugin.description": "在高價值地面物品上顯示市場價值標籤。",
+  "plugin.description": "顯示地面、倉庫和背包物品的市場價值。",
   "button.refresh_prices_now": "立即刷新價格",
   "currency.chaos": "混沌",
   "currency.divine": "神聖",
@@ -22,6 +22,7 @@
   "settings.highlight_color": "高亮顏色",
   "settings.highlight_font_size": "高亮字體大小",
   "settings.highlight_from": "高亮起點（ex）",
+  "settings.hide_when_game_unfocused": "遊戲未取得焦點時隱藏價值",
   "settings.jitter_filter": "抖動過濾（越低越強，無延遲）",
   "settings.league": "賽季",
   "settings.min_value_to_show": "顯示最低價值（ex）",

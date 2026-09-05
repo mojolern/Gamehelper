@@ -7,6 +7,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
     using System;
     using System.Linq.Dynamic.Core;
     using System.Numerics;
+    using AutoHotKeyTrigger;
     using AutoHotKeyTrigger.ProfileManager.Component;
     using GameHelper;
     using ImGuiNET;
@@ -51,7 +52,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         [JsonConstructor]
         public DynamicCondition(string conditionSource, IComponent? component)
         {
-            this.conditionSource = conditionSource;
+            this.conditionSource = conditionSource ?? string.Empty;
             this.component = component;
             this.RebuildFunction();
         }
@@ -79,7 +80,7 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         {
             ConfigurationInstance.ToImGui();
             ImGui.SameLine();
-            if (ImGui.Button("Add##StatusEffect") &&
+            if (ImGui.Button(AhkText.Label("button.add", "Add", "StatusEffect")) &&
                 !string.IsNullOrEmpty(ConfigurationInstance.conditionSource))
             {
                 return new DynamicCondition(ConfigurationInstance.conditionSource);
@@ -152,6 +153,13 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
 
         private void RebuildFunction()
         {
+            if (string.IsNullOrWhiteSpace(this.conditionSource))
+            {
+                this.func = null;
+                this.lastException = "Enter an expression.";
+                return;
+            }
+
             try
             {
                 var parsingConfig = new ParsingConfig()
@@ -189,15 +197,15 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
         {
             if (!expand)
             {
-                ImGui.Text($"Expression:");
+                ImGui.Text(AhkText.T("condition.expression", "Expression:"));
                 ImGui.SameLine();
                 ImGui.TextColored(new Vector4(255, 255, 0, 255), $"{this.conditionSource.Replace("\n", " ").Trim()}");
                 ImGui.SameLine();
-                ImGui.Text($"(Errors {this.exceptionCounter})");
+                ImGui.Text(AhkText.F("condition.errors", "(Errors {0})", this.exceptionCounter));
                 return;
             }
 
-            ImGui.TextWrapped("Type the expression in the following box to make custom condition.");
+            ImGui.TextWrapped(AhkText.T("condition.custom_help", "Type the expression in the following box to make custom condition."));
             if (ImGui.InputTextMultiline(
                 "##dynamicConditionCode",
                 ref this.conditionSource,
@@ -215,13 +223,11 @@ namespace AutoHotKeyTrigger.ProfileManager.DynamicConditions
             }
             else if (this.Evaluate())
             {
-                ImGui.TextColored(ConditionSuccess, $"Condition yeilds true. " +
-                    $"Exception Counter is {this.exceptionCounter}");
+                ImGui.TextColored(ConditionSuccess, AhkText.F("condition.yields_true", "Condition yeilds true. Exception Counter is {0}", this.exceptionCounter));
             }
             else
             {
-                ImGui.TextColored(ConditionFailure, $"Condition yeilds false. " +
-                    $"Error Counter is {this.exceptionCounter}");
+                ImGui.TextColored(ConditionFailure, AhkText.F("condition.yields_false", "Condition yeilds false. Error Counter is {0}", this.exceptionCounter));
             }
 
             ImGui.PopTextWrapPos();

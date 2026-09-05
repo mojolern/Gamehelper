@@ -6,8 +6,10 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 {
     using System;
     using System.Collections.Generic;
+    using System.Linq;
     using System.Numerics;
     using System.Runtime.InteropServices;
+    using System.Text;
     using System.Threading.Tasks;
     using Coroutine;
     using CoroutineEvents;
@@ -34,6 +36,9 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
     public class ImportantUiElements : RemoteObjectBase
     {
         private static readonly int[] WorldMapPanelChildPath = { 22, 0 };
+        private static readonly int[] LargeMapViewportChildPath = { 6, 0 };
+        private static readonly int[] MiniMapViewportChildPath = { 6, 1 };
+        private static readonly int[] PassiveSkillTreeNodesChildPath = { 24, 2 };
         private static readonly int[] Act1PanelChildPath = { 22, 0, 0 };
         private static readonly int[] Act2PanelChildPath = { 22, 0, 1 };
         private static readonly int[] Act3PanelChildPath = { 22, 0, 2 };
@@ -41,29 +46,67 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         private static readonly int[] InterludePanelChildPath = { 22, 0, 5 };
         private static readonly int[] AtlasPanelChildPath = { 22, 0, 6 };
         private static readonly int[] AtlasSkillsPanelChildPath = { 25, 0 };
+        private static readonly int[] CurrencyExchangePanelChildPath = { 114, 20, 6, 1 };
+        private static readonly int[] GemcuttingPanelChildPath = { 53, 3 };
+        private static readonly int[] SupportGemcuttingPanelChildPath = { 54, 3 };
         private static readonly int[] LeftPanelCoopPath = { 22 };
         private static readonly int[] RightPanelCoopPath = { 23 };
         private static readonly int[] TempleConsoleChildPath = { 64, 0 };
         private const int AtlasMapCacheRefreshFrames = 20;
-        private const int AtlasNodeBiomeIdOffset = 0x2CE;
-        private const int AtlasNodeStatusByteOffset = 0x2CF;
-        private const int AtlasNodeMapDataOffset = 0x2A0;
-        private const int AtlasNodeConnectionsVectorOffset = 0x5A8;
-        private const int AtlasNodeContentNameOffset = 0x290;
+        private const int AtlasNodeBiomeIdOffset = 0x2BE;
+        private const int AtlasNodeStatusByteOffset = 0x2BF;
+        // 0.5.5: the EndgameMaps row moved -0x10. The old +0x2A0 now points at the
+        // node's atlas-passive row, producing generated-looking ids or an empty name.
+        private const int AtlasNodeMapDataOffset = 0x290;
+        private const int AtlasNodeGridPositionOffset = 0x310;
+
+        // Atlas layout notes and offsets in this block are adapted from yokkenUA's Atlas plugin
+        // reverse engineering (dfb52db through afecda4), based on live-memory inspection and
+        // Ghidra analysis. Keep the behavioral notes with the offsets when updating them.
+        // The panel owns a flat vector of {unknown, source grid, target grid} connection edges.
+        private const int AtlasNodeConnectionsVectorOffset = 0x590;
+        private const int AtlasNodeContentNameOffset = 0x278;
+
+        // +0x350 is the separate vector<u32> content-token store. It contains alternating
+        // {stat-row id, value} entries; expose them in the legacy packed form expected by
+        // AtlasMapNode (value*64 in the high word, stat id in the low word).
         private const int AtlasNodeContentVecOffset = 0x350;
-        private const int AtlasNodeBadgeContentIdOffset = 0x188;
+
+        // Unlike culled UI badge children, +0x368/+0x370 is a persistent sorted vector<u8> of
+        // EndgameMapContent row indices. AtlasMapNodeWidget's constructor fills it from server
+        // chunk cell-state, so it survives fog, off-screen culling, and sea nodes. The public id
+        // is row + 100. This vector does not contain the +0x350 token content.
+        private const int AtlasNodeBadgeVecBeginOffset = 0x368;
+        private const int AtlasNodeBadgeVecEndOffset = 0x370;
+        private const int AtlasNodeBadgeRowToContentId = 100;
+        private const int AtlasNodeBadgeContentIdOffset = 0x170;
         private const byte AtlasNodeAccessibleBit = 0x01;
         private const byte AtlasNodeCompletedBit = 0x02;
-        private const int UiElementBaseFlagsOffset = 0x180;
+        private const int UiElementBaseFlagsOffset = 0x168;
         private const uint IsVisibleMask = 0x800;
         private const uint AtlasCurrentNodeMarkerFp = 0x502EF3;
         private const uint AtlasMapNodeFp = 0x542EF3;
+
+        // A mist-shrouded King in the Mists node uses the normal 0x542EF3 fingerprint with bit 20
+        // cleared. Its data layout is otherwise identical, so both fingerprints must be accepted.
+        private const uint AtlasMistNodeFp = 0x442EF3;
+
+        // A sea ship is an EndgameRegionActionButton in the atlas child list, not a map node.
+        // Rows are 0=Breach, 1=Forest, 2=Ocean/ship, 3=Tower. Its grid coordinate identifies the
+        // 16x16 chunk a logbook will reveal; those fogged nodes are already materialized and have
+        // maps assigned, which is why Atlas2 can preview their nodes and leylines.
+        // PoE 0.5.5 shifted the EndgameRegionActionButton UiElement tail by -0x18.
+        private const int AtlasRegionButtonRowPtrOffset = 0x308;
+        private const int AtlasRegionButtonGridOffset = 0x318;
+        private const int AtlasRegionButtonRowIndexOffset = 0x320;
+        private const int AtlasOceanRegionButtonRow = 2;
         private const int AtlasNodeMaxContentChildren = 64;
         private const int AtlasNodeMaxContentTokens = 64;
 
         private readonly UiElementParents rootCache;
         private readonly UiElementParents passiveSkillTreeCache;
         private readonly List<AtlasMapNode> atlasMaps = new();
+        private readonly List<AtlasRegionButton> atlasOceanButtons = new();
         private readonly List<PlayerMarker> atlasMarkers = new();
         private int atlasMapCacheFrameCounter = int.MaxValue;
         private int cachedAtlasMapCount = -1;
@@ -78,7 +121,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         /// <summary>
         ///     Passive skill tree node Parent UI element.
-        ///     UiRoot -> MainChild -> index 28 -> 1
+        ///     GameUi -> child 24 -> child 2.
         /// </summary>
         private UiElementBase passiveskilltreenodes;
 
@@ -114,6 +157,9 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             this.Atlas = new(IntPtr.Zero, this.rootCache);
             this.AtlasSkillsPanel = new(IntPtr.Zero, this.rootCache);
             this.TempleConsole = new(IntPtr.Zero, this.rootCache);
+            this.CurrencyExchangePanel = new(IntPtr.Zero, this.rootCache);
+            this.GemcuttingPanel = new(IntPtr.Zero, this.rootCache);
+            this.SupportGemcuttingPanel = new(IntPtr.Zero, this.rootCache);
             this.LeftPanel = new(IntPtr.Zero, this.rootCache);
             this.RightPanel = new(IntPtr.Zero, this.rootCache);
             this.ChatParent = new(IntPtr.Zero, this.rootCache);
@@ -199,6 +245,9 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         /// </summary>
         public IReadOnlyList<AtlasMapNode> AtlasMaps => this.atlasMaps;
 
+        /// <summary>Gets the Uncharted Waters region buttons currently materialized by the atlas panel.</summary>
+        public IReadOnlyList<AtlasRegionButton> AtlasOceanButtons => this.atlasOceanButtons;
+
         /// <summary>
         ///     Gets the "you are here" marker children on the Atlas (fp 0x502EF3).
         ///     These are not real map nodes — they render on the player's current
@@ -223,6 +272,25 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         public UiElementBase RightPanel { get; }
 
         /// <summary>
+        ///     Gets the Currency Exchange item-list panel.
+        ///     Its visibility reliably indicates that the Currency Exchange screen is open.
+        ///     GameUi -> child 114 -> 20 -> 6 -> 1.
+        /// </summary>
+        public UiElementBase CurrencyExchangePanel { get; }
+
+        /// <summary>
+        ///     Gets the Gemcutting panel visibility gate.
+        ///     GameUi -> child 53 -> child 3. Child 53 itself remains visible while the panel is closed.
+        /// </summary>
+        public UiElementBase GemcuttingPanel { get; }
+
+        /// <summary>
+        ///     Gets the Support Gemcutting panel visibility gate.
+        ///     GameUi -> child 54 -> child 3. Child 54 itself remains visible while the panel is closed.
+        /// </summary>
+        public UiElementBase SupportGemcuttingPanel { get; }
+
+        /// <summary>
         ///     Gets a value indicating whether any large blocking panel is currently open
         ///     (a left/right side panel, the passive skill tree, or the world-travel map).
         ///     Useful for overlays that should hide world-space drawing while the player is in a menu.
@@ -233,12 +301,15 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             this.WorldMapPanel.IsVisible ||
             this.AtlasSkillsPanel.IsVisible ||
             this.TempleConsole.IsVisible ||
+            this.CurrencyExchangePanel.IsVisible ||
+            this.GemcuttingPanel.IsVisible ||
+            this.SupportGemcuttingPanel.IsVisible ||
             this.SekhemasTrialMapPanel.IsVisible ||
             this.IsPassiveSkillTreeOpen;
 
         /// <summary>
         ///     Gets a value indicating whether the passive skill tree is currently open.
-        ///     Gated on the visibility of the tree's node container (UiRoot manager -> 0x730 -> child 2),
+        ///     Gated on the effective visibility of the tree's node container (GameUi -> child 24 -> child 2),
         ///     not on <see cref="SkillTreeNodesUiElements" />: in v0.5.x the per-node SkillInfo pointer
         ///     reads null so that list never populates, but the container's visibility bit is reliable.
         /// </summary>
@@ -259,7 +330,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         /// <summary>
         ///     Gets the skill tree nodes UI Elements.
-        ///     UiRoot -> MainChild -> index 28 -> 2 -> all childrens;
+        ///     GameUi -> child 24 -> child 2 -> all children.
         /// </summary>
         public List<SkillTreeNodeUiElement> SkillTreeNodesUiElements { get; }
 
@@ -280,6 +351,12 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                         ImGui.Text($"Grid Position: {map.GridPosition.X}, {map.GridPosition.Y}");
                         ImGui.Text($"Biome: {map.BiomeId}");
                         ImGui.Text($"State: {map.State}");
+                        ImGui.Text($"Raw Status: 0x{map.RawStatus:X2}");
+                        if (ImGui.SmallButton($"Copy layout scan##AtlasMapLayout{map.Index}"))
+                        {
+                            ImGui.SetClipboardText(BuildAtlasNodeLayoutReport(map));
+                        }
+
                         ImGui.Text($"Type: {map.Type}");
                         ImGui.Text($"Tags: {string.Join(", ", map.Tags)}");
                         ImGui.Text($"Connected Nodes: {map.ConnectedGridPositions.Count}");
@@ -314,7 +391,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                         var displayedDeliriousContent = false;
                         foreach (var token in map.ContentTokens)
                         {
-                            if ((token & 0xFFFFu) == 0x685Au)
+                            if ((token & 0xFFFFu) is 0x685Au or 0x685Cu)
                             {
                                 if (!displayedDeliriousContent && deliriousContent != null)
                                 {
@@ -398,6 +475,9 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             this.Atlas.Address = IntPtr.Zero;
             this.AtlasSkillsPanel.Address = IntPtr.Zero;
             this.TempleConsole.Address = IntPtr.Zero;
+            this.CurrencyExchangePanel.Address = IntPtr.Zero;
+            this.GemcuttingPanel.Address = IntPtr.Zero;
+            this.SupportGemcuttingPanel.Address = IntPtr.Zero;
             this.LeftPanel.Address = IntPtr.Zero;
             this.RightPanel.Address = IntPtr.Zero;
             this.ChatParent.Address = IntPtr.Zero;
@@ -415,9 +495,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             var data1 = reader.ReadMemory<ImportantUiElementsOffsets>(Core.GHSettings.IsTaiwanClient ? this.Address - 0x08 : this.Address);
             if (Core.GHSettings.EnableControllerMode)
             {
-                var data2 = reader.ReadMemory<MapParentStruct>(data1.ControllerModeMapParentPtr);
-                this.LargeMap.Address = data2.LargeMapPtr;
-                this.MiniMap.Address = data2.MiniMapPtr;
+                this.UpdateMapAddresses();
                 this.UpdateWorldMapPanelAddresses();
                 if (this.IsCoopMode())
                 {
@@ -435,18 +513,12 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             }
             else
             {
-                var data2 = reader.ReadMemory<MapParentStruct>(data1.MapParentPtr);
-                var data3 = reader.ReadMemory<UiElementBaseOffset>(data1.PassiveSkillTreePanel);
-                var data4 = reader.ReadMemory<IntPtr>(data3.ChildrensPtr.First + (PassiveSkillTreeStruct.ChildNumber));
-                // This won't throw an exception (i.e. this address is not a UIElement) because (lucky us)
-                // game UiElement garbage collection is not instant. if this ever changes, put try catch on it.
-                this.LargeMap.Address = data2.LargeMapPtr;
-                this.MiniMap.Address = data2.MiniMapPtr;
+                this.UpdateMapAddresses();
                 this.UpdateWorldMapPanelAddresses();
                 this.LeftPanel.Address = ValidUiElementOrZero(data1.LeftPanelPtr);
                 this.RightPanel.Address = ValidUiElementOrZero(data1.RightPanelPtr);
                 this.ChatParent.Address = data1.ChatParentPtr;
-                this.passiveskilltreenodes.Address = ValidUiElementOrZero(data4);
+                this.passiveskilltreenodes.Address = ResolveChildAddress(this.Address, PassiveSkillTreeNodesChildPath);
                 this.updatePassiveSkillTreeData();
                 {
                     var mgrOff = reader.ReadMemory<UiElementBaseOffset>(this.Address);
@@ -457,7 +529,16 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 }
             }
 
+            this.CurrencyExchangePanel.Address = ResolveChildAddress(this.Address, CurrencyExchangePanelChildPath);
+            this.GemcuttingPanel.Address = ResolveChildAddress(this.Address, GemcuttingPanelChildPath);
+            this.SupportGemcuttingPanel.Address = ResolveChildAddress(this.Address, SupportGemcuttingPanelChildPath);
             this.UpdateAtlasMapData();
+        }
+
+        private void UpdateMapAddresses()
+        {
+            this.LargeMap.Address = ResolveChildAddress(this.Address, LargeMapViewportChildPath);
+            this.MiniMap.Address = ResolveChildAddress(this.Address, MiniMapViewportChildPath);
         }
 
         private void UpdateWorldMapPanelAddresses()
@@ -478,6 +559,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             if (this.Atlas.Address == IntPtr.Zero || !this.Atlas.IsVisible)
             {
                 this.atlasMaps.Clear();
+                this.atlasOceanButtons.Clear();
                 this.atlasMarkers.Clear();
                 this.cachedAtlasMapCount = -1;
                 this.atlasMapCacheFrameCounter = int.MaxValue;
@@ -488,6 +570,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             if (atlasCount <= 0 || atlasCount > 10000)
             {
                 this.atlasMaps.Clear();
+                this.atlasOceanButtons.Clear();
                 this.atlasMarkers.Clear();
                 this.cachedAtlasMapCount = -1;
                 this.atlasMapCacheFrameCounter = int.MaxValue;
@@ -504,6 +587,7 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             var reader = Core.Process.Handle;
             var connections = ReadAtlasConnections(this.Atlas.Address);
             var maps = new List<AtlasMapNode>(atlasCount);
+            var oceanButtons = new List<AtlasRegionButton>();
             var markers = new List<PlayerMarker>(2);
             var markerFpMasked = AtlasCurrentNodeMarkerFp & ~IsVisibleMask;
             for (var i = 0; i < atlasCount; i++)
@@ -527,8 +611,20 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                     continue;
                 }
 
-                if (fpMasked != (AtlasMapNodeFp & ~IsVisibleMask))
+                if (fpMasked != (AtlasMapNodeFp & ~IsVisibleMask) &&
+                    fpMasked != (AtlasMistNodeFp & ~IsVisibleMask))
                 {
+                    if (reader.TryReadMemory<int>(nodeUi.Address + AtlasRegionButtonRowIndexOffset, out var rowIndex) &&
+                        rowIndex == AtlasOceanRegionButtonRow &&
+                        reader.TryReadMemory<IntPtr>(nodeUi.Address + AtlasRegionButtonRowPtrOffset, out var rowPtr) &&
+                        rowPtr != IntPtr.Zero &&
+                        reader.TryReadMemory<StdTuple2D<int>>(nodeUi.Address + AtlasRegionButtonGridOffset, out var buttonGrid) &&
+                        buttonGrid.X is >= -0x80000 and <= 0x80000 &&
+                        buttonGrid.Y is >= -0x80000 and <= 0x80000)
+                    {
+                        oceanButtons.Add(new AtlasRegionButton(i, nodeUi.Address, buttonGrid, (flags & IsVisibleMask) != 0));
+                    }
+
                     continue;
                 }
 
@@ -541,6 +637,8 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
             this.atlasMaps.Clear();
             this.atlasMaps.AddRange(maps);
+            this.atlasOceanButtons.Clear();
+            this.atlasOceanButtons.AddRange(oceanButtons);
 
             // Resolve each marker to the map node it sits on. The marker
             // renders above the node, so offset its Y center downward ~100px
@@ -605,7 +703,9 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 return null;
             }
 
-            if (!reader.TryReadMemory<StdTuple2D<int>>(nodeAddr + 0x320, out var gridPosition) ||
+            // +0x310 is the atlas-wide coordinate used by the panel's connection edges. The
+            // superficially similar pair at +0x320 is only local to the node's generated region.
+            if (!reader.TryReadMemory<StdTuple2D<int>>(nodeAddr + AtlasNodeGridPositionOffset, out var gridPosition) ||
                 !reader.TryReadMemory<byte>(nodeData + AtlasNodeBiomeIdOffset, out var biomeId) ||
                 !reader.TryReadMemory<byte>(nodeData + AtlasNodeStatusByteOffset, out var status))
             {
@@ -620,17 +720,20 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
             var mapId = string.Empty;
             if (reader.TryReadMemory<IntPtr>(nodeData + AtlasNodeMapDataOffset, out var mapDataWrapper)
-                && mapDataWrapper != IntPtr.Zero
-                && reader.TryReadMemory<IntPtr>(mapDataWrapper, out var stringHeader)
-                && stringHeader != IntPtr.Zero
-                && reader.TryReadMemory<IntPtr>(stringHeader, out var stringBuffer)
-                && stringBuffer != IntPtr.Zero)
+                && mapDataWrapper != IntPtr.Zero)
             {
-                mapId = reader.ReadUnicodeString(stringBuffer);
+                if (reader.TryReadMemory<IntPtr>(mapDataWrapper, out var stringHeader)
+                    && stringHeader != IntPtr.Zero
+                    && reader.TryReadMemory<IntPtr>(stringHeader, out var stringBuffer)
+                    && stringBuffer != IntPtr.Zero)
+                {
+                    mapId = reader.ReadUnicodeString(stringBuffer);
+                }
             }
 
             ReadAtlasContentContainer(nodeUi, out var badgeAddresses, out var contentNames, out var badgeContentIds);
             var contentTokens = ReadAtlasContentTokens(nodeAddr);
+            MergePersistentAtlasBadgeContent(nodeAddr, mapId, contentNames, badgeContentIds);
 
             return new AtlasMapNode(
                 index,
@@ -638,12 +741,80 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 mapId,
                 gridPosition,
                 biomeId,
+                status,
                 state,
                 contentNames,
                 badgeAddresses,
                 contentTokens,
                 badgeContentIds,
                 connections.TryGetValue(gridPosition, out var connected) ? connected : []);
+        }
+
+        private static string BuildAtlasNodeLayoutReport(AtlasMapNode map)
+        {
+            var result = new StringBuilder(4096);
+            result.AppendLine($"Atlas node {map.Index}: {map.MapId}");
+            result.AppendLine($"node=0x{map.Address.ToInt64():X} grid={map.GridPosition.X},{map.GridPosition.Y} " +
+                              $"state={map.State} rawStatus=0x{map.RawStatus:X2}");
+
+            var reader = Core.Process.Handle;
+            if (!reader.TryReadMemory<IntPtr>(map.Address + 0x10, out var nodeDataStorage) ||
+                nodeDataStorage == IntPtr.Zero ||
+                !reader.TryReadMemory<IntPtr>(nodeDataStorage + 0x20, out var nodeData) ||
+                nodeData == IntPtr.Zero)
+            {
+                result.AppendLine("nodeData=<unreadable>");
+                return result.ToString();
+            }
+
+            result.AppendLine($"nodeDataStorage=0x{nodeDataStorage.ToInt64():X} nodeData=0x{nodeData.ToInt64():X}");
+            AppendAtlasHexDump(result, "node", map.Address, 0x280, 0x110);
+            AppendAtlasHexDump(result, "nodeData", nodeData, 0x250, 0x100);
+
+            if (reader.TryReadMemory<IntPtr>(nodeData + AtlasNodeMapDataOffset, out var mapDataWrapper) &&
+                mapDataWrapper != IntPtr.Zero)
+            {
+                result.AppendLine($"mapDataWrapper=0x{mapDataWrapper.ToInt64():X}");
+                AppendAtlasHexDump(result, "mapData", mapDataWrapper, 0, 0x80);
+            }
+            else
+            {
+                result.AppendLine("mapDataWrapper=<unreadable>");
+            }
+
+            return result.ToString();
+        }
+
+        private static void AppendAtlasHexDump(
+            StringBuilder result,
+            string label,
+            IntPtr baseAddress,
+            int startOffset,
+            int byteCount)
+        {
+            var bytes = Core.Process.Handle.ReadMemoryArray<byte>(baseAddress + startOffset, byteCount);
+            if (bytes.Length != byteCount)
+            {
+                result.AppendLine($"{label}+0x{startOffset:X}=<unreadable>");
+                return;
+            }
+
+            for (var row = 0; row < bytes.Length; row += 16)
+            {
+                result.Append($"{label}+0x{startOffset + row:X3}: ");
+                var rowLength = Math.Min(16, bytes.Length - row);
+                for (var column = 0; column < rowLength; column++)
+                {
+                    if (column > 0)
+                    {
+                        result.Append(' ');
+                    }
+
+                    result.Append(bytes[row + column].ToString("X2"));
+                }
+
+                result.AppendLine();
+            }
         }
 
         private static List<uint> ReadAtlasContentTokens(IntPtr nodeAddr)
@@ -659,8 +830,72 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 return new List<uint>();
             }
 
-            var tokens = reader.ReadStdVector<uint>(tokenVector);
-            return tokens.Length > 0 ? new List<uint>(tokens) : new List<uint>();
+            var raw = reader.ReadStdVector<uint>(tokenVector);
+            if (raw.Length < 2 || (raw.Length & 1) != 0)
+            {
+                return new List<uint>();
+            }
+
+            var tokens = new List<uint>(raw.Length / 2);
+            for (var i = 0; i < raw.Length; i += 2)
+            {
+                var statId = raw[i] & 0xFFFFu;
+                var scaledValue = (uint)Math.Min((ulong)raw[i + 1] * 64u, 0xFFFFu);
+                tokens.Add((scaledValue << 16) | statId);
+            }
+
+            return tokens;
+        }
+
+        // The badge UI children are culled for fogged/off-screen nodes, but the persistent raw
+        // badge vector described above remains. Merge it into the public badge model so consumers
+        // see the same server cell-state content both on- and off-screen. yokkenUA traced its
+        // population through AtlasMapNodeWidget_ctor and AtlasNode_badgeVec_insert in Ghidra.
+        private static void MergePersistentAtlasBadgeContent(
+            IntPtr nodeAddr,
+            string mapId,
+            List<string> contentNames,
+            List<uint> badgeContentIds)
+        {
+            var tags = WorldAreaTags.GetMeta(mapId)?.Tags;
+            if (tags?.Contains("hideout", StringComparer.OrdinalIgnoreCase) == true)
+                return;
+
+            var reader = Core.Process.Handle;
+            if (reader.TryReadMemory<IntPtr>(nodeAddr + AtlasNodeBadgeVecBeginOffset, out var begin) &&
+                reader.TryReadMemory<IntPtr>(nodeAddr + AtlasNodeBadgeVecEndOffset, out var end) &&
+                begin != IntPtr.Zero)
+            {
+                var count = end.ToInt64() - begin.ToInt64();
+                if (count is > 0 and <= AtlasNodeMaxContentChildren)
+                {
+                    for (var i = 0; i < count; i++)
+                    {
+                        var id = (uint)(reader.ReadMemory<byte>(begin + i) + AtlasNodeBadgeRowToContentId);
+                        AddAtlasBadgeContent(id, contentNames, badgeContentIds);
+                    }
+                }
+            }
+
+            // Some distant sea maps have neither UI badges nor a transmitted content vector. Their
+            // content is intrinsic to the persistent map id and can still be recovered reliably.
+            if (mapId.StartsWith("ExpeditionSubArea", StringComparison.OrdinalIgnoreCase))
+                AddAtlasBadgeContent(100, contentNames, badgeContentIds); // Powerful Map Boss
+            else if (mapId.StartsWith("ExpeditionLogBook", StringComparison.OrdinalIgnoreCase))
+                AddAtlasBadgeContent(166, contentNames, badgeContentIds); // Grand Expedition
+        }
+
+        private static void AddAtlasBadgeContent(
+            uint id,
+            List<string> contentNames,
+            List<uint> badgeContentIds)
+        {
+            if (!badgeContentIds.Any(existing => (existing & 0xFFFFu) == id))
+                badgeContentIds.Add(id);
+
+            var name = AtlasMapNode.GetBadgeContentName(id);
+            if (!string.IsNullOrWhiteSpace(name) && !contentNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+                contentNames.Add(name);
         }
 
         private static Dictionary<StdTuple2D<int>, List<StdTuple2D<int>>> ReadAtlasConnections(IntPtr atlasAddress)
@@ -716,8 +951,8 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
         }
 
         // Single pass over the node's content container (node[0][0]) collecting, for each badge child:
-        // its address, its content-name string (wide string off the child+0x290 pointer, class-2
-        // labelled content), and its badge content id (u32 at child+0x188). Empty/blank names are
+        // its address, its content-name string (wide string off the child+0x278 pointer, class-2
+        // labelled content), and its badge content id (u32 at child+0x170). Empty/blank names are
         // skipped; the address and id lists stay child-aligned for callers that need the raw badges.
         private static void ReadAtlasContentContainer(
             UiElementBase nodeUi,
@@ -845,8 +1080,10 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
                 return IntPtr.Zero;
             }
 
-            var data = Core.Process.Handle.ReadMemory<UiElementBaseOffset>(address);
-            return data.Self != IntPtr.Zero && data.Self != address ? IntPtr.Zero : address;
+            return Core.Process.Handle.TryReadMemory<UiElementBaseOffset>(address, out var data) &&
+                   data.Self == address
+                ? address
+                : IntPtr.Zero;
         }
 
         private void updatePassiveSkillTreeData()

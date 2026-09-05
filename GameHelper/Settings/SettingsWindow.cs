@@ -89,7 +89,7 @@ namespace GameHelper.Settings
             Core.CoroutinesRegistrar.Add(CoroutineHandler.Start(
                 RenderCoroutine(),
                 "[Settings] Draw Core/Plugin settings",
-                int.MaxValue));
+                UiRenderPriority.CoreWindows));
         }
 
         private static void DrawManuBar()
@@ -391,22 +391,7 @@ namespace GameHelper.Settings
 
         private static void SetPluginEnabled(PluginContainer container, bool enabled)
         {
-            if (container.Metadata.Enable == enabled)
-            {
-                return;
-            }
-
-            container.Metadata.Enable = enabled;
-            if (enabled)
-            {
-                container.Plugin.OnEnable(Core.Process.Address != IntPtr.Zero);
-            }
-            else
-            {
-                container.Plugin.SaveSettings();
-                container.Plugin.OnDisable();
-            }
-
+            PManager.SetPluginEnabled(container, enabled);
             QueueSettingsSave("plugin toggle");
         }
 
@@ -452,7 +437,7 @@ namespace GameHelper.Settings
             ImGuiTheme.SectionHeader(L.T("settings.about.title", "About"));
             ImGui.PushTextWrapPos(ImGui.GetContentRegionAvail().X);
             ImGui.TextColored(color, L.T("settings.about.scam", "This is free software, if you purchased a copy you have been scammed"));
-            ImGui.TextColored(color, L.T("settings.about.version", "For PoE2 0.5.4b"));
+            ImGui.TextColored(color, L.T("settings.about.version", "For PoE2 0.5.5"));
             ImGui.TextColored(color, L.T("settings.about.zero_day", "Zero Day developer is Kronos"));
             ImGui.TextColored(color, L.T("settings.about.offset", "Offset updater is Arsenic, Nabeora, Lafko"));
             ImGui.TextColored(color, L.T("settings.about.discord", "Official GameHelper2 Discord is https://discord.gg/864GyuM5S"));
@@ -1035,6 +1020,7 @@ namespace GameHelper.Settings
             if (Core.GHSettings.HideSettingWindowOnStart)
             {
                 isSettingsWindowVisible = false;
+                Core.IsSettingsMenuOpen = false;
             }
         }
 

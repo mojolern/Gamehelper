@@ -116,7 +116,7 @@ namespace LootValue
         private static string cacheFilePath = string.Empty;
         private static DateTime lastFetchTime = DateTime.MinValue;
         private static int configuredSource = SourcePoe2Scout;
-        private static string configuredLeague = "Runes of Aldur";
+        private static string configuredLeague = "Forbidden Rites";
         private static int configuredRefreshMinutes = 5;
         private static double chaosPerDivine = 12.0;
         private static double chaosPerExalted = 0.1;
@@ -129,14 +129,14 @@ namespace LootValue
         private static HttpClient CreateHttpClient()
         {
             var client = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
-            client.DefaultRequestHeaders.Add("User-Agent", "RitualHelper-GameHelper-Plugin");
+            client.DefaultRequestHeaders.Add("User-Agent", "LootValue-GameHelper-Plugin");
             return client;
         }
 
         public static void Configure(int priceSource, string league, int refreshIntervalMinutes)
         {
             configuredSource = priceSource;
-            configuredLeague = string.IsNullOrWhiteSpace(league) ? "Runes of Aldur" : league.Trim();
+            configuredLeague = string.IsNullOrWhiteSpace(league) ? "Forbidden Rites" : league.Trim();
             configuredRefreshMinutes = Math.Max(1, refreshIntervalMinutes);
         }
 
@@ -620,8 +620,13 @@ namespace LootValue
             try
             {
                 var json = await Http.GetStringAsync("https://poe2scout.com/api/poe2/Leagues").ConfigureAwait(false);
-                var root = JObject.Parse(json);
-                var leagues = root["value"] as JArray ?? root["Value"] as JArray;
+                var token = ParseScoutResponse(json);
+                var leagues = token as JArray;
+                if (leagues == null && token is JObject root)
+                {
+                    leagues = root["value"] as JArray ?? root["Value"] as JArray;
+                }
+
                 if (leagues == null) return new RatePair(divChaos, exChaos);
 
                 foreach (var league in leagues)
@@ -644,7 +649,7 @@ namespace LootValue
             {
                 var url = $"https://poe2scout.com/api/poe2/Leagues/{leagueEscaped}/Currencies/ByCategory?Category=currency&ReferenceCurrency=chaos&PerPage=250&Page=1";
                 var json = await Http.GetStringAsync(url).ConfigureAwait(false);
-                var items = JObject.Parse(json)["Items"] as JArray;
+                var items = (ParseScoutResponse(json) as JObject)?["Items"] as JArray;
                 if (items != null)
                 {
                     foreach (var item in items)
@@ -665,6 +670,17 @@ namespace LootValue
             return new RatePair(divChaos, exChaos);
         }
 
+        private static JToken ParseScoutResponse(string json)
+        {
+            var token = JToken.Parse(json);
+            if (token.Type == JTokenType.String && token.Value<string>() is { } nestedJson)
+            {
+                token = JToken.Parse(nestedJson);
+            }
+
+            return token;
+        }
+
         private static async Task FetchScoutCurrencyCategoryAsync(
             string leagueEscaped,
             string category,
@@ -679,21 +695,22 @@ namespace LootValue
                 {
                     var url = $"https://poe2scout.com/api/poe2/Leagues/{leagueEscaped}/Currencies/ByCategory?Category={category}&ReferenceCurrency=chaos&PerPage=250&Page={page}";
                     var json = await Http.GetStringAsync(url).ConfigureAwait(false);
-                    var data = JObject.Parse(json);
+                    if (ParseScoutResponse(json) is not JObject data) break;
                     pages = data["Pages"]?.Value<int?>() ?? 1;
 
                     if (data["Items"] is not JArray items) break;
 
-                    foreach (var item in items)
+                    foreach (var item in items.OfType<JObject>())
                     {
                         var price = item["CurrentPrice"]?.Value<double?>() ?? 0;
                         if (price <= 0) continue;
 
                         var text = item["Text"]?.ToString();
+                        var metadata = item["ItemMetadata"] as JObject;
                         AddFlatPrice(flat, text, price);
                         AddFlatPrice(flat, item["ApiId"]?.ToString(), price);
-                        AddFlatPrice(flat, item["ItemMetadata"]?["name"]?.ToString(), price);
-                        AddFlatPrice(flat, item["ItemMetadata"]?["base_type"]?.ToString(), price);
+                        AddFlatPrice(flat, metadata?["name"]?.ToString(), price);
+                        AddFlatPrice(flat, metadata?["base_type"]?.ToString(), price);
                         IndexPathName(pathNames, item["ApiId"]?.ToString(), text);
                         IndexPathName(pathNames, ExtractIconBasename(item["IconUrl"]?.ToString()), text);
                     }
@@ -718,24 +735,25 @@ namespace LootValue
                 {
                     var url = $"https://poe2scout.com/api/poe2/Leagues/{leagueEscaped}/Uniques/ByCategory?Category={category}&ReferenceCurrency=chaos&PerPage=250&Page={page}";
                     var json = await Http.GetStringAsync(url).ConfigureAwait(false);
-                    var data = JObject.Parse(json);
+                    if (ParseScoutResponse(json) is not JObject data) break;
                     pages = data["Pages"]?.Value<int?>() ?? 1;
                     if (data["Items"] is not JArray items) break;
 
-                    foreach (var item in items)
+                    foreach (var item in items.OfType<JObject>())
                     {
                         var price = item["CurrentPrice"]?.Value<double?>() ?? 0;
                         if (price <= 0) continue;
 
+                        var metadata = item["ItemMetadata"] as JObject;
                         var listing = new UniquePriceListing
                         {
                             Name = item["Name"]?.ToString() ?? string.Empty,
                             Text = item["Text"]?.ToString() ?? string.Empty,
-                            BaseType = item["Type"]?.ToString() ?? item["ItemMetadata"]?["base_type"]?.ToString() ?? string.Empty,
+                            BaseType = item["Type"]?.ToString() ?? metadata?["base_type"]?.ToString() ?? string.Empty,
                             PriceChaos = price,
                             ExplicitMods = CombineModLists(
-                                item["ItemMetadata"]?["implicit_mods"]?.ToObject<List<string>>(),
-                                item["ItemMetadata"]?["explicit_mods"]?.ToObject<List<string>>()),
+                                ReadScoutModList(metadata?["implicit_mods"]),
+                                ReadScoutModList(metadata?["explicit_mods"])),
                         };
 
                         AddUniqueListing(uniques, listing);
@@ -747,6 +765,28 @@ namespace LootValue
 
                 page++;
             }
+        }
+
+        private static List<string> ReadScoutModList(JToken? token)
+        {
+            var mods = new List<string>();
+            if (token is not JArray entries)
+                return mods;
+
+            foreach (var entry in entries)
+            {
+                var description = entry switch
+                {
+                    JValue { Type: JTokenType.String } value => value.Value<string>(),
+                    JObject value => value["description"]?.ToString(),
+                    _ => null,
+                };
+
+                if (!string.IsNullOrWhiteSpace(description))
+                    mods.Add(description.Trim());
+            }
+
+            return mods;
         }
 
         private static List<string> CombineModLists(IReadOnlyList<string>? first, IReadOnlyList<string>? second)

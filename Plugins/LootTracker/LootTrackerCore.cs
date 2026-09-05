@@ -6,6 +6,7 @@ namespace LootTracker
     using System.Runtime.InteropServices;
     using System.Text;
     using GameHelper;
+    using GameHelper.Localization;
     using GameHelper.Plugin;
     using GameHelper.RemoteEnums;
     using ImGuiNET;
@@ -97,6 +98,19 @@ namespace LootTracker
         private readonly PriceCache priceCache = new();
         private DateTime nextAutoRefreshCheckUtc = DateTime.MinValue;
 
+        // Throttles the league-list staleness check (same one-minute tick as the price check).
+        private DateTime nextLeagueCheckUtc = DateTime.MinValue;
+
+        // FetchedUtc of the league list the last time we evaluated it — a change means a fresh list
+        // arrived, which is the only moment "the saved league disappeared" can newly become true.
+        private DateTime lastSeenLeagueListUtc = DateTime.MinValue;
+
+        // Set when the plugin moved itself off a league that vanished from poe.ninja's economyLeagues,
+        // so the settings pane can say so instead of silently swapping the user's league. Stored as the
+        // two raw names (not a formatted sentence) so the note follows the UI language at draw time.
+        private string leagueNoteFrom = string.Empty;
+        private string leagueNoteTo = string.Empty;
+
         // {BaseItemType.Id last segment → ItemVisualIdentity dds-art basename}, for the items whose
         // metadata id diverges from their art id (essences, soul cores, runes, many currencies — see
         // docs/poe-ninja-api.md). poe.ninja keys prices by the art id, so a read-off-memory item must
@@ -107,8 +121,20 @@ namespace LootTracker
         // UI icons (64x64 PNG in icons\), name (filename w/o ext) -> ImGui texture handle.
         private readonly Dictionary<string, IntPtr> iconHandles = new(StringComparer.OrdinalIgnoreCase);
 
+        // UI localization: dictionaries in <plugin>/Localization/<lang-code>.json, resolved against GameHelper's
+        // selected UI language (OverlayLocalization.CurrentLanguage), fallback en-US.json then the English literal.
+        // Lazy so it's ready even if a Draw* runs before OnEnable.
+        private PluginLocalization? loc;
+        private PluginLocalization Loc => this.loc ??= new PluginLocalization(this.DllDirectory);
+        private string L(string key, string fallback) => this.Loc.T(key, fallback);
+        private string LF(string key, string fallback, params object[] args) => this.Loc.F(key, fallback, args);
+
         private string SettingPathname => Path.Join(this.DllDirectory, "config", "settings.txt");
         private string PriceCachePathname => Path.Join(this.DllDirectory, "config", "prices.json");
+
+        // poe.ninja's economyLeagues list (see NinjaLeagues). League-independent by design — the file
+        // name must NOT carry a league, it caches the list of leagues itself.
+        private string LeagueCachePathname => Path.Join(this.DllDirectory, "config", "leagues.json");
         private string MetaArtPathname => Path.Join(this.DllDirectory, "metaArt.json");
         private string IconsDir => Path.Join(this.DllDirectory, "icons");
 
@@ -241,7 +267,17 @@ namespace LootTracker
             this.LoadIcons();
             this.LoadActiveState(); // resume an in-progress session that survived a close/crash
 
-            var fresh = this.priceCache.TryLoadFromDisk(this.PriceCachePathname, this.Settings.CacheTtlMinutes);
+            // League list first: the price fetch below needs a league name that still exists, and the
+            // settings combo should have content on the very first frame.
+            if (!NinjaLeagues.TryLoadFromDisk(this.LeagueCachePathname, NinjaLeagues.DefaultTtlHours))
+            {
+                NinjaLeagues.StartRefresh(this.LeagueCachePathname);
+            }
+
+            this.MaybeAdoptIndexedLeague();
+
+            var fresh = this.priceCache.TryLoadFromDisk(
+                this.PriceCachePathname, this.Settings.CacheTtlMinutes, this.Settings.League);
             if (!fresh)
                 this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
         }
@@ -307,93 +343,231 @@ namespace LootTracker
         public override void DrawSettings()
         {
             // Collapsed-by-default group for the HUD layout knobs (no DefaultOpen flag = starts closed).
-            if (ImGui.CollapsingHeader("Settings"))
+            if (ImGui.CollapsingHeader(this.Loc.Title("lt.settings", "Settings", "lt_settings")))
             {
-                ImGui.SeparatorText("Compact bar (hideout)");
-                ImGui.SliderFloat("Compact bar height (px)", ref this.Settings.CompactHeight, 70f, 200f, "%.0f");
-                ImGui.SliderFloat("Compact bar width (px)", ref this.Settings.CompactWidth, 200f, 1920f, "%.0f");
-                ImGui.TextDisabled("Requested width of the compact bar. Capped to the experience-bar width, so it\n" +
-                    "never extends past the XP bar regardless of this value.");
-                ImGui.SliderInt("History size", ref this.Settings.HistorySize, 5, 200);
-                ImGui.TextDisabled("Completed-map rows kept in the session history (table + memory); oldest dropped past this.");
+                ImGui.SeparatorText(this.L("lt.compact_bar", "Compact bar (hideout)"));
+                ImGui.SliderFloat(this.L("lt.compact_height", "Compact bar height (px)"), ref this.Settings.CompactHeight, 70f, 200f, "%.0f");
+                ImGui.SliderFloat(this.L("lt.compact_width", "Compact bar width (px)"), ref this.Settings.CompactWidth, 200f, 1920f, "%.0f");
+                ImGui.TextDisabled(this.L("lt.compact_width_hint",
+                    "Requested width of the compact bar. Capped to the experience-bar width, so it\n" +
+                    "never extends past the XP bar regardless of this value."));
+                ImGui.SliderInt(this.L("lt.history_size", "History size"), ref this.Settings.HistorySize, 5, 200);
+                ImGui.TextDisabled(this.L("lt.history_size_hint", "Completed-map rows kept in the session history (table + memory); oldest dropped past this."));
 
                 ImGui.Spacing();
-                ImGui.SeparatorText("Bars (map strip + compact)");
-                ImGui.Checkbox("Anchor to right side", ref this.Settings.BarOnRight);
-                ImGui.SliderFloat("Offset from bottom (px)", ref this.Settings.BarBottomOffset, 0f, 300f, "%.0f");
-                ImGui.TextDisabled("Distance the bars sit up from the bottom of the game window. Raise it until\n" +
-                    "they clear the experience bar / skill bar at your resolution and UI scale.");
-                ImGui.SliderFloat("Bar opacity", ref this.Settings.BarOpacity, 0f, 1f, "%.2f");
-                ImGui.SliderFloat("UI scale", ref this.Settings.UiScale, 0.5f, 2f, "%.2f");
-                ImGui.TextDisabled("Manual multiplier on top of the automatic game-UI scale (window height / 1600).\n" +
-                    "Font and fixed widths scale with it, so the bars match the HUD across resolutions.");
-                ImGui.Checkbox("Show kill counts", ref this.Settings.ShowKills);
-                ImGui.TextDisabled("Per-rarity monsters slain this run (Normal · Magic · Rare · Unique).");
+                ImGui.SeparatorText(this.L("lt.bars", "Bars (map strip + compact)"));
+                ImGui.Checkbox(this.L("lt.anchor_right", "Anchor to right side"), ref this.Settings.BarOnRight);
+                ImGui.SliderFloat(this.L("lt.offset_bottom", "Offset from bottom (px)"), ref this.Settings.BarBottomOffset, 0f, 300f, "%.0f");
+                ImGui.TextDisabled(this.L("lt.offset_bottom_hint",
+                    "Distance the bars sit up from the bottom of the game window. Raise it until\n" +
+                    "they clear the experience bar / skill bar at your resolution and UI scale."));
+                ImGui.SliderFloat(this.L("lt.bar_opacity", "Bar opacity"), ref this.Settings.BarOpacity, 0f, 1f, "%.2f");
+                ImGui.SliderFloat(this.L("lt.ui_scale", "UI scale"), ref this.Settings.UiScale, 0.5f, 2f, "%.2f");
+                ImGui.TextDisabled(this.L("lt.ui_scale_hint",
+                    "Manual multiplier on top of the automatic game-UI scale (window height / 1600).\n" +
+                    "Font and fixed widths scale with it, so the bars match the HUD across resolutions."));
+                ImGui.Checkbox(this.L("lt.show_kills", "Show kill counts"), ref this.Settings.ShowKills);
+                ImGui.TextDisabled(this.L("lt.show_kills_hint", "Per-rarity monsters slain this run (Normal · Magic · Rare · Unique)."));
 
                 ImGui.Spacing();
-                ImGui.SeparatorText("Pickup notifications");
-                ImGui.Checkbox("Show pickup toasts", ref this.Settings.ShowPickupToasts);
-                ImGui.TextDisabled("A brief toast (item name + value) above the map strip when you pick an item up.\n" +
-                    "Up to 3 at once; same-item pickups merge. Only while actively on a map.");
+                ImGui.SeparatorText(this.L("lt.pickup_notifs", "Pickup notifications"));
+                ImGui.Checkbox(this.L("lt.show_toasts", "Show pickup toasts"), ref this.Settings.ShowPickupToasts);
+                ImGui.TextDisabled(this.L("lt.show_toasts_hint",
+                    "A brief toast (item name + value) above the map strip when you pick an item up.\n" +
+                    "Up to 3 at once; same-item pickups merge. Only while actively on a map."));
                 ImGui.BeginDisabled(!this.Settings.ShowPickupToasts);
-                ImGui.SliderFloat("Min value to notify (ex)", ref this.Settings.NotifyMinEx, 20f, 200f, "%.0f");
-                ImGui.TextDisabled("Only pickups worth at least this many Exalted toast. Unpriced items never toast.");
-                ImGui.SliderFloat("Toast duration (s)", ref this.Settings.NotifyDurationSec, 1f, 6f, "%.1f");
+                ImGui.SliderFloat(this.L("lt.notify_min", "Min value to notify (ex)"), ref this.Settings.NotifyMinEx, 20f, 200f, "%.0f");
+                ImGui.TextDisabled(this.L("lt.notify_min_hint", "Only pickups worth at least this many Exalted toast. Unpriced items never toast."));
+                ImGui.SliderFloat(this.L("lt.toast_duration", "Toast duration (s)"), ref this.Settings.NotifyDurationSec, 1f, 6f, "%.1f");
                 ImGui.EndDisabled();
 
                 ImGui.Spacing();
-                ImGui.SeparatorText("Display");
-                ImGui.Checkbox("Show prices only in Divine", ref this.Settings.ShowPricesInDivineOnly);
-                ImGui.TextDisabled("Hide the Exalted figures everywhere on the overlay and show Divine instead\n" +
-                    "(including fractions, e.g. 0.5 div). Falls back to Exalted until the rate is known.");
+                ImGui.SeparatorText(this.L("lt.display", "Display"));
+                ImGui.Checkbox(this.L("lt.divine_only", "Show prices only in Divine"), ref this.Settings.ShowPricesInDivineOnly);
+                ImGui.TextDisabled(this.L("lt.divine_only_hint",
+                    "Hide the Exalted figures everywhere on the overlay and show Divine instead\n" +
+                    "(including fractions, e.g. 0.5 div). Falls back to Exalted until the rate is known."));
             }
 
             ImGui.Spacing();
-            if (ImGui.Button("New session"))
+            if (ImGui.Button(this.L("lt.new_session", "New session")))
             {
                 this.ResetSession();
             }
 
             ImGui.SameLine(0f, 20f);
-            if (ImGui.Button("View session history"))
+            if (ImGui.Button(this.L("lt.view_history", "View session history")))
             {
                 this.LoadSessions();
                 this.showSessionHistory = true;
             }
 
-            ImGui.SliderInt("Sessions to keep", ref this.Settings.MaxSessions, 1, 200);
-            ImGui.TextDisabled("Older sessions are deleted once this many are stored. A session is saved on \"New session\".");
+            ImGui.SliderInt(this.L("lt.sessions_keep", "Sessions to keep"), ref this.Settings.MaxSessions, 1, 200);
+            ImGui.TextDisabled(this.L("lt.sessions_keep_hint", "Older sessions are deleted once this many are stored. A session is saved on \"New session\"."));
 
             ImGui.Spacing();
-            ImGui.SeparatorText("Active session");
+            ImGui.SeparatorText(this.L("lt.active_session", "Active session"));
             this.DrawActiveSessionTable();
 
             ImGui.Spacing();
             ImGui.Separator();
 
-            ImGui.SeparatorText("Pricing");
-            ImGui.InputText("League", ref this.Settings.League, 64);
-            ImGui.SliderInt("Refresh interval (min)", ref this.Settings.CacheTtlMinutes, 5, 60);
+            ImGui.SeparatorText(this.L("lt.pricing", "Pricing"));
+            this.DrawLeaguePicker();
+            ImGui.SliderInt(this.L("lt.refresh_interval", "Refresh interval (min)"), ref this.Settings.CacheTtlMinutes, 5, 60);
 
             var status = this.priceCache.Status;
             string statusText = status switch
             {
-                PriceSyncStatus.Syncing => "syncing…",
+                PriceSyncStatus.Syncing => this.L("lt.status_syncing", "syncing…"),
                 PriceSyncStatus.Ready => this.priceCache.LastSyncUtc == DateTime.MinValue
-                    ? "ready (no data yet)"
-                    : $"updated {FormatRelative(this.priceCache.LastSyncUtc)} ago",
-                PriceSyncStatus.Error => $"error: {this.priceCache.LastError}",
-                _ => "idle",
+                    ? this.L("lt.status_ready_nodata", "ready (no data yet)")
+                    : this.LF("lt.status_updated_ago", "updated {0} ago", FormatRelative(this.priceCache.LastSyncUtc)),
+                PriceSyncStatus.Error => this.LF("lt.status_error", "error: {0}", this.priceCache.LastError),
+                _ => this.L("lt.status_idle", "idle"),
             };
-            ImGui.Text($"Status: {statusText}");
-            ImGui.Text($"Items cached: {this.priceCache.PriceCount}");
+            ImGui.Text(this.LF("lt.status_label", "Status: {0}", statusText));
+
+            // The single most common pricing failure: a league name the API doesn't know (typically a
+            // web slug), which answers 200 with an empty body. PriceCache reports it verbatim (it has
+            // no localization access), so the localized explanation lives here.
+            if (status == PriceSyncStatus.Error &&
+                this.priceCache.LastError.Contains("returned 0 rows", StringComparison.Ordinal))
+            {
+                ImGui.TextWrapped(this.L("lt.status_zero_rows",
+                    "poe.ninja answered, but has no rows for this league. Check the league name: it must be\n" +
+                    "the API name with spaces (\"Runes of Aldur\"), not the web slug (\"runesofaldur\")."));
+            }
+            ImGui.Text(this.LF("lt.items_cached", "Items cached: {0}", this.priceCache.PriceCount));
             if (this.priceCache.DivineToExaltedRate > 0)
-                ImGui.Text($"1 Divine = {this.priceCache.DivineToExaltedRate:F2} Exalted");
+                ImGui.Text(this.LF("lt.divine_rate", "1 Divine = {0:F2} Exalted", this.priceCache.DivineToExaltedRate));
 
             ImGui.BeginDisabled(status == PriceSyncStatus.Syncing);
-            if (ImGui.Button("Refresh now"))
+            if (ImGui.Button(this.L("lt.refresh_now", "Refresh now")))
                 this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
             ImGui.EndDisabled();
+        }
+
+        // League selector. Filled from poe.ninja's economyLeagues (NinjaLeagues), grouped by the
+        // `hardcore` flag, with a free-text escape hatch for league-launch day (when the new league
+        // isn't in index-state yet).
+        //
+        // Deliberately NOT ImGuiHelper.IEnumerableComboBox: that helper renders entries as
+        // "0:Runes of Aldur" (index prefix), which is a core debug idiom, not user-facing UI.
+        // Every label goes through Loc.Label/a literal "##id" so the ImGui item ID stays stable when
+        // the GameHelper UI language changes.
+        private void DrawLeaguePicker()
+        {
+            if (this.Settings.UseCustomLeague)
+            {
+                if (ImGui.InputText(this.Loc.Label("lt.league", "League", "LtLeagueInput"), ref this.Settings.League, 64))
+                {
+                    this.Settings.LeaguePinned = true;
+                }
+
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
+                    this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
+                }
+
+                ImGui.TextDisabled(this.L("lt.custom_league_hint",
+                    "Enter poe.ninja's API name, with spaces (\"Runes of Aldur\") — not the web slug\n" +
+                    "(\"runesofaldur\"), which the API answers with an empty result."));
+            }
+            else
+            {
+                // Preview is the RAW saved value, so the user sees what will be sent even before the
+                // list has loaded (or when the saved league isn't in it at all).
+                var softcore = new List<NinjaLeague>();
+                var hardcore = new List<NinjaLeague>();
+                foreach (var name in NinjaLeagues.ComboItems(this.Settings.League))
+                {
+                    var lg = NinjaLeagues.Resolve(name);
+                    (lg.Hardcore ? hardcore : softcore).Add(lg);
+                }
+
+                void Group(string header, List<NinjaLeague> items)
+                {
+                    if (items.Count == 0)
+                    {
+                        return;
+                    }
+
+                    ImGui.SeparatorText(header);
+                    foreach (var lg in items)
+                    {
+                        var selected = string.Equals(lg.Name, this.Settings.League, StringComparison.OrdinalIgnoreCase);
+                        if (ImGui.IsWindowAppearing() && selected)
+                        {
+                            ImGui.SetScrollHereY();
+                        }
+
+                        if (ImGui.Selectable($"{NinjaLeagues.LabelOf(lg)}##lg_{lg.Name}", selected) && !selected)
+                        {
+                            this.Settings.League = lg.Name;
+                            this.Settings.LeaguePinned = true;
+                            this.leagueNoteFrom = string.Empty;
+                            this.leagueNoteTo = string.Empty;
+                            this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
+                        }
+                    }
+                }
+
+                if (ImGui.BeginCombo(this.Loc.Label("lt.league", "League", "LtLeagueCombo"), this.Settings.League))
+                {
+                    Group(this.L("lt.league_softcore", "Softcore"), softcore);
+                    Group(this.L("lt.league_hardcore", "Hardcore"), hardcore);
+                    ImGui.EndCombo();
+                }
+
+                ImGui.TextDisabled(this.L("lt.league_hint",
+                    "Prices are fetched for exactly this poe.ninja league."));
+            }
+
+            ImGui.Checkbox(
+                this.Loc.Label("lt.custom_league", "Type the league name manually", "LtCustomLeague"),
+                ref this.Settings.UseCustomLeague);
+
+            var listStatus = NinjaLeagues.Status;
+            ImGui.BeginDisabled(listStatus == PriceSyncStatus.Syncing);
+            if (ImGui.Button(this.Loc.Label("lt.refresh_leagues", "Refresh league list", "LtRefreshLeagues")))
+            {
+                NinjaLeagues.StartRefresh(this.LeagueCachePathname);
+            }
+
+            ImGui.EndDisabled();
+
+            string listText;
+            if (listStatus == PriceSyncStatus.Syncing)
+            {
+                listText = this.L("lt.leagues_loading", "loading league list…");
+            }
+            else if (listStatus == PriceSyncStatus.Error)
+            {
+                listText = NinjaLeagues.IsLoaded
+                    ? this.LF("lt.leagues_offline_cached", "offline — using cached list ({0} old)", FormatRelative(NinjaLeagues.FetchedUtc))
+                    : this.L("lt.leagues_offline_builtin", "offline — using built-in list");
+            }
+            else if (NinjaLeagues.IsLoaded)
+            {
+                listText = this.LF("lt.leagues_ok", "{0} leagues, updated {1} ago", NinjaLeagues.All.Count, FormatRelative(NinjaLeagues.FetchedUtc));
+            }
+            else
+            {
+                listText = this.L("lt.leagues_offline_builtin", "offline — using built-in list");
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled(listText);
+
+            if (!string.IsNullOrEmpty(this.leagueNoteTo))
+            {
+                ImGui.TextWrapped(this.LF(
+                    "lt.league_adopted",
+                    "League \"{0}\" is gone from poe.ninja; switched to \"{1}\".",
+                    this.leagueNoteFrom,
+                    this.leagueNoteTo));
+            }
         }
 
         public override void DrawUI()
@@ -474,6 +648,31 @@ namespace LootTracker
             }
 
             this.nextAutoRefreshCheckUtc = now.AddMinutes(1);
+
+            // League list ages on its own (12h) clock, independent of the price TTL.
+            if (now >= this.nextLeagueCheckUtc)
+            {
+                this.nextLeagueCheckUtc = now.AddMinutes(1);
+                var wasLoaded = NinjaLeagues.IsLoaded;
+                var listAt = NinjaLeagues.FetchedUtc;
+
+                if (NinjaLeagues.IsStale && NinjaLeagues.Status != PriceSyncStatus.Syncing)
+                {
+                    NinjaLeagues.StartRefresh(this.LeagueCachePathname);
+                }
+                else if (NinjaLeagues.IsLoaded &&
+                         (!wasLoaded || listAt != this.lastSeenLeagueListUtc) &&
+                         !this.Settings.LeaguePinned &&
+                         !this.Settings.UseCustomLeague &&
+                         !NinjaLeagues.Contains(this.Settings.League))
+                {
+                    // The list just changed under us and the saved league is no longer offered.
+                    this.MaybeAdoptIndexedLeague();
+                }
+
+                this.lastSeenLeagueListUtc = NinjaLeagues.FetchedUtc;
+            }
+
             if (this.priceCache.Status == PriceSyncStatus.Syncing)
             {
                 return;
@@ -484,6 +683,48 @@ namespace LootTracker
             {
                 this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
             }
+        }
+
+        // One-time, opt-out-able migration: if the user never picked a league themselves and the one
+        // we have saved is gone from poe.ninja's economyLeagues (new league launched), move to the
+        // league poe.ninja itself defaults to and re-fetch prices. A user with a league that still
+        // exists only gets LeaguePinned set — nothing else changes for them.
+        //
+        // `Indexed` is used ONLY here (default picking); it does not mean "has economy data".
+        private void MaybeAdoptIndexedLeague()
+        {
+            if (this.Settings.LeaguePinned || this.Settings.UseCustomLeague)
+            {
+                return;
+            }
+
+            // Built-in fallback only (no network, no cache): we can't tell whether the saved league is
+            // gone or merely unseen, so do nothing and retry on a later tick.
+            if (!NinjaLeagues.IsLoaded)
+            {
+                return;
+            }
+
+            this.lastSeenLeagueListUtc = NinjaLeagues.FetchedUtc;
+
+            if (NinjaLeagues.Contains(this.Settings.League))
+            {
+                this.Settings.LeaguePinned = true;
+                return;
+            }
+
+            if (!NinjaLeagues.TryPickDefault(out var picked) ||
+                string.Equals(picked, this.Settings.League, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var previous = this.Settings.League;
+            this.Settings.League = picked;
+            this.Settings.LeaguePinned = true;
+            this.leagueNoteFrom = previous;
+            this.leagueNoteTo = picked;
+            this.priceCache.StartRefresh(this.Settings.League, this.PriceCachePathname);
         }
 
         // Autosave the live session at most every ~20s, so a crash mid-map loses only the last few
