@@ -206,9 +206,8 @@ namespace Radar
         public bool HideReachedPaths = true;
 
         /// <summary>
-        /// Grid-distance threshold below which a path target counts as "reached"
-        /// and is hidden for the remainder of the current map. Used by
-        /// <see cref="HideReachedPaths"/>.
+        /// Grid-distance threshold below which a path target, Abyss node, or Runestone
+        /// counts as "reached" for the remainder of the current map.
         /// </summary>
         public float ReachedPathDistance = 50f;
 
@@ -635,7 +634,7 @@ namespace Radar
                     ImGui.SameLine();
                     ImGui.Text(icon.Key);
                     ImGui.NextColumn();
-                    icon.Value.ShowSettingWidget();
+                    icon.Value.ShowSettingWidget(pluginText);
                     ImGui.NextColumn();
                 }
 
@@ -648,21 +647,21 @@ namespace Radar
         ///     draws the POIMonster setting widget.
         /// </summary>
         /// <param name="dllDirectory">directory where the plugin dll is located.</param>
-        /// <param name="pluginText">localized plugin text helper.</param>
+        /// <param name="pluginText">Plugin localization resources.</param>
         public void DrawPOIMonsterSettingToImGui(string dllDirectory, PluginLocalization pluginText)
         {
-            if (ImGui.TreeNode($"Monster POI Icons"))
+            if (ImGui.TreeNode(pluginText.Title("icons.monster_poi", "Monster POI Icons", "RadarMonsterPoiIcons")))
             {
                 ImGui.Columns(2, $"icons columns##POIMonsterCol", false);
                 foreach (var poimonster in this.POIMonsters)
                 {
                     ImGui.Checkbox($"##showpoimonster{poimonster.Key}", ref poimonster.Value.Show);
                     ImGui.SameLine();
-                    ImGui.Text(poimonster.Key  == -1 ? "Default Group" : $"Group {poimonster.Key}");
+                    ImGui.Text(poimonster.Key  == -1 ? pluginText.T("icons.default_group", "Default Group") : pluginText.F("icons.group", "Group {0}", poimonster.Key));
                     ImGui.NextColumn();
-                    poimonster.Value.ShowSettingWidget();
+                    poimonster.Value.ShowSettingWidget(pluginText);
                     ImGui.SameLine();
-                    if (poimonster.Key != -1 && ImGui.Button($"Delete##{poimonster.Key}"))
+                    if (poimonster.Key != -1 && ImGui.Button(pluginText.Label("button.delete", "Delete", poimonster.Key.ToString())))
                     {
                         _ = this.POIMonsters.Remove(poimonster.Key);
                     }
@@ -673,13 +672,13 @@ namespace Radar
                 ImGui.Columns(1);
                 ImGui.Separator();
                 ImGui.SetNextItemWidth(ImGui.GetFontSize() * 5);
-                if (ImGui.InputInt("Group Number##poimonster", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
+                if (ImGui.InputInt(pluginText.Label("icons.group_number", "Group Number", "poimonster"), ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
                 {
                     poiMonsterGroupNumber = 0;
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button("Add##POIMonsterGroupAdd"))
+                if (ImGui.Button(pluginText.Label("button.add", "Add", "POIMonsterGroupAdd")))
                 {
                     this.POIMonsters.TryAdd(poiMonsterGroupNumber, new(Path.Join(dllDirectory, "icons.png"), 12, 44, 30, IconSize));
                 }
@@ -692,21 +691,21 @@ namespace Radar
         ///     draws the universal watched entity group icon setting widget.
         /// </summary>
         /// <param name="dllDirectory">directory where the plugin dll is located.</param>
-        /// <param name="pluginText">localized plugin text helper.</param>
+        /// <param name="pluginText">Plugin localization resources.</param>
         public void OtherImportantObjectsSettingToImGui(string dllDirectory, PluginLocalization pluginText)
         {
-            if (ImGui.TreeNode($"Watched Entity Group Icons"))
+            if (ImGui.TreeNode(pluginText.Title("icons.watched_entity_groups", "Watched Entity Group Icons", "RadarWatchedEntityGroupIcons")))
             {
                 ImGui.Columns(2, $"icons columns##SpecialObjects", false);
                 foreach (var obj in this.OtherImportantObjects)
                 {
                     ImGui.Checkbox($"##showspecialobj{obj.Key}", ref obj.Value.Show);
                     ImGui.SameLine();
-                    ImGui.Text(obj.Key == -1 ? "Default Group" : $"Group {obj.Key}");
+                    ImGui.Text(obj.Key == -1 ? pluginText.T("icons.default_group", "Default Group") : pluginText.F("icons.group", "Group {0}", obj.Key));
                     ImGui.NextColumn();
-                    obj.Value.ShowSettingWidget();
+                    obj.Value.ShowSettingWidget(pluginText);
                     ImGui.SameLine();
-                    if (obj.Key != -1 && ImGui.Button($"Delete##{obj.Key}"))
+                    if (obj.Key != -1 && ImGui.Button(pluginText.Label("button.delete", "Delete", obj.Key.ToString())))
                     {
                         _ = this.OtherImportantObjects.Remove(obj.Key);
                     }
@@ -717,13 +716,13 @@ namespace Radar
                 ImGui.Columns(1);
                 ImGui.Separator();
                 ImGui.SetNextItemWidth(ImGui.GetFontSize() * 5);
-                if (ImGui.InputInt("Group Number##SpecialObjects", ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
+                if (ImGui.InputInt(pluginText.Label("icons.group_number", "Group Number", "SpecialObjects"), ref poiMonsterGroupNumber) && poiMonsterGroupNumber < 0)
                 {
                     poiMonsterGroupNumber = 0;
                 }
 
                 ImGui.SameLine();
-                if (ImGui.Button("Add##SpecialObjects"))
+                if (ImGui.Button(pluginText.Label("button.add", "Add", "SpecialObjects")))
                 {
                     this.OtherImportantObjects.TryAdd(poiMonsterGroupNumber, new(Path.Join(dllDirectory, "icons.png"), 1, 37, 30, IconSize));
                 }
@@ -779,6 +778,7 @@ namespace Radar
             this.BaseIcons.TryAdd("Rare Monster", new IconPicker(iconPathName, 4, 57, 30, IconSize));
             this.BaseIcons.TryAdd("Unique Monster", new IconPicker(iconPathName, 6, 57, 30, IconSize));
             this.BaseIcons.TryAdd("Pinnacle Boss Not Attackable", new IconPicker(iconPathName, 5, 15, 30, IconSize));
+            this.BaseIcons.TryAdd("Hidden Monster", new IconPicker(iconPathName, 4, 14, 40, IconSize));
 
             this.BaseIcons.TryAdd("Yellow Bestiary Monster", new IconPicker(iconPathName, 6, 2, 35, IconSize));
             this.BaseIcons.TryAdd("Red Bestiary Monster", new IconPicker(iconPathName, 7, 2, 35, IconSize));
@@ -874,8 +874,13 @@ namespace Radar
 
         private void AddDefaultDeliriumIcons(string iconPathName)
         {
-            this.DeliriumIcons.TryAdd("Delirium Bomb", new IconPicker(iconPathName, 5, 0, 30, IconSize));
-            this.DeliriumIcons.TryAdd("Delirium Spawner", new IconPicker(iconPathName, 6, 0, 30, IconSize));
+            this.DeliriumIcons.TryAdd("Delirium Bomb", new IconPicker(iconPathName, 5, 0, 40, IconSize));
+            this.DeliriumIcons.TryAdd("Delirium Spawner", new IconPicker(iconPathName, 6, 71, 40, IconSize));
+            this.DeliriumIcons.TryAdd("Loathsome Mire", new IconPicker(iconPathName, 8, 71, 40, IconSize,
+                showPath: true));
+            this.DeliriumIcons.TryAdd("Delirium Shard Boss", new IconPicker(iconPathName, 5, 73, 40, IconSize,
+                showPath: true,
+                pathColor: new System.Numerics.Vector4(1f, 0.6f, 0f, 1f)));
         }
 
         private void AddDefaultExpeditionIcons(string iconPathName)
