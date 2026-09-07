@@ -587,7 +587,11 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
             }
             else if (this.TryGetComponent<Chest>(out var _))
             {
-                this.EntityType = EntityTypes.Chest;
+                // Allow explicitly watched chests to use their configured entity-group icon
+                // without changing classification precedence for any other entity type.
+                this.EntityType = this.IsInSpecialMiscObjPaths()
+                    ? EntityTypes.OtherImportantObjects
+                    : EntityTypes.Chest;
             }
             else if (this.TryGetComponent<Player>(out var _))
             {
@@ -813,7 +817,14 @@ namespace GameHelper.RemoteObjects.States.InGameStateObjects
 
         private void CalculateEntityState()
         {
-            if (this.EntityType == EntityTypes.Chest)
+            if (this.EntityType == EntityTypes.OtherImportantObjects &&
+                this.TryGetComponent<Chest>(out var watchedChest))
+            {
+                this.EntityState = watchedChest.IsOpened
+                    ? EntityStates.Useless
+                    : EntityStates.None;
+            }
+            else if (this.EntityType == EntityTypes.Chest)
             {
                 if (this.TryGetComponent<Chest>(out var chestComp) && chestComp.IsOpened)
                 {

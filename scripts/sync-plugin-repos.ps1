@@ -54,7 +54,61 @@ function Sync-Plugin {
         }
     }
 
+    # SHA vor dem Loeschen merken und im State-File speichern (fuer Update-Check in maintain)
+    try {
+        $syncedSha = (& git -C $tempDir rev-parse HEAD 2>$null).Trim()
+        if ($syncedSha) {
+            $statePath = Join-Path $PSScriptRoot ".plugin-sync-state.json"
+            $st = if (Test-Path $statePath) { Get-Content $statePath -Raw | ConvertFrom-Json } else { [PSCustomObject]@{} }
+            $st | Add-Member -NotePropertyName $Folder -NotePropertyValue $syncedSha -Force
+            $st | ConvertTo-Json | Set-Content $statePath -Encoding UTF8
+        }
+    } catch {}
+
     if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+
+    # Fuer Plugins mit lokalen csproj-Anpassungen: eigene Version nach dem Sync wiederherstellen.
+    # plugins-csproj-overrides\ enthaelt die angepassten .csproj-Dateien die NICHT vom Upstream
+    # ueberschrieben werden duerfen (z.B. StashValueByZx0.csproj mit lokalen ProjectReferences).
+    $overrideDir  = Join-Path $PSScriptRoot "plugins-csproj-overrides"
+    $overrideSrc  = Join-Path $overrideDir "$Folder.csproj"
+    if (Test-Path $overrideSrc) {
+        $csprojFiles = @(Get-ChildItem $dst -Filter "*.csproj" -ErrorAction SilentlyContinue)
+        $csprojDst   = if ($csprojFiles.Count -gt 0) { $csprojFiles[0].FullName } else { Join-Path $dst "$Folder.csproj" }
+        Copy-Item $overrideSrc $csprojDst -Force
+        Write-Host "  csproj-override wiederhergestellt: $Folder" -ForegroundColor DarkCyan
+    }
+
+    # Release-Notes des neuesten Releases fuer Changelog-Vorschlag holen
+    try {
+        $releaseRaw = (& gh api "repos/$GithubRepo/releases/latest" 2>$null) -join ""
+        $global:LASTEXITCODE = 0
+        if ($releaseRaw) {
+            $rel  = $releaseRaw | ConvertFrom-Json
+            $body = $rel.body
+            if ($body) {
+                # Erste Zeile jedes Absatzes (= Titel der Aenderung), max 120 Zeichen
+                $blocks = $body -split "(?:\r?\n){2,}" | Where-Object { $_.Trim() }
+                $titles = @(foreach ($block in $blocks) {
+                    $line = ($block -split "\r?\n")[0].Trim()
+                    $line = $line -replace '^[-*]\s+', ''
+                    $line = ($line -replace '[^\x20-\x7E]', '').Trim()
+                    if ($line -and $line.Length -le 120) { $line }
+                })
+                if ($titles.Count -gt 0) {
+                    $pendingPath = Join-Path $PSScriptRoot ".pending-changelog.txt"
+                    foreach ($title in $titles) {
+                        "$Folder`: $title" | Add-Content $pendingPath -Encoding UTF8
+                    }
+                    Write-Host "  Changelog-Eintraege hinzugefuegt: $Folder ($($titles.Count))" -ForegroundColor DarkYellow
+                }
+            }
+        }
+    } catch {
+        $global:LASTEXITCODE = 0
+        Write-Host "  Changelog-Fetch fehlgeschlagen: $Folder ($_)" -ForegroundColor DarkGray
+    }
+
     Write-Host "  OK $Folder" -ForegroundColor Green
 }
 
@@ -88,3 +142,4 @@ foreach ($entry in ($map.GetEnumerator() | Sort-Object Name)) {
 
 Write-Host ""
 Write-Host "sync-plugin-repos complete: $count Plugin(s) synchronisiert ($Set)." -ForegroundColor Green
+exit 0
